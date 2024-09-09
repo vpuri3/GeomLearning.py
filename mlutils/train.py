@@ -77,12 +77,32 @@ class Trainer:
         if nepochs is None:
             nepochs = 100
 
+        config = {
+            "data_size" : len(_loader.dataset),
+            "num_batches" : len(_loader),
+            "batch_size" : _loader.batch_size,
+
+            "num_parameters" : num_parameters(model),
+
+            "learning_rate" : lr,
+            "weight_decay" : weight_decay,
+
+            "nepochs" : nepochs,
+            "lossfun" : str(lossfun),
+        }
+
+        if wandb:
+            config = {**(wandb.config), **config}
+            wandb.config(config)
+
+        print(f"Trainer config: {config}")
+
         # ASSIGN TO SELF
         self.device = device
 
-        self._loader = _loader
+        self._loader  = _loader
         self.__loader = __loader
-        self.loader_ = loader_
+        self.loader_  = loader_
 
         self.model = model
 
@@ -94,70 +114,17 @@ class Trainer:
         self.statsfun = statsfun
 
         self.wandb = wandb
+        self.config = config
 
         return
 
     def train(self):
 
-        if self.wandb:
-            wandb.config({
-                **(wandb.config),
-
-                "data_size" : len(_loader.dataset),
-                "num_batches" : len(self._loader),
-                "batch_size" : self._loader.batch_size,
-
-                "num_parameters" : num_parameters(self.model),
-
-                "learning_rate" : self.opt.lr,
-                "weight_decay" : self.opt.weight_decay,
-
-                "nepochs" : self.nepochs,
-                "lossfun" : str(self.lossfun),
-            })
-        #
-
-        # log initial metrics
-        _loss, _stats = self.evaluate(self.__loader)
-        loss_, stats_ = self.evaluate(self.loader_ )
-
-        if self.wandb:
-            wandb.log({
-                "epoch" : 0,
-                "train_loss" : _loss,
-                "test_loss"  : loss_,
-                # "train_stats" : _stats,
-                # "test_stats"  : stats_,
-            })
-        #
-
+        self.callback()
         for epoch in range(1, self.nepochs + 1):
-            print(f"-------------------------------")
-            print(f"Epoch {epoch}")
-            print(f"-------------------------------")
-
+            self.print_train_banner(epoch)
             self.train_epoch()
-            _loss, _stats = self.evaluate(self._loader)
-            loss_, stats_ = self.evaluate(self.loader_)
-
-            if self.wandb:
-                wandb.log({
-                    "epoch" : 0,
-                    "train_loss" : _loss,
-                    "test_loss"  : loss_,
-                })
-
-                if not _stats:
-                    wandb.log({
-                        "train_stats" : _stats,
-                        "test_stats"  : stats_,
-                    })
-            #
-            print()
-            print(f"\t TRAIN LOSS: {_loss:>10f} " + f"TEST LOSS: {loss_:>10f}")
-            print()
-            # if _stats:
-            #     pass
+            self.callback()
         #
 
         return
@@ -213,4 +180,33 @@ class Trainer:
         loss = avg_loss / nbatches
 
         return loss, stats
+
+    def callback(self):
+        _loss, _stats = self.evaluate(self._loader)
+        loss_, stats_ = self.evaluate(self.loader_)
+
+        print()
+        print(f"\t TRAIN LOSS: {_loss:>10f}, STATS: {_stats}")
+        print(f"\t TEST  LOSS: {loss_:>10f}, STATS: {stats_}")
+        print()
+
+        if self.wandb:
+            wandb.log({
+                "epoch" : 0,
+                "train_loss" : _loss,
+                "test_loss"  : loss_,
+                "train_stats" : _stats,
+                "test_stats"  : stats_,
+            })
+        #
+
+        return (_loss, _stats), (loss_, stats_)
+
+    @staticmethod
+    def print_train_banner(epoch):
+        print(f"-------------------------------")
+        print(f"Epoch {epoch}")
+        print(f"-------------------------------")
+
+        return
 #
