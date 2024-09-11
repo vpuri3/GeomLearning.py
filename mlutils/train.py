@@ -6,9 +6,10 @@ from torch.utils.data import DataLoader
 
 # builtin
 import math
+import time # todo
 
 # local
-from .utils import num_parameters
+from mlutils.utils import num_parameters
 
 class Trainer:
     def __init__(
@@ -17,7 +18,7 @@ class Trainer:
         _data,
         data_,
 
-        device="cpu",
+        device=None,
 
         _batch_size=None,
         batch_size_=None,
@@ -35,6 +36,9 @@ class Trainer:
         wandb=False,
     ):
 
+        if device is None:
+            device = "cpu"
+
         # DATA
         if _batch_size is None:
             _batch_size = 32
@@ -42,6 +46,9 @@ class Trainer:
             __batch_size = len(_data)
         if batch_size_ is None:
             batch_size_ = len(data_)
+
+        # TODO: pin_memory=True, pin_memory_device=device
+        # would then remove batch.to(device) calls in training loop
 
         _loader  = DataLoader(_data, batch_size=_batch_size)
         __loader = DataLoader(_data, batch_size=__batch_size, shuffle=False)
@@ -55,6 +62,7 @@ class Trainer:
         # MODEL
         print(model)
         print(f"number of parameters: {num_parameters(model)}")
+        print(f"Moving model to: {device}")
         model.to(device)
 
         # OPTIMIZER
@@ -78,6 +86,8 @@ class Trainer:
             nepochs = 100
 
         config = {
+            "device" : device,
+
             "data_size" : len(_loader.dataset),
             "num_batches" : len(_loader),
             "batch_size" : _loader.batch_size,
@@ -95,7 +105,9 @@ class Trainer:
             config = {**(wandb.config), **config}
             wandb.config(config)
 
-        print(f"Trainer config: {config}")
+        print(f"Trainer config:")
+        for (k, v) in config.items():
+            print(f"{k} : {v}")
 
         # ASSIGN TO SELF
         self.device = device
@@ -120,9 +132,11 @@ class Trainer:
 
     def train(self):
 
+        self.print_train_banner(0, 0)
         self.callback()
+
         for epoch in range(1, self.nepochs + 1):
-            self.print_train_banner(epoch)
+            self.print_train_banner(epoch, self.nepochs)
             self.train_epoch()
             self.callback()
         #
@@ -203,9 +217,9 @@ class Trainer:
         return (_loss, _stats), (loss_, stats_)
 
     @staticmethod
-    def print_train_banner(epoch):
+    def print_train_banner(epoch, nepochs):
         print(f"-------------------------------")
-        print(f"Epoch {epoch}")
+        print(f"Epoch {epoch} / {nepochs}")
         print(f"-------------------------------")
 
         return
