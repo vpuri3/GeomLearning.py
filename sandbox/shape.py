@@ -64,7 +64,7 @@ class Shape:
 
         dist = torch.minimum(bdist, tdist)
         dist = torch.minimum(dist , rdist)
-        sign = 2 * mask - 1
+        sign = 1 - 2 * mask
         sdf  = dist * sign
 
         return mask, temp * mask, disp * mask, sdf
