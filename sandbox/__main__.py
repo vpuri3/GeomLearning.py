@@ -13,72 +13,121 @@ import argparse
 import sandbox
 import mlutils
 
-def train_sdf(device):
-    # parameters
-    nx, nz, nt = 64, 64, 50 # data
-    w, h = 64, 4           # model
-    act = None
-    siren = True
-    _batch_size = 64        # trainer
-    nepochs = 50
-    lr = 1e-4
-    Schedule = None
+class SandboxCNN:
+    def __init__(self, in_dim, out_dim,):
+        super().__init__()
+        pass
 
+    def forward(self, x):
+        pass
+
+def train_cnn(device):
+    mask = "finaltime"
+    datatype = "image"
+
+    nx, nz, nt = 256, 256, 100
     shape = sandbox.Shape(nx, nz, nt)
-    _data, data_ = sandbox.makedata(shape, outputs="S")
+    data = sandbox.makedata(shape, inputs="xzt", outputs="T", datatype=datatype, mask=mask)
 
-    i, o = 3, 1
-    model = mlutils.MLP(i, o, w, h, act=act, siren=siren)
+    assert False
+
+    lr = 5e-4
+    _batch_size = 1
+    neochs = 50
 
     return
 
-def train_temp(device):
+def train_mlp_sdf(device):
 
-    # insideonly = True
-    insideonly = False
+    sdf_clamp = 1e-2
 
-    if insideonly:
-        nx, nz, nt = 256, 256, 50 # data
-        w, h = 32, 4              # model
-        act = nn.Tanh()
-        siren = False
-        _batch_size = 1024        # trainer
-        nepochs = 20
-        lr = 5e-4
-        Schedule = None
-    else:
-        nx, nz, nt = 64, 64, 50 # data
-        w, h = 512, 4           # model
-        act = None
-        siren = True
-        _batch_size = 64        # trainer
-        nepochs = 50
-        lr = 1e-4
-        Schedule = None
-        # Schedule = "OneCycleLR"
-
-    # TODO: label normalization
-
+    # DATA
+    nx, nz, nt = 128, 128, 50
     shape = sandbox.Shape(nx, nz, nt)
-    _data, data_ = sandbox.makedata(shape, insideonly=insideonly, outputs="T")
+    _data, data_ = sandbox.makedata(
+        shape, inputs="xzt", outputs="S", datatype="pointcloud",
+        mask=None, sdf_clamp=sdf_clamp,
+    )
+    
+    # MODEL
+    width, hidden_dim = 128, 5
+    in_dim  = next(iter(_data))[0].shape[0]
+    out_dim = next(iter(_data))[1].shape[0]
+    model = mlutils.MLP(3, 1, width, hidden_dim, siren=True)
+    model = nn.Sequential(*model, mlutils.SDFClamp(sdf_clamp))
 
-    i, o = 3, 1
-    model = mlutils.MLP(i, o, w, h, act=act, siren=siren)
+    # TRAIN
+    for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
+        kw = {
+            "device" : device,
+            "lr" : lr,
+            "_batch_size" : 64,
+            "nepochs" : 2,
+            "Schedule" : None,
+            "lossfun" : nn.L1Loss(),
+        }
+        trainer = mlutils.Trainer(model, _data, data_, **kw)
+        trainer.train()
 
-    kw = {
-        "device" : device,
-        "lr" : lr,
-        "_batch_size" : _batch_size,
-        "nepochs" : nepochs,
-        "Schedule" : Schedule,
-    }
+    return
+
+def train_mlp_spacetime_mask(device):
+
+    # DATA
+    nx, nz, nt = 256, 256, 50
+    shape = sandbox.Shape(nx, nz, nt)
+    _data, data_ = sandbox.makedata(
+        shape, inputs="xzt", outputs="T", datatype="pointcloud",
+        mask="spacetime",
+    )
+
+    # MODEL
+    width, hidden_dim = 64, 4
+    in_dim  = next(iter(_data))[0].shape[0]
+    out_dim = next(iter(_data))[1].shape[0]
+    model = mlutils.MLP(3, 1, width, hidden_dim, act=nn.Tanh())
 
     # initialize wandb
 
+    # TRAIN
+    kw = {
+        "device" : device,
+        "lr" : 1e-4,
+        "_batch_size" : 512,
+        "nepochs" : 20,
+    }
     trainer = mlutils.Trainer(model, _data, data_, **kw)
     trainer.train()
 
     # finalzie wandb
+
+    return
+
+def train_mlp_finaltime_mask(device):
+
+    # DATA
+    nx, nz, nt = 256, 256, 50
+    shape = sandbox.Shape(nx, nz, nt)
+    _data, data_ = sandbox.makedata(shape, inputs="xzt", outputs="T",
+        datatype="pointcloud", mask="finaltime",)
+
+    # MODEL
+    width, hidden_dim = 128, 5
+    in_dim  = next(iter(_data))[0].shape[0]
+    out_dim = next(iter(_data))[1].shape[0]
+    model = mlutils.MLP(3, 1, width, hidden_dim, siren=True)
+
+    # TRAIN
+    for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
+        kw = {
+            "device" : device,
+            "lr" : lr,
+            "_batch_size" : 64,
+            "nepochs" : 10,
+            "Schedule" : None,
+        }
+        trainer = mlutils.Trainer(model, _data, data_, **kw)
+        trainer.train()
 
     return
 
@@ -110,7 +159,11 @@ if __name__ == "__main__":
 
     print(f"using device {device}")
 
-    view_shape()
-    # train_temp(device)
-    # train_sdf(device)
+    # view_shape()
+
+    train_mlp_sdf(device)
+    # train_mlp_spacetime_mask(device)
+    # train_mlp_finaltime_mask(device)
+
+    # train_cnn(device)
 #

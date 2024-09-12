@@ -5,8 +5,9 @@ from torch import nn
 import math
 
 __all__ = [
-    'MLP',
+    "MLP",
     "Sine",
+    "SDFClamp",
 ]
 
 #------------------------------------------------#
@@ -37,17 +38,15 @@ def MLP(
 
 #------------------------------------------------#
 # SIREN
-# modification of https://github.com/dalmia/siren/
+# initialization modified from https://github.com/dalmia/siren/
 #------------------------------------------------#
 class Sine(nn.Module):
     def __init__(self):
         super().__init__()
-        return
 
     @staticmethod
     def forward(x):
         return torch.sin(x)
-#
 
 def siren_init_(layer: nn.Linear, w):
     with torch.no_grad():
@@ -59,5 +58,17 @@ def siren_init_(layer: nn.Linear, w):
         layer.weight.uniform_(-bound, bound)
         layer.weight.mul_(w)
     return
+
+#------------------------------------------------#
+# SDF Clamp
+#------------------------------------------------#
+class SDFClamp(nn.Module):
+    def __init__(self, eps, act = nn.Tanh()):
+        super().__init__()
+        self.eps = eps
+        self.act = act
+    def forward(self, x):
+        return self.eps * self.act(x)
+
 #------------------------------------------------#
 #

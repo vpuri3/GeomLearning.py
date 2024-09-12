@@ -2,6 +2,7 @@
 # 3rd party
 import torch
 from torch import nn, optim
+from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 
 # builtin
@@ -53,6 +54,7 @@ class Trainer:
         if batch_size_ is None:
             batch_size_ = len(data_)
 
+        # TODO: early stopping
         # TODO: pin_memory=True, pin_memory_device=device
         # would then remove batch.to(device) calls in training loop
 
@@ -92,9 +94,13 @@ class Trainer:
             nepochs = 100
 
         if Schedule == "OneCycleLR":
-            schedule = optim.lr_scheduler.OneCycleLR(opt, 1e-2, epochs=nepochs, steps_per_epoch=len(_loader))
+            niters = nepochs * len(_loader)
+            schedule = lr_scheduler.OneCycleLR(opt, 1e-2, total_steps=niters)
+        elif Schedule == "CosineAnnealingLR":
+            niters = nepochs * len(_loader)
+            schedule = lr_scheduler.CosineAnnealingLR(opt, niters)
         elif Schedule is None:
-            schedule = optim.lr_scheduler.ConstantLR(opt, factor=1.0, total_iters=1e10)
+            schedule = lr_scheduler.ConstantLR(opt, factor=1.0, total_iters=1e10)
         else:
             raise NotImplementedError()
 
@@ -178,7 +184,7 @@ class Trainer:
             if batch % printbatch == 0:
                 print(
                     f"[{batch:>5d} / {nbatches:>5d}]\t" +
-                    f"LR: {self.opt.param_groups[0]['lr']:>.3e}\t" +
+                    f"LR: {self.schedule.get_last_lr()[0]:>.3e}\t" +
                     f" BATCH LOSS = {loss.item():>.8e}"
                 )
             #

@@ -1,6 +1,7 @@
 #
 import torch
 
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 
@@ -10,7 +11,7 @@ __all__ = [
 
 class Shape:
     """
-     Hourglass SDF
+     Hourglass shape
 
        ---------------------
        |                   |
@@ -60,7 +61,10 @@ class Shape:
 
         bdist = torch.abs(z)
         tdist = torch.abs(z - t)
-        rdist = torch.abs(torch.abs(x) - radius) + 1e10 * (~time_mask)
+        rdist = torch.abs(torch.abs(x) - radius)
+
+        tdist += 1e10 * (~global_mask)
+        rdist += 1e10 * (~time_mask)
 
         dist = torch.minimum(bdist, tdist)
         dist = torch.minimum(dist , rdist)
@@ -95,6 +99,9 @@ class Shape:
         axs[0, 0].set_ylabel(f"Mask")
         axs[1, 0].set_ylabel(f"Temperature")
         axs[2, 0].set_ylabel(f"SDF")
+
+        # # for debugging SDF
+        # sdf = np.abs(sdf) < 1e-2
 
         for (i, it) in enumerate(it_plt):
             axs[0, i].set_title(f"Time {t[it].item():>5f}")

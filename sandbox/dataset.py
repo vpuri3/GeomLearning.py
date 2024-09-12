@@ -22,31 +22,56 @@ def add_fields_to_list(string, fields):
 
     return ll
 
-def PointwiseDataset(
-    shape, insideonly=False, inputs="xzt", outputs="T",
+def makedata(
+    shape, sdf_clamp=1e-2,
+    inputs="xzt", outputs="T",
+    datatype="pointcloud",
+    mask=None,
+    split=[.8, .2],
 ):
-    xzt, fields = shape.fields_dense() # [nt, nz, nx]
+    # sample data
+    (x, z, t), (M, T, D, S) = shape.fields_dense() # [nt, nz, nx]
 
-    x, z, t = [a.reshape(-1) for a in xzt]
-    M, T, D, S = [a.reshape(-1) for a in fields] # Mask, Temp, Disp, SDF
+    # clamp SDF
+    S = torch.clamp(S, -sdf_clamp, sdf_clamp)
 
-    fields = [x, z, t, M, T, D, S]
+    # get relevant mask
+    if mask == "spacetime":
+        M3D = M
+    elif mask == "finaltime":
+        M2D = M[-1]
+        M3D = M2D.unsqueeze(0) * torch.ones(M.size(0), 1, 1)
+    elif mask == None:
+        M3D = torch.fill(M, True)
+    else:
+        raise NotImplementedError()
+
+    fields = [x, z, t, M3D, T, D, S]
     point = add_fields_to_list(inputs , fields) # "xztMTDS"
     value = add_fields_to_list(outputs, fields)
 
-    point = torch.stack(point, dim=1)
-    value = torch.stack(value, dim=1)
+    point = torch.stack(point, dim=point[0].ndim) # channel dim
+    value = torch.stack(value, dim=value[0].ndim)
 
-    if insideonly:
-        inside = torch.argwhere(S).reshape(-1)
+    if datatype == "pointcloud":
+        point = point.flatten(0, 2)
+        value = value.flatten(0, 2)
+
+        inside = torch.argwhere(M3D.reshape(-1)).reshape(-1)
         point = point[inside]
         value = value[inside]
 
-    return TensorDataset(point, value)
+    elif datatype == "image":
+        # batches over time-dimension
+        pass
+    elif datatype == "mesh":
+        # get inside points only and create adjacency matrix
+        raise NotImplementedError()
+    else:
+        raise NotImplementedError()
 
-def makedata(shape, **kwargs):
-    data = PointwiseDataset(shape, **kwargs)
-    return torch.utils.data.random_split(data, [0.8, 0.2])
+    data = TensorDataset(point, value)
+    return torch.utils.data.random_split(data, split)
 
 # class SandboxDataset(Dataset):
 #     def __init__(self, nx, nz, nt, nw1=None, nw2=None):
