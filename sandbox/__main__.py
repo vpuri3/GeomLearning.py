@@ -13,34 +13,48 @@ import argparse
 import sandbox
 import mlutils
 
-def main_train(device):
+# class SDF_MLP(nn.Module):
+#     pass
 
-    insideonly = True
-    # insideonly = False
+def train_temp(device):
+
+    # insideonly = True
+    insideonly = False
 
     if insideonly:
         nx, nz, nt = 256, 256, 50 # data
         w, h = 32, 4              # model
+        act = nn.Tanh()
+        siren = False
         _batch_size = 1024        # trainer
         nepochs = 20
         lr = 5e-4
+        Schedule = None
     else:
         nx, nz, nt = 64, 64, 50 # data
         w, h = 512, 4           # model
-        _batch_size = 128       # trainer
+        act = None
+        siren = True
+        _batch_size = 64        # trainer
         nepochs = 50
-        lr = 5e-4
-    #
+        lr = 1e-4
+        Schedule = None
+        # Schedule = "OneCycleLR"
+
+    # TODO: label normalization
+
+    shape = sandbox.Shape(nx, nz, nt)
+    _data, data_ = sandbox.makedata(shape, insideonly=insideonly, outputs="T")
 
     i, o = 3, 1
-    _data, data_ = sandbox.makedata(nx, nz, nt, insideonly=insideonly)
-    model = mlutils.MLP(i, o, w, h)
+    model = mlutils.MLP(i, o, w, h, act=act, siren=siren)
 
     kw = {
         "device" : device,
         "lr" : lr,
         "_batch_size" : _batch_size,
         "nepochs" : nepochs,
+        "Schedule" : Schedule,
     }
 
     # initialize wandb
@@ -52,7 +66,7 @@ def main_train(device):
 
     return
 
-def main_view():
+def view_shape():
     nx = 128
     nz = 128
     nt = 20
@@ -80,6 +94,7 @@ if __name__ == "__main__":
 
     print(f"using device {device}")
 
-    # main_view()
-    main_train(device)
+    # view_shape()
+    train_temp(device)
+    # train_sdf(device)
 #

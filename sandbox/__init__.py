@@ -1,3 +1,3 @@
 #
-from .dataset import SandboxShape
-from .dataset import makedata
+from .shape import *
+from .dataset import *

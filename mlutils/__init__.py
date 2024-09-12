@@ -1,2 +1,2 @@
-from .models import MLP
-from .train import Trainer
+from .models import *
+from .train import *

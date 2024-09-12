@@ -1,7 +1,7 @@
 #
 # 3rd party
 import torch
-from torch import nn
+from torch import nn, optim
 from torch.utils.data import DataLoader
 
 # builtin
@@ -10,6 +10,10 @@ import time # todo
 
 # local
 from mlutils.utils import num_parameters
+
+__all__ = [
+    'Trainer',
+]
 
 class Trainer:
     def __init__(
@@ -25,8 +29,10 @@ class Trainer:
         __batch_size=None,
 
         lr=None,
-        Opt=None,
         weight_decay=None,
+
+        Opt=None,
+        Schedule=None,
 
         lossfun=None,
         nepochs=None,
@@ -55,7 +61,7 @@ class Trainer:
         loader_  = DataLoader(data_, batch_size=batch_size_ , shuffle=False)
 
         for (x, y) in _loader:
-            print(f"Shape of x: {x.shape}")
+            print(f"Shape of x: {x.shape} {x.dtype}")
             print(f"Shape of u: {y.shape} {y.dtype}")
             break
 
@@ -70,20 +76,27 @@ class Trainer:
 
         if lr is None:
             lr = 1e-3
-        if Opt is None:
-            Opt = torch.optim.Adam
-        if Opt == torch.optim.Adam or Opt == torch.optim.AdamW:
-            if weight_decay is None:
-                if Opt == torch.optim.Adam:
-                    weight_decay = 0.0
-                else:
-                    weight_decay = 0.01
-            opt = torch.optim.Adam(param, lr=lr, weight_decay=weight_decay)
+        if weight_decay is None:
+            weight_decay = 5e-4
+
+        if Opt == "Adam" or Opt is None:
+            opt = optim.Adam(param, lr=lr)
+        elif Opt == "AdamW":
+            opt = optim.AdamW(param, lr=lr, weight_decay=weight_decay)
+        else:
+            raise NotImplementedError()
 
         if lossfun is None:
             lossfun = nn.MSELoss()
         if nepochs is None:
             nepochs = 100
+
+        if Schedule == "OneCycleLR":
+            schedule = optim.lr_scheduler.OneCycleLR(opt, 1e-1, epochs=nepochs, steps_per_epoch=len(_loader))
+        elif Schedule is None:
+            schedule = optim.lr_scheduler.ConstantLR(opt, factor=1.0, total_iters=1e10)
+        else:
+            raise NotImplementedError()
 
         config = {
             "device" : device,
@@ -96,6 +109,8 @@ class Trainer:
 
             "learning_rate" : lr,
             "weight_decay" : weight_decay,
+            "optimizer" : str(opt),
+            "schedule"  : str(schedule),
 
             "nepochs" : nepochs,
             "lossfun" : str(lossfun),
@@ -119,6 +134,7 @@ class Trainer:
         self.model = model
 
         self.opt = opt
+        self.schedule = schedule
 
         self.lossfun = lossfun
         self.nepochs = nepochs
@@ -156,12 +172,14 @@ class Trainer:
 
             loss.backward()
             self.opt.step()
+            self.schedule.step()
             self.opt.zero_grad()
 
             if batch % printbatch == 0:
                 print(
-                    f"[{batch:>5d} / {nbatches:>5d}] \t" +
-                    f" BATCH LOSS = {loss.item():>10f}"
+                    f"[{batch:>5d} / {nbatches:>5d}]\t" +
+                    f"LR: {self.opt.param_groups[0]['lr']:>.3e}\t" +
+                    f" BATCH LOSS = {loss.item():>.8e}"
                 )
             #
         #
@@ -200,8 +218,8 @@ class Trainer:
         loss_, stats_ = self.evaluate(self.loader_)
 
         print()
-        print(f"\t TRAIN LOSS: {_loss:>10f}, STATS: {_stats}")
-        print(f"\t TEST  LOSS: {loss_:>10f}, STATS: {stats_}")
+        print(f"\t TRAIN LOSS: {_loss:>.8e}, STATS: {_stats}")
+        print(f"\t TEST  LOSS: {loss_:>.8e}, STATS: {stats_}")
         print()
 
         if self.wandb:
