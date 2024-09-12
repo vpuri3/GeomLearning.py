@@ -13,8 +13,24 @@ import argparse
 import sandbox
 import mlutils
 
-# class SDF_MLP(nn.Module):
-#     pass
+def train_sdf(device):
+    # parameters
+    nx, nz, nt = 64, 64, 50 # data
+    w, h = 64, 4           # model
+    act = None
+    siren = True
+    _batch_size = 64        # trainer
+    nepochs = 50
+    lr = 1e-4
+    Schedule = None
+
+    shape = sandbox.Shape(nx, nz, nt)
+    _data, data_ = sandbox.makedata(shape, outputs="S")
+
+    i, o = 3, 1
+    model = mlutils.MLP(i, o, w, h, act=act, siren=siren)
+
+    return
 
 def train_temp(device):
 
@@ -71,7 +87,7 @@ def view_shape():
     nz = 128
     nt = 20
 
-    shape = sandbox.SandboxShape(nx, nz, nt)
+    shape = sandbox.Shape(nx, nz, nt)
     shape.plot()
 
     return
@@ -94,7 +110,7 @@ if __name__ == "__main__":
 
     print(f"using device {device}")
 
-    # view_shape()
-    train_temp(device)
+    view_shape()
+    # train_temp(device)
     # train_sdf(device)
 #

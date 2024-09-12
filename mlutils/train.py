@@ -92,7 +92,7 @@ class Trainer:
             nepochs = 100
 
         if Schedule == "OneCycleLR":
-            schedule = optim.lr_scheduler.OneCycleLR(opt, 1e-1, epochs=nepochs, steps_per_epoch=len(_loader))
+            schedule = optim.lr_scheduler.OneCycleLR(opt, 1e-2, epochs=nepochs, steps_per_epoch=len(_loader))
         elif Schedule is None:
             schedule = optim.lr_scheduler.ConstantLR(opt, factor=1.0, total_iters=1e10)
         else:

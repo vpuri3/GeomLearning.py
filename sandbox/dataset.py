@@ -8,29 +8,30 @@ __all__ = [
 
 def add_fields_to_list(string, fields):
     assert len(string) != 0
-    x, z, t, S, T, D = fields
+    x, z, t, M, T, D, S = fields
 
     ll = []
     ll.append(x) if 'x' in string else None
     ll.append(z) if 'z' in string else None
     ll.append(t) if 't' in string else None
 
-    ll.append(S) if 'S' in string else None
+    ll.append(M) if 'M' in string else None
     ll.append(T) if 'T' in string else None
     ll.append(D) if 'D' in string else None
+    ll.append(S) if 'S' in string else None
 
     return ll
 
 def PointwiseDataset(
-        shape, insideonly=False, inputs="xzt", outputs="ST",
+    shape, insideonly=False, inputs="xzt", outputs="T",
 ):
     xzt, fields = shape.fields_dense() # [nt, nz, nx]
 
     x, z, t = [a.reshape(-1) for a in xzt]
-    S, T, D = [a.reshape(-1) for a in fields] # SDF, Temp, Disp
+    M, T, D, S = [a.reshape(-1) for a in fields] # Mask, Temp, Disp, SDF
 
-    fields = [x, z, t, S, T, D]
-    point = add_fields_to_list(inputs , fields) # "xztSTD"
+    fields = [x, z, t, M, T, D, S]
+    point = add_fields_to_list(inputs , fields) # "xztMTDS"
     value = add_fields_to_list(outputs, fields)
 
     point = torch.stack(point, dim=1)
@@ -72,7 +73,7 @@ def makedata(shape, **kwargs):
 #         z = self.shape.z[iz.to(int)]
 #         t = self.shape.t[it.to(int)]
 #
-#         sdf, temp, disp = self.shape.fields(x, z, t)
+#         mask, temp, disp, sdf = self.shape.fields(x, z, t)
 #
 #         point = torch.stack([x, z, t], dim=1)
 #         value = torch.stack([temp], dim=1)

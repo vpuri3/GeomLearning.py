@@ -51,47 +51,61 @@ class Shape:
 
     def fields(self, x, z, t):
         radius = self.nw1 * (self.nw2 - torch.sin(torch.pi * z))
-        global_sdf = torch.lt(torch.abs(x), radius) # abs(x) ≤ radius
-        time_mask = torch.lt(z, t) # z ≤ t
+        global_mask = torch.lt(torch.abs(x), radius)
+        time_mask = torch.lt(z, t)
 
-        sdf  = global_sdf * time_mask
+        mask = global_mask * time_mask
         temp = 1 + z - torch.sin(t)
         disp = torch.zeros(x.size()) * torch.nan
 
-        return sdf, temp * sdf, disp * sdf
+        bdist = torch.abs(z)
+        tdist = torch.abs(z - t)
+        rdist = torch.abs(torch.abs(x) - radius) + 1e10 * (~time_mask)
+
+        dist = torch.minimum(bdist, tdist)
+        dist = torch.minimum(dist , rdist)
+        sign = 2 * mask - 1
+        sdf  = dist * sign
+
+        return mask, temp * mask, disp * mask, sdf
 
     def fields_dense(self):
         t, z, x = torch.meshgrid([self.t, self.z, self.x], indexing='ij')
-        sdf, temp, disp = self.fields(x, z, t)
-        return (x, z, t), (sdf, temp, disp)
+        fields = self.fields(x, z, t)
+        return (x, z, t), fields
 
     def plot(self, nt_plt = 5):
-        _, (sdf, temp, disp) = self.fields_dense()
+        _, (mask, temp, disp, sdf) = self.fields_dense()
 
         # equivalent to `x.detatch().cpu().numpy()`
         x = self.x.numpy(force=True)
         z = self.z.numpy(force=True)
         t = self.t.numpy(force=True)
-        sdf  = sdf.numpy(force=True)
+
+        mask = mask.numpy(force=True)
         temp = temp.numpy(force=True)
         disp = disp.numpy(force=True)
+        sdf  = sdf.numpy(force=True)
 
         it_plt = torch.linspace(0, self.nt-1, nt_plt)
         it_plt = torch.round(it_plt).to(torch.int).numpy(force=True)
 
-        fig, axs = plt.subplots(ncols=nt_plt, nrows=2, figsize = (12, 6))
+        fig, axs = plt.subplots(ncols=nt_plt, nrows=3, figsize = (15, 9))
 
-        axs[0, 0].set_ylabel(f"SDF")
+        axs[0, 0].set_ylabel(f"Mask")
         axs[1, 0].set_ylabel(f"Temperature")
+        axs[2, 0].set_ylabel(f"SDF")
 
         for (i, it) in enumerate(it_plt):
             axs[0, i].set_title(f"Time {t[it].item():>5f}")
 
-            axs[0, i].contourf(x, z, sdf[it, :, :], cmap='greys')
-            axs[1, i].contourf(x, z, temp[it, :, :], cmap='viridis')
+            p0 = axs[0, i].contourf(x, z, mask[it, :, :], levels= 1, cmap='Grays')
+            p1 = axs[1, i].contourf(x, z, temp[it, :, :], levels=20, cmap='viridis')
+            p2 = axs[2, i].contourf(x, z,  sdf[it, :, :], levels=20, cmap='viridis')
 
-            # axs[0, i].colorbar()
-            # axs[1, i].colorbar()
+            fig.colorbar(p0, ax=axs[0, i])
+            fig.colorbar(p1, ax=axs[1, i])
+            fig.colorbar(p2, ax=axs[2, i])
         #
 
         #========================#
