@@ -27,7 +27,7 @@ def makedata(
     inputs="xzt", outputs="T",
     datatype="pointcloud",
     mask=None,
-    split=[.8, .2],
+    split=None,
 ):
     # sample data
     (x, z, t), (M, T, D, S) = shape.fields_dense() # [nt, nz, nx]
@@ -50,20 +50,27 @@ def makedata(
     point = add_fields_to_list(inputs , fields) # "xztMTDS"
     value = add_fields_to_list(outputs, fields)
 
-    point = torch.stack(point, dim=point[0].ndim) # channel dim
-    value = torch.stack(value, dim=value[0].ndim)
-
     if datatype == "pointcloud":
-        point = point.flatten(0, 2)
+        point = torch.stack(point, dim=point[0].ndim) # channel dim
+        value = torch.stack(value, dim=value[0].ndim) # at the end
+
+        point = point.flatten(0, 2) # [N, C]
         value = value.flatten(0, 2)
 
         inside = torch.argwhere(M3D.reshape(-1)).reshape(-1)
         point = point[inside]
         value = value[inside]
+    elif datatype == "point-image":
+        # batches over time-dimension
+        point = torch.stack(point, dim=1) # [N, C, W, H]
+        point = point[:, :, 0, 0]         # [N, C]
 
+        value = torch.stack(value, dim=1) # [N, C, W, H]
+        value = value * M3D.unsqueeze(1)
     elif datatype == "image":
         # batches over time-dimension
-        pass
+        point = torch.stack(point, dim=1) # [N, C, H, W]
+        value = value.stack(value, dim=1) # [N, C, H, W]
     elif datatype == "mesh":
         # get inside points only and create adjacency matrix
         raise NotImplementedError()
@@ -71,7 +78,25 @@ def makedata(
         raise NotImplementedError()
 
     data = TensorDataset(point, value)
-    return torch.utils.data.random_split(data, split)
+
+    if split is None:
+        return data
+    else:
+        return torch.utils.data.random_split(data, split)
+#
+
+class TimeImage(Dataset):
+    def __init__(self, shape):
+        (x, z, t), (M, T, D, S) =  shape.fields_dense()
+
+        self.t = t[:, 0, 0]
+        self.M = M[-1, :, :]
+        self.T = T
+        self.shape = shape
+    def __len__(self):
+        return len(self.t)
+    def __getitem__(self, idx):
+        return (self.t[idx], self.M), self.T[idx]
 
 # class SandboxDataset(Dataset):
 #     def __init__(self, nx, nz, nt, nw1=None, nw2=None):

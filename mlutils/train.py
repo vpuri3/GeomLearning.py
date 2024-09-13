@@ -21,7 +21,7 @@ class Trainer:
         self, 
         model,
         _data,
-        data_,
+        data_=None,
 
         device=None,
 
@@ -43,6 +43,12 @@ class Trainer:
         wandb=False,
     ):
 
+        # TODO: early stopping
+        # TODO: loader pin_memory=True, pin_memory_device=device
+        # would then remove batch.to(device) calls in training loop
+        # TODO: loader sampler (replacement = True)
+        # check out minigpt for reference
+
         if device is None:
             device = "cpu"
 
@@ -51,16 +57,18 @@ class Trainer:
             _batch_size = 32
         if __batch_size is None:
             __batch_size = len(_data)
-        if batch_size_ is None:
-            batch_size_ = len(data_)
-
-        # TODO: early stopping
-        # TODO: pin_memory=True, pin_memory_device=device
-        # would then remove batch.to(device) calls in training loop
 
         _loader  = DataLoader(_data, batch_size=_batch_size)
         __loader = DataLoader(_data, batch_size=__batch_size, shuffle=False)
-        loader_  = DataLoader(data_, batch_size=batch_size_ , shuffle=False)
+
+        if data_ is not None:
+            print(f"Number of training samples: {len(_data)}")
+            if batch_size_ is None:
+                batch_size_ = len(data_)
+            loader_ = DataLoader(data_, batch_size=batch_size_ , shuffle=False)
+        else:
+            print(f"Number of test samples: 0")
+            loader_ = None
 
         for (x, y) in _loader:
             print(f"Shape of x: {x.shape} {x.dtype}")
@@ -221,7 +229,11 @@ class Trainer:
 
     def callback(self):
         _loss, _stats = self.evaluate(self._loader)
-        loss_, stats_ = self.evaluate(self.loader_)
+
+        if self.loader_ is not None:
+            loss_, stats_ = self.evaluate(self.loader_)
+        else:
+            loss_, stats_ = _loss, _stats
 
         print()
         print(f"\t TRAIN LOSS: {_loss:>.8e}, STATS: {_stats}")

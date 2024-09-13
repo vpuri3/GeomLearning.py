@@ -78,6 +78,10 @@ class Shape:
         fields = self.fields(x, z, t)
         return (x, z, t), fields
 
+    def final_mask(self):
+        _, (M, _, _, _) = self.fields_dense()
+        return M[-1, :, :]
+
     def plot(self, nt_plt = 5):
         _, (mask, temp, disp, sdf) = self.fields_dense()
 
@@ -117,7 +121,6 @@ class Shape:
 
         #========================#
         fig.tight_layout()
-        plt.savefig("fig1.png")
 
         # ani = anim.FuncAnimation(
         #     fig, update, frames=range(self.nt), interval=50
