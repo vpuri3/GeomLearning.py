@@ -132,9 +132,6 @@ class Shape:
 
         _, (_, temp, _, _) = self.fields_dense()
 
-        if pred.ndim == 4:
-            pred = pred.squeeze(1) # remove channel dim
-
         if nextstep: # contains [1:nt-1] so we cat [0]
             pred = torch.cat([temp[0].unsqueeze(0), pred], dim=0)
 

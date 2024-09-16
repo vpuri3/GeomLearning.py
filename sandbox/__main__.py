@@ -71,7 +71,7 @@ def train_cnn_nextstep(device, outdir, resdir, name):
 
     model.eval()
     xztT, _ = data[:]
-    pred = model(xztT) + xztT
+    pred = (model(xztT) + xztT).squeeze(1)
 
     fig = shape.comparison_plot(pred, nextstep=True)
     fig.savefig(imagefile, dpi=300)
@@ -156,7 +156,7 @@ def train_cnn(device, outdir, resdir, name):
 
     model.eval()
     xzt, _ = data[:]
-    pred = model(xzt)
+    pred = model(xzt).squeeze(1)
 
     fig = shape.comparison_plot(pred)
     fig.savefig(imagefile, dpi=300)
@@ -226,7 +226,7 @@ def train_scalar_cnn(device, outdir, resdir, name):
 
     model.eval()
     t, _ = data[:]
-    pred = model(t)
+    pred = model(t).squeeze(1)
     
     fig = shape.comparison_plot(pred)
     fig.savefig(imagefile, dpi=300)
@@ -299,19 +299,29 @@ def train_mlp(device, outdir, resdir, name):
     out_dim = next(iter(_data))[1].shape[0]
     model = mlutils.MLP(in_dim, out_dim, width, hidden_dim, siren=True)
 
-    # TRAIN
-    for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
-        kw = {
-            "device" : device,
-            "lr" : lr,
-            "_batch_size" : 512,
-            "nepochs" : 10,
-            "Schedule" : None,
-        }
-        trainer = mlutils.Trainer(model, _data, data_, **kw)
-        trainer.train()
+    # # TRAIN
+    # for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
+    #     kw = {
+    #         "device" : device,
+    #         "lr" : lr,
+    #         "_batch_size" : 512,
+    #         "nepochs" : 10,
+    #         "Schedule" : None,
+    #     }
+    #     trainer = mlutils.Trainer(model, _data, data_, **kw)
+    #     trainer.train()
+    #
+    # torch.save(model.to("cpu").state_dict(), modelfile)
 
-    torch.save(model.to("cpu").state_dict(), modelfile)
+    # VISUALIZE
+    model.load_state_dict(torch.load(modelfile, weights_only=True))
+
+    (x, z, t), (mask, _, _, _) = shape.fields_dense()
+    xzt  = torch.stack([x, z, t], dim=3)
+    pred = model(xzt).squeeze(-1) * mask[-1].unsqueeze(0)
+
+    fig = shape.comparison_plot(pred)
+    fig.savefig(imagefile, dpi=300)
 
     return
 
@@ -377,7 +387,7 @@ if __name__ == "__main__":
     # train_cnn(device, outdir, resdir, "hourglass")
 
     # train_cnn_nextstep(device, outdir, resdir, "alldomain")
-    train_cnn_nextstep(device, outdir, resdir, "hourglass")
+    # train_cnn_nextstep(device, outdir, resdir, "hourglass")
 
     # train_scalar_cnn(device, outdir, resdir, "alldomain")
     # train_scalar_cnn(device, outdir, resdir, "hourglass")
