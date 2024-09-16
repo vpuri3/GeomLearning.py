@@ -7,9 +7,7 @@ import math
 __all__ = [
     "MLP",
     "Sine",
-    #
     "SDFClamp",
-    #
     "C2d_block",
     "CT2d_block",
     "double_conv",

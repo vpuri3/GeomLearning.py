@@ -128,7 +128,17 @@ class Shape:
 
         return fig
 
-    def comparison_plot(self, pred, true, nt_plt=5):
+    def comparison_plot(self, pred, nt_plt=5, nextstep=False):
+
+        _, (_, temp, _, _) = self.fields_dense()
+
+        if pred.ndim == 4:
+            pred = pred.squeeze(1) # remove channel dim
+
+        if nextstep: # contains [1:nt-1] so we cat [0]
+            pred = torch.cat([temp[0].unsqueeze(0), pred], dim=0)
+
+        assert pred.shape == temp.shape
 
         fig, axs = plt.subplots(ncols=5, nrows=3, figsize = (15, 9))
         axs[0, 0].set_ylabel(f"True")
@@ -139,7 +149,7 @@ class Shape:
         z = self.z.numpy(force=True)
         t = self.t.numpy(force=True)
 
-        errr = torch.abs(pred - true)
+        errr = torch.abs(pred - temp)
         pred = pred.numpy(force=True)
         errr = errr.numpy(force=True)
 
@@ -147,11 +157,12 @@ class Shape:
         it_plt = torch.round(it_plt).to(torch.int).numpy(force=True)
 
         for (i, it) in enumerate(it_plt):
-            axs[0, i].set_title(f"Time {t[it].item():>2f}")
+            it = it
+            axs[0, i].set_title(f"Time {t[it].item():2f}")
 
-            p0 = axs[0, i].contourf(x, z, true[it, 0, :, :], levels=20, cmap='viridis')
-            p1 = axs[1, i].contourf(x, z, pred[it, 0, :, :], levels=20, cmap='viridis')
-            p2 = axs[2, i].contourf(x, z, errr[it, 0, :, :], levels=20, cmap='viridis')
+            p0 = axs[0, i].contourf(x, z, temp[it, :, :], levels=20, cmap='viridis')
+            p1 = axs[1, i].contourf(x, z, pred[it, :, :], levels=20, cmap='viridis')
+            p2 = axs[2, i].contourf(x, z, errr[it, :, :], levels=20, cmap='viridis')
 
             for j in range(2):
                 axs[j, i].set_xlabel('')

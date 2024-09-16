@@ -15,6 +15,69 @@ import argparse
 import sandbox
 import mlutils
 
+class UNetNextstep(nn.Module):
+    def __init__(self, shape, ci, co):
+        super().__init__()
+
+        M = shape.final_mask().unsqueeze(0).unsqueeze(0)
+        self.register_buffer('M', M)
+        self.unet = mlutils.UNet(ci, co)
+        return
+
+    def forward(self, x):
+        x = self.unet(x)
+        return x * self.M
+#
+def train_cnn_nextstep(device, outdir, resdir, name):
+
+    modelfile = outdir + "cnn_nextstep_" + name + ".pth"
+    imagefile = resdir + "cnn_nextstep_" + name + ".png"
+
+    # DATA
+    if name == "hourglass":
+        nw1 = None
+        nw2 = None
+    elif name == "alldomain":
+        nw1 = torch.inf
+        nw2 = torch.inf
+
+    nx, nz, nt = 256, 256, 100
+    shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
+    data = sandbox.makedata(
+        shape, inputs="T", outputs="T", datatype="image-nextstep",
+        mask="finaltime",
+    )
+
+    # MODEL
+    model = UNetNextstep(shape, 1, 1)
+
+    # TRAIN
+    lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
+    nes = [   2,    5,   10,   10,   10]
+    for i in range(len(lrs)):
+        kw = {
+            "device" : device,
+            "lr" : lrs[i],
+            "_batch_size" : 1,
+            "nepochs" : nes[i],
+        }
+        trainer = mlutils.Trainer(model, data, **kw)
+        trainer.train()
+
+    torch.save(model.to("cpu").state_dict(), modelfile)
+
+    # VISUALIZE
+    model.load_state_dict(torch.load(modelfile, weights_only=True))
+
+    model.eval()
+    xztT, _ = data[:]
+    pred = model(xztT) + xztT
+
+    fig = shape.comparison_plot(pred, nextstep=True)
+    fig.savefig(imagefile, dpi=300)
+
+    return
+
 class UNetCNN(nn.Module):
     def __init__(self, shape, w=128, act=nn.ReLU()):
         super().__init__()
@@ -22,20 +85,18 @@ class UNetCNN(nn.Module):
         M = shape.final_mask().unsqueeze(0).unsqueeze(0)
         self.register_buffer('M', M)
 
-        self.unet = mlutils.UNet(3, 1)
-
         self.encoder = nn.Sequential(                 # [N, 3, 256, 256]
             mlutils.C2d_block(3, w, None, "2x", act), # [128]
             mlutils.C2d_block(w, w, None, "2x", act), # [64]
             mlutils.C2d_block(w, w, None, "2x", act), # [32]
             mlutils.C2d_block(w, w, None, "2x", act), # [16]
         )
-
+        
         self.bottleneck = nn.Sequential( # [N, w, 16, 16]
             nn.Conv2d(w, w, kernel_size=3, padding=1), act, # [16]
             nn.Conv2d(w, w, kernel_size=3, padding=1), act, # [16]
         )
-
+        
         self.decoder = nn.Sequential( # [N, w, 16, 16]
             mlutils.CT2d_block(w, w, None, "2x", act), # 32
             mlutils.CT2d_block(w, w, None, "2x", act), # 64
@@ -49,8 +110,6 @@ class UNetCNN(nn.Module):
         x = self.encoder(x)
         x = self.bottleneck(x)
         x = self.decoder(x)
-
-        # x = self.unet(x)
         return x * self.M
 #
 
@@ -76,30 +135,30 @@ def train_cnn(device, outdir, resdir, name):
     # MODEL
     model = UNetCNN(shape)
     
-    # TRAIN
-    lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
-    nes = [   2,    5,   10,   10,   10]
-    for i in range(len(lrs)):
-        kw = {
-            "device" : device,
-            "lr" : lrs[i],
-            "_batch_size" : 1,
-            "nepochs" : nes[i],
-        }
-        trainer = mlutils.Trainer(model, data, **kw)
-        trainer.train()
-
-    torch.save(model.to("cpu").state_dict(), modelfile)
+    # # TRAIN
+    # lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
+    # nes = [   2,    5,   10,   10,   10]
+    # for i in range(len(lrs)):
+    #     kw = {
+    #         "device" : device,
+    #         "lr" : lrs[i],
+    #         "_batch_size" : 1,
+    #         "nepochs" : nes[i],
+    #     }
+    #     trainer = mlutils.Trainer(model, data, **kw)
+    #     trainer.train()
+    #
+    # torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
     model = UNetCNN(shape)
     model.load_state_dict(torch.load(modelfile, weights_only=True))
 
     model.eval()
-    t, true = data[:]
-    pred = model(t)
+    xzt, _ = data[:]
+    pred = model(xzt)
 
-    fig = shape.comparison_plot(pred, true)
+    fig = shape.comparison_plot(pred)
     fig.savefig(imagefile, dpi=300)
 
     return
@@ -166,10 +225,10 @@ def train_scalar_cnn(device, outdir, resdir, name):
     model.load_state_dict(torch.load(modelfile, weights_only=True))
 
     model.eval()
-    t, true = data[:]
+    t, _ = data[:]
     pred = model(t)
     
-    fig = shape.comparison_plot(pred, true)
+    fig = shape.comparison_plot(pred)
     fig.savefig(imagefile, dpi=300)
 
     return
@@ -310,12 +369,15 @@ if __name__ == "__main__":
     # view_shape(resdir, "hourglass")
 
     # train_mlp_sdf(device, outdir, residr, "hourglass")
-    #
+
     # train_mlp(device, outdir, resdir, "alldomain")
     # train_mlp(device, outdir, resdir, "hourglass")
 
-    train_cnn(device, outdir, resdir, "alldomain")
+    # train_cnn(device, outdir, resdir, "alldomain")
     # train_cnn(device, outdir, resdir, "hourglass")
+
+    # train_cnn_nextstep(device, outdir, resdir, "alldomain")
+    train_cnn_nextstep(device, outdir, resdir, "hourglass")
 
     # train_scalar_cnn(device, outdir, resdir, "alldomain")
     # train_scalar_cnn(device, outdir, resdir, "hourglass")
