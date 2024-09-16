@@ -7,7 +7,12 @@ import math
 __all__ = [
     "MLP",
     "Sine",
+    #
     "SDFClamp",
+    #
+    "C2d_block",
+    #
+    "CT2d_block",
 ]
 
 #------------------------------------------------#
@@ -69,6 +74,71 @@ class SDFClamp(nn.Module):
         self.act = act
     def forward(self, x):
         return self.eps * self.act(x)
+
+#------------------------------------------------#
+# Conv
+#------------------------------------------------#
+def C2d_block(ci, co, k=None, ctype=None, act=None, lnsize=None):
+    """
+    ctype: "kto1": [N, Ci,  k,  k] --> [N, Co, 1, 1] (kernel_size=k)
+    ctype:   "2x": [N, Ci, 2H, 2W] --> [N, Co, H, W] (kernel_size=3 then max pool)
+    ctype:   "4x": [N, Ci, 4H, 4W] --> [N, Co, H, W] (kernel_size=7)
+    """
+
+    layers = []
+
+    if ctype == "kto1":
+        conv = nn.Conv2d(ci, co, kernel_size=k, stride=1, padding=0)
+    elif ctype == "2x": 
+        conv = nn.Conv2d(ci, co, kernel_size=3, stride=1, padding=1)
+    elif ctype == "4x": 
+        conv = nn.Conv2d(ci, co, kernel_size=7, stride=4, padding=3)
+    else:
+        raise NotImplementedError()
+
+    layers.append(conv)
+
+    if lnsize is not None:
+        layers.append(nn.LayerNorm(lnsize))
+
+    if act is not None:
+        layers.append(act)
+
+    if ctype == "2x":
+        pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        layers.append(pool)
+
+    return nn.Sequential(*layers)
+
+#------------------------------------------------#
+# ConvTranspose
+#------------------------------------------------#
+def CT2d_block(ci, co, k=None, ctype=None, act=None, lnsize=None):
+    """
+    ctype: "1tok": [N, Ci, 1, 1] --> [N, Co,  k,  k] (kernel_size=k)
+    ctype:   "2x": [N, Ci, H, W] --> [N, Co, 2H, 2W] (kernel_size=4)
+    ctype:   "4x": [N, Ci, H, W] --> [N, Co, 4H, 4W] (kernel_size=8)
+    """
+    layers = []
+
+    if ctype == "1tok":
+        conv = nn.ConvTranspose2d(ci, co, kernel_size=k, stride=1, padding=0)
+    elif ctype == "2x":
+        conv = nn.ConvTranspose2d(ci, co, kernel_size=4, stride=2, padding=1)
+    elif ctype == "4x":
+        conv = nn.ConvTranspose2d(ci, co, kernel_size=8, stride=4, padding=2)
+    else:
+        raise NotImplementedError()
+
+    layers.append(conv)
+
+    if lnsize is not None:
+        layers.append(nn.LayerNorm(lnsize))
+
+    if act is not None:
+        layers.append(act)
+
+    return nn.Sequential(*layers)
 
 #------------------------------------------------#
 #

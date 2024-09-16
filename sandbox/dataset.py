@@ -70,7 +70,8 @@ def makedata(
     elif datatype == "image":
         # batches over time-dimension
         point = torch.stack(point, dim=1) # [N, C, H, W]
-        value = value.stack(value, dim=1) # [N, C, H, W]
+        value = torch.stack(value, dim=1)
+        value = value * M3D.unsqueeze(1)
     elif datatype == "mesh":
         # get inside points only and create adjacency matrix
         raise NotImplementedError()
@@ -85,20 +86,7 @@ def makedata(
         return torch.utils.data.random_split(data, split)
 #
 
-class TimeImage(Dataset):
-    def __init__(self, shape):
-        (x, z, t), (M, T, D, S) =  shape.fields_dense()
-
-        self.t = t[:, 0, 0]
-        self.M = M[-1, :, :]
-        self.T = T
-        self.shape = shape
-    def __len__(self):
-        return len(self.t)
-    def __getitem__(self, idx):
-        return (self.t[idx], self.M), self.T[idx]
-
-# class SandboxDataset(Dataset):
+# class PointwiseDataset(Dataset):
 #     def __init__(self, nx, nz, nt, nw1=None, nw2=None):
 #         self.shape = SandboxShape(nx, nz, nt, nw1=nw1, nw2=nw2)
 #         return
