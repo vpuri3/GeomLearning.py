@@ -15,52 +15,14 @@ import argparse
 import sandbox
 import mlutils
 
-def comparison_plot(shape, pred, true, nt_plt=5):
-
-    fig, axs = plt.subplots(ncols=5, nrows=3, figsize = (15, 9))
-    axs[0, 0].set_ylabel(f"True")
-    axs[1, 0].set_ylabel(f"Pred")
-    axs[2, 0].set_ylabel(f"Errr")
-
-    x = shape.x.numpy(force=True)
-    z = shape.z.numpy(force=True)
-    t = shape.t.numpy(force=True)
-
-    errr = torch.abs(pred - true)
-    pred = pred.numpy(force=True)
-    errr = errr.numpy(force=True)
-
-    it_plt = torch.linspace(0, shape.nt-1, nt_plt)
-    it_plt = torch.round(it_plt).to(torch.int).numpy(force=True)
-
-    for (i, it) in enumerate(it_plt):
-        axs[0, i].set_title(f"Time {t[it].item():>2f}")
-
-        p0 = axs[0, i].contourf(x, z, true[it, 0, :, :], levels=20, cmap='viridis')
-        p1 = axs[1, i].contourf(x, z, pred[it, 0, :, :], levels=20, cmap='viridis')
-        p2 = axs[2, i].contourf(x, z, errr[it, 0, :, :], levels=20, cmap='viridis')
-
-        for j in range(2):
-            axs[j, i].set_xlabel('')
-            axs[j, i].set_xticks([])
-
-        if i != 0:
-            for j in range(3):
-                axs[j, i].set_ylabel('')
-                axs[j, i].set_yticks([])
-
-        fig.colorbar(p0, ax=axs[0, i])
-        fig.colorbar(p1, ax=axs[1, i])
-        fig.colorbar(p2, ax=axs[2, i])
-
-    return fig
-
 class UNetCNN(nn.Module):
     def __init__(self, shape, w=128, act=nn.ReLU()):
         super().__init__()
 
         M = shape.final_mask().unsqueeze(0).unsqueeze(0)
         self.register_buffer('M', M)
+
+        self.unet = mlutils.UNet(3, 1)
 
         self.encoder = nn.Sequential(                 # [N, 3, 256, 256]
             mlutils.C2d_block(3, w, None, "2x", act), # [128]
@@ -87,73 +49,10 @@ class UNetCNN(nn.Module):
         x = self.encoder(x)
         x = self.bottleneck(x)
         x = self.decoder(x)
+
+        # x = self.unet(x)
         return x * self.M
 #
-
-class CNN(nn.Module):
-    def __init__(self, shape, w=128, act=nn.ReLU()):
-        super().__init__()
-
-        M = shape.final_mask().unsqueeze(0).unsqueeze(0)
-        self.register_buffer('M', M)
-
-        self.downsample = nn.Sequential( # [N, 3, 256, 256]
-            *mlutils.C2d_block(3, w, None, "2x", act, [w, 256, 256]),
-            *mlutils.C2d_block(w, w, None, "2x", act, [w, 128, 128]),
-            *mlutils.C2d_block(w, w, None, "2x", act, [w,  64,  64]),
-            *mlutils.C2d_block(w, w, None, "2x", act, [w,  32,  32]),
-            *mlutils.C2d_block(w, 8, None, "2x", act, [8,  16,  16]),
-        )
-
-        self.upsample = nn.Sequential( # [N, 8, 8, 8]
-            *mlutils.CT2d_block(8, w, None, "2x", act, [w, 16, 16]),
-            *mlutils.CT2d_block(w, w, None, "2x", act, [w, 32, 32]),
-            *mlutils.CT2d_block(w, w, None, "2x", act, [w, 64, 64]),
-            *mlutils.CT2d_block(w, w, None, "2x", act, [w, 128, 128]),
-            *mlutils.CT2d_block(w, 1, None, "2x"),
-        )
-
-    def forward(self, x):
-        x = self.downsample(x)
-        x = self.upsample(x)
-        return x * self.M
-#
-
-class ScalarCNN(nn.Module):
-    def __init__(self, shape, w=128, act = nn.ReLU()):
-        super().__init__()
-
-        M = shape.final_mask().unsqueeze(0).unsqueeze(0)
-        self.register_buffer('M', M)
-
-        # self.mlp = nn.Sequential(
-        #     nn.Linear(1, 512), act,
-        # )
-        # self.cnn = nn.Sequential(
-        #     *mlutils.CT2d_block(8, w, None, "2x", act, [w, 16, 16]),
-        #     *mlutils.CT2d_block(w, w, None, "2x", act, [w, 32, 32]),
-        #     *mlutils.CT2d_block(w, w, None, "2x", act, [w, 64, 64]),
-        #     *mlutils.CT2d_block(w, w, None, "2x", act, [w, 128, 128]),
-        #     *mlutils.CT2d_block(w, 1, None, "2x"),
-        # )
-
-        self.cnn = nn.Sequential(
-            *mlutils.CT2d_block(1, w,  4, "1tok", act, [w,  4,  4]),
-            *mlutils.CT2d_block(w, w, None, "4x", act, [w, 16, 16]),
-            *mlutils.CT2d_block(w, w, None, "4x", act, [w, 64, 64]),
-            *mlutils.CT2d_block(w, 1, None, "4x"),
-        )
-
-        return
-
-    def forward(self, x):
-        x = x.unsqueeze(-1).unsqueeze(-1) # [N, C, H, W]
-
-        # x = self.mlp(x)
-        # x = x.reshape(x.size(0), 8, 8, 8)
-
-        x = self.cnn(x)
-        return x * self.M
 
 def train_cnn(device, outdir, resdir, name):
 
@@ -175,15 +74,17 @@ def train_cnn(device, outdir, resdir, name):
     )
 
     # MODEL
-    model = CNN(shape)
+    model = UNetCNN(shape)
     
     # TRAIN
-    for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
+    lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
+    nes = [   2,    5,   10,   10,   10]
+    for i in range(len(lrs)):
         kw = {
             "device" : device,
-            "lr" : lr,
+            "lr" : lrs[i],
             "_batch_size" : 1,
-            "nepochs" : 20,
+            "nepochs" : nes[i],
         }
         trainer = mlutils.Trainer(model, data, **kw)
         trainer.train()
@@ -191,17 +92,38 @@ def train_cnn(device, outdir, resdir, name):
     torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
-    model = CNN(shape)
+    model = UNetCNN(shape)
     model.load_state_dict(torch.load(modelfile, weights_only=True))
 
     model.eval()
     t, true = data[:]
     pred = model(t)
 
-    fig = comparison_plot(shape, pred, true)
+    fig = shape.comparison_plot(pred, true)
     fig.savefig(imagefile, dpi=300)
 
     return
+
+class ScalarCNN(nn.Module):
+    def __init__(self, shape, w=128, act = nn.ReLU()):
+        super().__init__()
+
+        M = shape.final_mask().unsqueeze(0).unsqueeze(0)
+        self.register_buffer('M', M)
+
+        self.cnn = nn.Sequential(
+            *mlutils.CT2d_block(1, w,  4, "1tok", act, [w,  4,  4]),
+            *mlutils.CT2d_block(w, w, None, "4x", act, [w, 16, 16]),
+            *mlutils.CT2d_block(w, w, None, "4x", act, [w, 64, 64]),
+            *mlutils.CT2d_block(w, 1, None, "4x"),
+        )
+
+        return
+
+    def forward(self, x):
+        x = x.unsqueeze(-1).unsqueeze(-1) # [N, C] --> [N, C, H, W]
+        x = self.cnn(x)
+        return x * self.M
 
 def train_scalar_cnn(device, outdir, resdir, name):
 
@@ -247,7 +169,7 @@ def train_scalar_cnn(device, outdir, resdir, name):
     t, true = data[:]
     pred = model(t)
     
-    fig = comparison_plot(shape, pred, true)
+    fig = shape.comparison_plot(pred, true)
     fig.savefig(imagefile, dpi=300)
 
     return
@@ -393,7 +315,7 @@ if __name__ == "__main__":
     # train_mlp(device, outdir, resdir, "hourglass")
 
     train_cnn(device, outdir, resdir, "alldomain")
-    train_cnn(device, outdir, resdir, "hourglass")
+    # train_cnn(device, outdir, resdir, "hourglass")
 
     # train_scalar_cnn(device, outdir, resdir, "alldomain")
     # train_scalar_cnn(device, outdir, resdir, "hourglass")

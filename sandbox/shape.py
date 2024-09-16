@@ -127,5 +127,44 @@ class Shape:
         # )
 
         return fig
-#
 
+    def comparison_plot(self, pred, true, nt_plt=5):
+
+        fig, axs = plt.subplots(ncols=5, nrows=3, figsize = (15, 9))
+        axs[0, 0].set_ylabel(f"True")
+        axs[1, 0].set_ylabel(f"Pred")
+        axs[2, 0].set_ylabel(f"Errr")
+
+        x = self.x.numpy(force=True)
+        z = self.z.numpy(force=True)
+        t = self.t.numpy(force=True)
+
+        errr = torch.abs(pred - true)
+        pred = pred.numpy(force=True)
+        errr = errr.numpy(force=True)
+
+        it_plt = torch.linspace(0, self.nt-1, nt_plt)
+        it_plt = torch.round(it_plt).to(torch.int).numpy(force=True)
+
+        for (i, it) in enumerate(it_plt):
+            axs[0, i].set_title(f"Time {t[it].item():>2f}")
+
+            p0 = axs[0, i].contourf(x, z, true[it, 0, :, :], levels=20, cmap='viridis')
+            p1 = axs[1, i].contourf(x, z, pred[it, 0, :, :], levels=20, cmap='viridis')
+            p2 = axs[2, i].contourf(x, z, errr[it, 0, :, :], levels=20, cmap='viridis')
+
+            for j in range(2):
+                axs[j, i].set_xlabel('')
+                axs[j, i].set_xticks([])
+
+            if i != 0:
+                for j in range(3):
+                    axs[j, i].set_ylabel('')
+                    axs[j, i].set_yticks([])
+
+            fig.colorbar(p0, ax=axs[0, i])
+            fig.colorbar(p1, ax=axs[1, i])
+            fig.colorbar(p2, ax=axs[2, i])
+
+        return fig
+#
