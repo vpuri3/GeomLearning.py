@@ -55,6 +55,41 @@ def comparison_plot(shape, pred, true, nt_plt=5):
 
     return fig
 
+class UNetCNN(nn.Module):
+    def __init__(self, shape, w=128, act=nn.ReLU()):
+        super().__init__()
+
+        M = shape.final_mask().unsqueeze(0).unsqueeze(0)
+        self.register_buffer('M', M)
+
+        self.encoder = nn.Sequential(                 # [N, 3, 256, 256]
+            mlutils.C2d_block(3, w, None, "2x", act), # [128]
+            mlutils.C2d_block(w, w, None, "2x", act), # [64]
+            mlutils.C2d_block(w, w, None, "2x", act), # [32]
+            mlutils.C2d_block(w, w, None, "2x", act), # [16]
+        )
+
+        self.bottleneck = nn.Sequential( # [N, w, 16, 16]
+            nn.Conv2d(w, w, kernel_size=3, padding=1), act, # [16]
+            nn.Conv2d(w, w, kernel_size=3, padding=1), act, # [16]
+        )
+
+        self.decoder = nn.Sequential( # [N, w, 16, 16]
+            mlutils.CT2d_block(w, w, None, "2x", act), # 32
+            mlutils.CT2d_block(w, w, None, "2x", act), # 64
+            mlutils.CT2d_block(w, w, None, "2x", act), # 128
+            mlutils.CT2d_block(w, 1, None, "2x", act), # 256
+        )
+
+        return
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.bottleneck(x)
+        x = self.decoder(x)
+        return x * self.M
+#
+
 class CNN(nn.Module):
     def __init__(self, shape, w=128, act=nn.ReLU()):
         super().__init__()
@@ -195,7 +230,7 @@ def train_scalar_cnn(device, outdir, resdir, name):
     for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
         kw = {
             "device" : device,
-            "lr" : 1e-4,
+            "lr" : lr,
             "_batch_size" : 1,
             "nepochs" : 20,
         }
@@ -357,7 +392,7 @@ if __name__ == "__main__":
     # train_mlp(device, outdir, resdir, "alldomain")
     # train_mlp(device, outdir, resdir, "hourglass")
 
-    # train_cnn(device, outdir, resdir, "alldomain")
+    train_cnn(device, outdir, resdir, "alldomain")
     train_cnn(device, outdir, resdir, "hourglass")
 
     # train_scalar_cnn(device, outdir, resdir, "alldomain")

@@ -72,6 +72,14 @@ def makedata(
         point = torch.stack(point, dim=1) # [N, C, H, W]
         value = torch.stack(value, dim=1)
         value = value * M3D.unsqueeze(1)
+    elif datatype == "image-nextstep":
+        # batches over time-dimension
+        point = torch.stack(point, dim=1)
+        value = torch.stack(value, dim=1) # [N, C, H, W]
+        value = value * M3D.unsqueeze(1)
+
+        point = point[0:-1] 
+        value = value[1:] - value[0:-1]
     elif datatype == "mesh":
         # get inside points only and create adjacency matrix
         raise NotImplementedError()
