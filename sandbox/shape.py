@@ -92,7 +92,7 @@ class Shape:
         iz = idx // self.nx
         return (ix, iz)
 
-    def compute_final_graph(self):
+    def compute_final_graph(self, bidirectional=True, debug=False):
         M = self.final_mask()
 
         idx_cart = torch.argwhere(M)
@@ -103,6 +103,18 @@ class Shape:
         _iz, iz_ = iz - 1, iz + 1
 
         # map invalid indices to torch.nan
+        if debug:
+            print(f"Number of invalid indices")
+            print(torch.argwhere(_ix < 0).len)
+            print(torch.argwhere(_iz < 0).len)
+            print(torch.argwhere(_ix >= self.nx).len)
+            print(torch.argwhere(_iz >= self.nz).len)
+
+        int_max = torch.iinfo(ix.dtype).max
+        _ix[torch.argwhere(_ix < 0)] = int_max
+        _iz[torch.argwhere(_iz < 0)] = int_max
+        ix_[torch.argwhere(_ix >= self.nx)] = int_max
+        iz_[torch.argwhere(_iz >= self.nz)] = int_max
 
         # compute linear indices
         idx_lin = self.linear_index( ix, iz )
@@ -129,7 +141,9 @@ class Shape:
         top_edges = torch.cat([idx_lin[itop], top_lin[itop]], dim=1)
         btm_edges = torch.cat([idx_lin[ibtm], btm_lin[ibtm]], dim=1)
 
-        # remove duplicates here
+        if not bidirectional:
+            # prune between left/right, up/down
+            raise NotImplementedError()
 
         edges = torch.cat([
             lft_edges,
@@ -141,10 +155,9 @@ class Shape:
         return edges, idx_lin, idx_cart
 
     def plot_final_graph(self):
-        edges, idx_lin, idx_cart = self.compute_final_graph()
+        edges, _, idx_cart = self.compute_final_graph()
 
         edges    = edges.numpy(force=True)
-        idx_lin  = idx_lin.numpy(force=True)
         idx_cart = idx_cart.numpy(force=True)
 
         # background graph

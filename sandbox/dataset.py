@@ -83,17 +83,26 @@ def makedata(
         value = value[1:] - value[0:-1]
     elif datatype == "graph":
 
+        assert mask == "finaltime"
+
         point = torch.stack(point, dim=point[0].ndim) # [Nt, Nz, Nx, C]
         value = torch.stack(value, dim=value[0].ndim)
 
-        idx, edges = shape.create_final_graph()
-        iz, ix =  idx[:, 0], idx[:, 1]
+        edges, idx_lin, idx_cart = shape.create_final_graph()
+        iz, ix =  idx_cart[:, 0], idx_cart[:, 1]
 
         # node features # (Temp, time)
         point = point[:, ix, iz, :] # [Nt, V, C]
         value = value[:, ix, iz, :]
 
-        # edge features
+        # edge features # (x-relative, z-relative)
+        x = x.reshape(self.nt, -1)
+        z = z.reshape(self.nt, -1)
+
+        ex = x[:, edges[:, 0]] - x[:, edges[1]]
+        ez = z[:, edges[:, 0]] - z[:, edges[1]]
+
+        edge_features = torch.stack([ex, ez], dim=1)
 
         raise NotImplementedError(f"Mesh datatype not implemented.")
     else:

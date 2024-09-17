@@ -38,10 +38,10 @@ def train_loop(model, data, lrs=None, nepochs=None, **kw):
 
 def train_gnn_nextstep(device, outdir, resdir, name, train=True):
 
-    modelfile  = outdir + "cnn_nextstep_" + name + ".pth"
-    graphfile  = resdir + "cnn_nextstep_" + name + "_graph" + ".png"
-    imagefile1 = resdir + "cnn_nextstep_" + name + ".png"
-    imagefile2 = resdir + "cnn_nextstep_" + name + "_autoregressive" + ".png"
+    modelfile  = outdir + "gnn_nextstep_" + name + ".pth"
+    graphfile  = resdir + "gnn_nextstep_" + name + "_graph" + ".png"
+    imagefile1 = resdir + "gnn_nextstep_" + name + ".png"
+    imagefile2 = resdir + "gnn_nextstep_" + name + "_autoregressive" + ".png"
 
     # DATA
     if name == "hourglass":
@@ -57,19 +57,14 @@ def train_gnn_nextstep(device, outdir, resdir, name, train=True):
     fig.savefig(graphfile, dpi=300)
 
     # nx, nz, nt = 128, 128, 100
-    # data = sandbox.makedata(
-    #     shape, inputs="tT", outputs="T", datatype="graph",
-    #     mask="finaltime",
-    # )
-
-    # idx, edges = shape.compute_final_graph()
-    # print(f"idx  shape: {idx.shape}")
-    # print(f"edge shape: {edges.shape}")
+    shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
+    data = sandbox.makedata(
+        shape, inputs="tT", outputs="T", datatype="graph", mask="finaltime",
+    )
 
     # # MODEL
     # ci, co, k = 2, 1, 3
     # model = MaskedUNet(shape, ci, co, k)
-    #
 
     # # MODEL
     # ci, co, k = 2, 1, 3
@@ -417,7 +412,7 @@ if __name__ == "__main__":
     # train_cnn(device, outdir, resdir, "hourglass")
 
     # train_gnn_nextstep(device, outdir, resdir, "alldomain")
-    # train_gnn_nextstep(device, outdir, resdir, "hourglass")
+    train_gnn_nextstep(device, outdir, resdir, "hourglass")
 
     # train_cnn_nextstep(device, outdir, resdir, "alldomain", train=False)
     # train_cnn_nextstep(device, outdir, resdir, "hourglass", train=False)
