@@ -76,6 +76,7 @@ def makedata(
         # batches over time-dimension
         point = torch.stack(point, dim=1)
         value = torch.stack(value, dim=1) # [N, C, H, W]
+        # point = point * M3D.unsqueeze(1)
         value = value * M3D.unsqueeze(1)
 
         point = point[0:-1] 
@@ -92,39 +93,4 @@ def makedata(
         return data
     else:
         return torch.utils.data.random_split(data, split)
-#
-
-# class PointwiseDataset(Dataset):
-#     def __init__(self, nx, nz, nt, nw1=None, nw2=None):
-#         self.shape = SandboxShape(nx, nz, nt, nw1=nw1, nw2=nw2)
-#         return
-#
-#     def __len__(self):
-#         return (self.shape.nx * self.shape.nz * self.shape.nt)
-#
-#     def __getitems__(self, idx):
-#         idx = torch.tensor(idx).to(torch.int) # list -> tensor
-#
-#         nx = self.shape.nx
-#         nz = self.shape.nz
-#         nt = self.shape.nt
-#
-#         # get indices
-#         it  = torch.floor(idx / (nx * nz)) % nt
-#         ixz = idx - (it * nt)
-#         iz  = torch.floor(ixz / nx)        % nz # extra % never hurts
-#         ix  = (ixz % nz)                   % nx
-#
-#         x = self.shape.x[ix.to(int)]
-#         z = self.shape.z[iz.to(int)]
-#         t = self.shape.t[it.to(int)]
-#
-#         mask, temp, disp, sdf = self.shape.fields(x, z, t)
-#
-#         point = torch.stack([x, z, t], dim=1)
-#         value = torch.stack([temp], dim=1)
-#
-#         # return point, value
-#         return [(point[i], value[i]) for i in range(point.size(0))]
-
 #

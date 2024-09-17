@@ -132,9 +132,6 @@ class Shape:
 
         _, (_, temp, _, _) = self.fields_dense()
 
-        if nextstep: # contains [1:nt-1] so we cat [0]
-            pred = torch.cat([temp[0].unsqueeze(0), pred], dim=0)
-
         assert pred.shape == temp.shape
 
         fig, axs = plt.subplots(ncols=5, nrows=3, figsize = (15, 9))
@@ -154,7 +151,6 @@ class Shape:
         it_plt = torch.round(it_plt).to(torch.int).numpy(force=True)
 
         for (i, it) in enumerate(it_plt):
-            it = it
             axs[0, i].set_title(f"Time {t[it].item():2f}")
 
             p0 = axs[0, i].contourf(x, z, temp[it, :, :], levels=20, cmap='viridis')

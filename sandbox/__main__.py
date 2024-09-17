@@ -15,6 +15,27 @@ import argparse
 import sandbox
 import mlutils
 
+def train_loop(model, lrs=None, nepochs=None, **kw):
+
+    if lrs is None:
+        lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
+
+    if nepochs is None:
+        nepochs = [2, 5, 10, 10, 10]
+
+    assert len(lrs) == len(nepochs)
+
+    for i in range(len(lrs)):
+        kw = {
+            **kw,
+            "lr" : lrs[i],
+            "nepochs" : nepochs[i],
+        }
+        trainer = mlutils.Trainer(model, data, **kw)
+        trainer.train()
+
+    return model
+
 class MaskedUNet(nn.Module):
     def __init__(self, shape, ci, co, k):
         super().__init__()
@@ -31,8 +52,9 @@ class MaskedUNet(nn.Module):
 
 def train_cnn_nextstep(device, outdir, resdir, name, train=True):
 
-    modelfile = outdir + "cnn_nextstep_" + name + ".pth"
-    imagefile = resdir + "cnn_nextstep_" + name + ".png"
+    modelfile  = outdir + "cnn_nextstep_" + name + ".pth"
+    imagefile1 = resdir + "cnn_nextstep_" + name + ".png"
+    imagefile2 = resdir + "cnn_nextstep_" + name + "_autoregressive" + ".png"
 
     # DATA
     if name == "hourglass":
@@ -55,29 +77,32 @@ def train_cnn_nextstep(device, outdir, resdir, name, train=True):
 
     # TRAIN
     if train:
-        lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
-        nes = [   2,    5,   10,   10,   10]
-        for i in range(len(lrs)):
-            kw = {
-                "device" : device,
-                "lr" : lrs[i],
-                "_batch_size" : 1,
-                "nepochs" : nes[i],
-            }
-            trainer = mlutils.Trainer(model, data, **kw)
-            trainer.train()
-
+        train_loop(model, device=device, _batch_size=1)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
+    model.eval()
     model.load_state_dict(torch.load(modelfile, weights_only=True))
 
-    model.eval()
-    xztT, _ = data[:]
-    pred = (model(xztT) + xztT[:, -1].unsqueeze(1)).squeeze(1)
+    with torch.no_grad():
+        xztT, _ = data[:]
 
-    fig = shape.comparison_plot(pred, nextstep=True)
-    fig.savefig(imagefile, dpi=300)
+        pred1 = (model(xztT) + xztT[:, -1].unsqueeze(1)).squeeze(1)
+        pred1 = torch.cat([xztT[0, -1].unsqueeze(0), pred1], dim=0)
+
+        fig1 = shape.comparison_plot(pred1)
+        fig1.savefig(imagefile1, dpi=300)
+
+        preds2 = []
+        preds2.append(xztT[0, -1].unsqueeze(0))
+        for i in range(xztT.shape[0]):
+            pred2 = preds2[-1]
+            pred2 = pred2 + model(xztT[i].unsqueeze(0)).squeeze(1)
+            preds2.append(pred2)
+        pred2 = torch.cat(preds2, dim=0)
+
+        fig2 = shape.comparison_plot(pred2)
+        fig2.savefig(imagefile2, dpi=300)
 
     return
 
@@ -106,18 +131,7 @@ def train_cnn(device, outdir, resdir, name, train=True):
 
     # TRAIN
     if train:
-        lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
-        nes = [   2,    5,   10,   10,   10]
-        for i in range(len(lrs)):
-            kw = {
-                "device" : device,
-                "lr" : lrs[i],
-                "_batch_size" : 1,
-                "nepochs" : nes[i],
-            }
-            trainer = mlutils.Trainer(model, data, **kw)
-            trainer.train()
-
+        train_loop(model, device=device, _batch_size=1)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -178,16 +192,7 @@ def train_scalar_cnn(device, outdir, resdir, name, train=True):
     
     # TRAIN
     if train:
-        for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
-            kw = {
-                "device" : device,
-                "lr" : lr,
-                "_batch_size" : 1,
-                "nepochs" : 20,
-            }
-            trainer = mlutils.Trainer(model, data, **kw)
-            trainer.train()
-        
+        train_loop(model, device=device, _batch_size=1)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -226,19 +231,7 @@ def train_mlp_sdf(device, outdir, resdir, train=True):
 
     # TRAIN
     if train:
-        for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
-            kw = {
-                "device" : device,
-                "lr" : lr,
-                "_batch_size" : 128,
-                "nepochs" : 5,
-                "Schedule" : None,
-                "lossfun" : nn.L1Loss(),
-            }
-
-            trainer = mlutils.Trainer(model, _data, data_, **kw)
-            trainer.train()
-
+        train_loop(model, device=device, _batch_size=128, lossfun=nn.L1Loss())
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -274,17 +267,7 @@ def train_mlp(device, outdir, resdir, name, train=True):
 
     # TRAIN
     if train:
-        for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
-            kw = {
-                "device" : device,
-                "lr" : lr,
-                "_batch_size" : 512,
-                "nepochs" : 10,
-                "Schedule" : None,
-            }
-            trainer = mlutils.Trainer(model, _data, data_, **kw)
-            trainer.train()
-        
+        train_loop(model, device=device, _batch_size=512)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -360,8 +343,8 @@ if __name__ == "__main__":
     # train_cnn(device, outdir, resdir, "alldomain")
     # train_cnn(device, outdir, resdir, "hourglass")
 
-    # train_cnn_nextstep(device, outdir, resdir, "alldomain")
-    # train_cnn_nextstep(device, outdir, resdir, "hourglass")
+    # train_cnn_nextstep(device, outdir, resdir, "alldomain", train=False)
+    # train_cnn_nextstep(device, outdir, resdir, "hourglass", train=False)
 
     # train_scalar_cnn(device, outdir, resdir, "alldomain")
     # train_scalar_cnn(device, outdir, resdir, "hourglass")
