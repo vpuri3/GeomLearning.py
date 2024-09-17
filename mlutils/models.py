@@ -200,5 +200,16 @@ class UNet(nn.Module):
         out = self.conv_last(x)
 
         return out
+
+#------------------------------------------------#
+# Graph Neural Networks
+#------------------------------------------------#
+# import torch_scatter
+# import torch_geometric
+#
+# from torch_geometric.nn.conv import MessagePassing
+# from torch_geometric.data import Data, DataLoader
+
+
 #------------------------------------------------#
 #

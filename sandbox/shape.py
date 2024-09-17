@@ -2,6 +2,8 @@
 import torch
 
 import numpy as np
+
+import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 
@@ -81,6 +83,112 @@ class Shape:
     def final_mask(self):
         _, (M, _, _, _) = self.fields_dense()
         return M[-1]
+
+    def linear_index(self, ix, iz):
+        return iz * self.nx + ix
+
+    def cartesian_index(self, idx):
+        ix = idx  % self.nx
+        iz = idx // self.nx
+        return (ix, iz)
+
+    def compute_final_graph(self):
+        M = self.final_mask()
+
+        idx_cart = torch.argwhere(M)
+        iz, ix =  idx_cart[:, 0], idx_cart[:, 1]
+
+        # left/right/top/bottom neighbors
+        _ix, ix_ = ix - 1, ix + 1
+        _iz, iz_ = iz - 1, iz + 1
+
+        # map invalid indices to torch.nan
+
+        # compute linear indices
+        idx_lin = self.linear_index( ix, iz )
+        lft_lin = self.linear_index(_ix, iz )
+        rgt_lin = self.linear_index(ix_, iz )
+        top_lin = self.linear_index( ix, _iz)
+        btm_lin = self.linear_index( ix, iz_)
+
+        # only consider neighbors that are in idx_cart
+        lft_in = torch.isin(lft_lin, idx_lin)
+        rgt_in = torch.isin(rgt_lin, idx_lin)
+        top_in = torch.isin(top_lin, idx_lin)
+        btm_in = torch.isin(btm_lin, idx_lin)
+
+        # get indices of valid neighbors
+        ilft = torch.argwhere(lft_in)
+        irgt = torch.argwhere(rgt_in)
+        itop = torch.argwhere(top_in)
+        ibtm = torch.argwhere(btm_in)
+
+        # create edge if neighbor is in idx_cart
+        lft_edges = torch.cat([idx_lin[ilft], lft_lin[ilft]], dim=1)
+        rgt_edges = torch.cat([idx_lin[irgt], rgt_lin[irgt]], dim=1)
+        top_edges = torch.cat([idx_lin[itop], top_lin[itop]], dim=1)
+        btm_edges = torch.cat([idx_lin[ibtm], btm_lin[ibtm]], dim=1)
+
+        # remove duplicates here
+
+        edges = torch.cat([
+            lft_edges,
+            rgt_edges,
+            top_edges,
+            btm_edges,
+        ], dim=0)
+
+        return edges, idx_lin, idx_cart
+
+    def plot_final_graph(self):
+        edges, idx_lin, idx_cart = self.compute_final_graph()
+
+        edges    = edges.numpy(force=True)
+        idx_lin  = idx_lin.numpy(force=True)
+        idx_cart = idx_cart.numpy(force=True)
+
+        # background graph
+        bg_graph = nx.Graph()
+        bg_nodes = [(ix, iz) for ix in range(self.nx) for iz in range(self.nz)]
+        bg_edgeH = [((ix, iz), (ix+1, iz)) for ix in range(self.nx-1) for iz in range(self.nz)]
+        bg_edgeV = [((ix, iz), (ix, iz+1)) for ix in range(self.nx) for iz in range(self.nz-1)]
+        
+        bg_graph.add_nodes_from(bg_nodes)
+        bg_graph.add_edges_from(bg_edgeH)
+        bg_graph.add_edges_from(bg_edgeV)
+
+        # active graph
+        graph = nx.Graph()
+        nodes = [(idx[1], idx[0]) for idx in idx_cart]
+        _ix, _iz = self.cartesian_index(edges[:, 0])
+        ix_, iz_ = self.cartesian_index(edges[:, 1])
+
+        edges = [((_ix[i], _iz[i]), (ix_[i], iz_[i])) for i in range(len(_ix))]
+
+        graph.add_nodes_from(nodes)
+        graph.add_edges_from(edges)
+
+        # make plot
+        fig, ax = plt.subplots(1, 1)
+
+        bg_pos = {(ix, iz): (self.x[ix], self.z[iz]) for (ix, iz) in bg_graph.nodes()}
+        nx.draw(bg_graph, bg_pos, ax=ax,
+            node_color="gray", edge_color="gray", node_size=10, # with_labels=True, font_size=8,
+        )
+
+        pos = {(ix, iz): (self.x[ix], self.z[iz]) for (ix, iz) in graph.nodes()}
+        nx.draw(graph, pos, ax=ax,
+            node_color="red", edge_color="black", node_size=10,
+        )
+
+        ax.axhline(y=0, color='black', linestyle='--')
+        ax.axvline(x=0, color='black', linestyle='--')
+
+        # ax.grid(True)
+        # ax.set_xlabel("x")
+        # ax.set_ylabel("y")
+
+        return fig
 
     def plot(self, nt_plt = 5):
         _, (mask, temp, disp, sdf) = self.fields_dense()

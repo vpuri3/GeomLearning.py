@@ -51,8 +51,8 @@ def makedata(
     value = add_fields_to_list(outputs, fields)
 
     if datatype == "pointcloud":
-        point = torch.stack(point, dim=point[0].ndim) # channel dim
-        value = torch.stack(value, dim=value[0].ndim) # at the end
+        point = torch.stack(point, dim=point[0].ndim) # [Nt, Nz, Nx, C]
+        value = torch.stack(value, dim=value[0].ndim)
 
         point = point.flatten(0, 2) # [N, C]
         value = value.flatten(0, 2)
@@ -81,11 +81,23 @@ def makedata(
 
         point = point[0:-1] 
         value = value[1:] - value[0:-1]
-    elif datatype == "mesh":
-        # get inside points only and create adjacency matrix
-        raise NotImplementedError()
+    elif datatype == "graph":
+
+        point = torch.stack(point, dim=point[0].ndim) # [Nt, Nz, Nx, C]
+        value = torch.stack(value, dim=value[0].ndim)
+
+        idx, edges = shape.create_final_graph()
+        iz, ix =  idx[:, 0], idx[:, 1]
+
+        # node features # (Temp, time)
+        point = point[:, ix, iz, :] # [Nt, V, C]
+        value = value[:, ix, iz, :]
+
+        # edge features
+
+        raise NotImplementedError(f"Mesh datatype not implemented.")
     else:
-        raise NotImplementedError()
+        raise NotImplementedError(f"Got incompatible datatype: {datatype}.")
 
     data = TensorDataset(point, value)
 

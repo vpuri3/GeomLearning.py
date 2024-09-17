@@ -15,7 +15,7 @@ import argparse
 import sandbox
 import mlutils
 
-def train_loop(model, lrs=None, nepochs=None, **kw):
+def train_loop(model, data, lrs=None, nepochs=None, **kw):
 
     if lrs is None:
         lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
@@ -35,6 +35,76 @@ def train_loop(model, lrs=None, nepochs=None, **kw):
         trainer.train()
 
     return model
+
+def train_gnn_nextstep(device, outdir, resdir, name, train=True):
+
+    modelfile  = outdir + "cnn_nextstep_" + name + ".pth"
+    graphfile  = resdir + "cnn_nextstep_" + name + "_graph" + ".png"
+    imagefile1 = resdir + "cnn_nextstep_" + name + ".png"
+    imagefile2 = resdir + "cnn_nextstep_" + name + "_autoregressive" + ".png"
+
+    # DATA
+    if name == "hourglass":
+        nw1 = None
+        nw2 = None
+    elif name == "alldomain":
+        nw1 = torch.inf
+        nw2 = torch.inf
+
+    nx, nz, nt = 32, 32, 100
+    shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
+    fig = shape.plot_final_graph()
+    fig.savefig(graphfile, dpi=300)
+
+    # nx, nz, nt = 128, 128, 100
+    # data = sandbox.makedata(
+    #     shape, inputs="tT", outputs="T", datatype="graph",
+    #     mask="finaltime",
+    # )
+
+    # idx, edges = shape.compute_final_graph()
+    # print(f"idx  shape: {idx.shape}")
+    # print(f"edge shape: {edges.shape}")
+
+    # # MODEL
+    # ci, co, k = 2, 1, 3
+    # model = MaskedUNet(shape, ci, co, k)
+    #
+
+    # # MODEL
+    # ci, co, k = 2, 1, 3
+    # model = MaskedUNet(shape, ci, co, k)
+    #
+    # # TRAIN
+    # if train:
+    #     train_loop(model, data, device=device, _batch_size=1)
+    #     torch.save(model.to("cpu").state_dict(), modelfile)
+    #
+    # # VISUALIZE
+    # model.eval()
+    # model.load_state_dict(torch.load(modelfile, weights_only=True))
+    #
+    # with torch.no_grad():
+    #     xztT, _ = data[:]
+    #
+    #     pred1 = (model(xztT) + xztT[:, -1].unsqueeze(1)).squeeze(1)
+    #     pred1 = torch.cat([xztT[0, -1].unsqueeze(0), pred1], dim=0)
+    #
+    #     fig1 = shape.comparison_plot(pred1)
+    #     fig1.savefig(imagefile1, dpi=300)
+    #
+    #     preds2 = []
+    #     preds2.append(xztT[0, -1].unsqueeze(0))
+    #     for i in range(xztT.shape[0]):
+    #         pred2 = preds2[-1]
+    #         pred2 = pred2 + model(xztT[i].unsqueeze(0)).squeeze(1)
+    #         preds2.append(pred2)
+    #     pred2 = torch.cat(preds2, dim=0)
+    #
+    #     fig2 = shape.comparison_plot(pred2)
+    #     fig2.savefig(imagefile2, dpi=300)
+
+    return
 
 class MaskedUNet(nn.Module):
     def __init__(self, shape, ci, co, k):
@@ -77,7 +147,7 @@ def train_cnn_nextstep(device, outdir, resdir, name, train=True):
 
     # TRAIN
     if train:
-        train_loop(model, device=device, _batch_size=1)
+        train_loop(model, data, device=device, _batch_size=1)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -131,7 +201,7 @@ def train_cnn(device, outdir, resdir, name, train=True):
 
     # TRAIN
     if train:
-        train_loop(model, device=device, _batch_size=1)
+        train_loop(model, data, device=device, _batch_size=1)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -192,7 +262,7 @@ def train_scalar_cnn(device, outdir, resdir, name, train=True):
     
     # TRAIN
     if train:
-        train_loop(model, device=device, _batch_size=1)
+        train_loop(model, data, device=device, _batch_size=1)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -231,7 +301,7 @@ def train_mlp_sdf(device, outdir, resdir, train=True):
 
     # TRAIN
     if train:
-        train_loop(model, device=device, _batch_size=128, lossfun=nn.L1Loss())
+        train_loop(model, data, device=device, _batch_size=128, lossfun=nn.L1Loss())
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -267,7 +337,7 @@ def train_mlp(device, outdir, resdir, name, train=True):
 
     # TRAIN
     if train:
-        train_loop(model, device=device, _batch_size=512)
+        train_loop(model, data, device=device, _batch_size=512)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -284,7 +354,8 @@ def train_mlp(device, outdir, resdir, name, train=True):
 
 def view_shape(resdir, name):
 
-    imagefile = resdir + name + ".png"
+    imagefile = resdir + "image_" + name + ".png"
+    graphfile = resdir + "graph_" + name + ".png"
 
     if name == "hourglass":
         nw1 = None
@@ -293,15 +364,17 @@ def view_shape(resdir, name):
         nw1 = torch.inf
         nw2 = torch.inf
 
-    nx = 512
-    nz = 512
-    nt = 20
-
-    fig_kw = {"dpi" : 300,}
-
+    # image
+    nx, nz, nt = 512, 512, 10
     shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
     fig = shape.plot()
-    fig.savefig(imagefile, **fig_kw)
+    fig.savefig(imagefile, dpi=300)
+
+    # graph
+    nx, nz, nt = 32, 32, 10
+    shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
+    fig = shape.plot_final_graph()
+    fig.savefig(graphfile, dpi=300)
 
     return
 #
@@ -342,6 +415,9 @@ if __name__ == "__main__":
 
     # train_cnn(device, outdir, resdir, "alldomain")
     # train_cnn(device, outdir, resdir, "hourglass")
+
+    # train_gnn_nextstep(device, outdir, resdir, "alldomain")
+    # train_gnn_nextstep(device, outdir, resdir, "hourglass")
 
     # train_cnn_nextstep(device, outdir, resdir, "alldomain", train=False)
     # train_cnn_nextstep(device, outdir, resdir, "hourglass", train=False)

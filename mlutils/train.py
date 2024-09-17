@@ -5,6 +5,8 @@ from torch import nn, optim
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 
+from tqdm import tqdm
+
 # builtin
 import math
 import time # todo
@@ -179,12 +181,24 @@ class Trainer:
 
         return
 
+    @staticmethod
+    def print_train_banner(epoch, nepochs):
+        print(f"-------------------------------")
+        print(f"Epoch {epoch} / {nepochs}")
+        print(f"-------------------------------")
+
+        return
+
     def train_epoch(self):
         self.model.train()
-        nbatches = len(self._loader)
-        printbatch = math.floor(nbatches / 10)
 
-        for (batch, (x, u)) in enumerate(self._loader):
+        batch_iterator = enumerate(self._loader)
+        batch_iterator = tqdm(
+            batch_iterator, total=len(self._loader),
+            bar_format='{n_fmt}/{total_fmt} {desc}{bar}[{rate_fmt}]'
+        )
+
+        for (batch, (x, u)) in batch_iterator:
             x, u = x.to(self.device), u.to(self.device)
 
             uh = self.model(x)
@@ -195,13 +209,10 @@ class Trainer:
             self.schedule.step()
             self.opt.zero_grad()
 
-            if batch % printbatch == 0:
-                print(
-                    f"[{batch:>5d} / {nbatches:>5d}]\t" +
-                    f"LR: {self.schedule.get_last_lr()[0]:>.3e}\t" +
-                    f" BATCH LOSS = {loss.item():>.8e}"
-                )
-            #
+            batch_iterator.set_description(
+                f"LR: {self.schedule.get_last_lr()[0]:.2e} " +
+                f"LOSS: {loss.item():.8e}"
+            )
         #
 
         return
@@ -257,12 +268,4 @@ class Trainer:
         #
 
         return (_loss, _stats), (loss_, stats_)
-
-    @staticmethod
-    def print_train_banner(epoch, nepochs):
-        print(f"-------------------------------")
-        print(f"Epoch {epoch} / {nepochs}")
-        print(f"-------------------------------")
-
-        return
 #
