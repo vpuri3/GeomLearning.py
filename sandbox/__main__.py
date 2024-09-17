@@ -15,20 +15,21 @@ import argparse
 import sandbox
 import mlutils
 
-class UNetNextstep(nn.Module):
-    def __init__(self, shape, ci, co):
+class MaskedUNet(nn.Module):
+    def __init__(self, shape, ci, co, k):
         super().__init__()
 
         M = shape.final_mask().unsqueeze(0).unsqueeze(0)
         self.register_buffer('M', M)
-        self.unet = mlutils.UNet(ci, co)
+        self.unet = mlutils.UNet(ci, co, k)
         return
 
     def forward(self, x):
         x = self.unet(x)
         return x * self.M
 #
-def train_cnn_nextstep(device, outdir, resdir, name):
+
+def train_cnn_nextstep(device, outdir, resdir, name, train=True):
 
     modelfile = outdir + "cnn_nextstep_" + name + ".pth"
     imagefile = resdir + "cnn_nextstep_" + name + ".png"
@@ -44,76 +45,43 @@ def train_cnn_nextstep(device, outdir, resdir, name):
     nx, nz, nt = 256, 256, 100
     shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
     data = sandbox.makedata(
-        shape, inputs="T", outputs="T", datatype="image-nextstep",
+        shape, inputs="tT", outputs="T", datatype="image-nextstep",
         mask="finaltime",
     )
 
     # MODEL
-    model = UNetNextstep(shape, 1, 1)
+    ci, co, k = 2, 1, 3
+    model = MaskedUNet(shape, ci, co, k)
 
     # TRAIN
-    lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
-    nes = [   2,    5,   10,   10,   10]
-    for i in range(len(lrs)):
-        kw = {
-            "device" : device,
-            "lr" : lrs[i],
-            "_batch_size" : 1,
-            "nepochs" : nes[i],
-        }
-        trainer = mlutils.Trainer(model, data, **kw)
-        trainer.train()
+    if train:
+        lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
+        nes = [   2,    5,   10,   10,   10]
+        for i in range(len(lrs)):
+            kw = {
+                "device" : device,
+                "lr" : lrs[i],
+                "_batch_size" : 1,
+                "nepochs" : nes[i],
+            }
+            trainer = mlutils.Trainer(model, data, **kw)
+            trainer.train()
 
-    torch.save(model.to("cpu").state_dict(), modelfile)
+        torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
     model.load_state_dict(torch.load(modelfile, weights_only=True))
 
     model.eval()
     xztT, _ = data[:]
-    pred = (model(xztT) + xztT).squeeze(1)
+    pred = (model(xztT) + xztT[:, -1].unsqueeze(1)).squeeze(1)
 
     fig = shape.comparison_plot(pred, nextstep=True)
     fig.savefig(imagefile, dpi=300)
 
     return
 
-class UNetCNN(nn.Module):
-    def __init__(self, shape, w=128, act=nn.ReLU()):
-        super().__init__()
-
-        M = shape.final_mask().unsqueeze(0).unsqueeze(0)
-        self.register_buffer('M', M)
-
-        self.encoder = nn.Sequential(                 # [N, 3, 256, 256]
-            mlutils.C2d_block(3, w, None, "2x", act), # [128]
-            mlutils.C2d_block(w, w, None, "2x", act), # [64]
-            mlutils.C2d_block(w, w, None, "2x", act), # [32]
-            mlutils.C2d_block(w, w, None, "2x", act), # [16]
-        )
-        
-        self.bottleneck = nn.Sequential( # [N, w, 16, 16]
-            nn.Conv2d(w, w, kernel_size=3, padding=1), act, # [16]
-            nn.Conv2d(w, w, kernel_size=3, padding=1), act, # [16]
-        )
-        
-        self.decoder = nn.Sequential( # [N, w, 16, 16]
-            mlutils.CT2d_block(w, w, None, "2x", act), # 32
-            mlutils.CT2d_block(w, w, None, "2x", act), # 64
-            mlutils.CT2d_block(w, w, None, "2x", act), # 128
-            mlutils.CT2d_block(w, 1, None, "2x", act), # 256
-        )
-
-        return
-
-    def forward(self, x):
-        x = self.encoder(x)
-        x = self.bottleneck(x)
-        x = self.decoder(x)
-        return x * self.M
-#
-
-def train_cnn(device, outdir, resdir, name):
+def train_cnn(device, outdir, resdir, name, train=True):
 
     modelfile = outdir + "cnn_" + name + ".pth"
     imagefile = resdir + "cnn_" + name + ".png"
@@ -133,25 +101,26 @@ def train_cnn(device, outdir, resdir, name):
     )
 
     # MODEL
-    model = UNetCNN(shape)
-    
-    # # TRAIN
-    # lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
-    # nes = [   2,    5,   10,   10,   10]
-    # for i in range(len(lrs)):
-    #     kw = {
-    #         "device" : device,
-    #         "lr" : lrs[i],
-    #         "_batch_size" : 1,
-    #         "nepochs" : nes[i],
-    #     }
-    #     trainer = mlutils.Trainer(model, data, **kw)
-    #     trainer.train()
-    #
-    # torch.save(model.to("cpu").state_dict(), modelfile)
+    ci, co, k = 3, 1, 3
+    model = MaskedUNet(shape, ci, co, k)
+
+    # TRAIN
+    if train:
+        lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
+        nes = [   2,    5,   10,   10,   10]
+        for i in range(len(lrs)):
+            kw = {
+                "device" : device,
+                "lr" : lrs[i],
+                "_batch_size" : 1,
+                "nepochs" : nes[i],
+            }
+            trainer = mlutils.Trainer(model, data, **kw)
+            trainer.train()
+
+        torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
-    model = UNetCNN(shape)
     model.load_state_dict(torch.load(modelfile, weights_only=True))
 
     model.eval()
@@ -184,7 +153,7 @@ class ScalarCNN(nn.Module):
         x = self.cnn(x)
         return x * self.M
 
-def train_scalar_cnn(device, outdir, resdir, name):
+def train_scalar_cnn(device, outdir, resdir, name, train=True):
 
     modelfile = outdir + "scalar_cnn_" + name + ".pth"
     imagefile = resdir + "scalar_cnn_" + name + ".png"
@@ -208,17 +177,18 @@ def train_scalar_cnn(device, outdir, resdir, name):
     model = ScalarCNN(shape)
     
     # TRAIN
-    for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
-        kw = {
-            "device" : device,
-            "lr" : lr,
-            "_batch_size" : 1,
-            "nepochs" : 20,
-        }
-        trainer = mlutils.Trainer(model, data, **kw)
-        trainer.train()
-    
-    torch.save(model.to("cpu").state_dict(), modelfile)
+    if train:
+        for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
+            kw = {
+                "device" : device,
+                "lr" : lr,
+                "_batch_size" : 1,
+                "nepochs" : 20,
+            }
+            trainer = mlutils.Trainer(model, data, **kw)
+            trainer.train()
+        
+        torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
     model = ScalarCNN(shape)
@@ -233,7 +203,7 @@ def train_scalar_cnn(device, outdir, resdir, name):
 
     return
 
-def train_mlp_sdf(device, outdir, resdir):
+def train_mlp_sdf(device, outdir, resdir, train=True):
 
     modelfile = outdir + "mlp_sdf" + ".pth"
     imagefile = resdir + "mlp_sdf" + ".png"
@@ -255,24 +225,27 @@ def train_mlp_sdf(device, outdir, resdir):
     model = nn.Sequential(*model, mlutils.SDFClamp(sdf_clamp))
 
     # TRAIN
-    for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
-        kw = {
-            "device" : device,
-            "lr" : lr,
-            "_batch_size" : 128,
-            "nepochs" : 5,
-            "Schedule" : None,
-            "lossfun" : nn.L1Loss(),
-        }
+    if train:
+        for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
+            kw = {
+                "device" : device,
+                "lr" : lr,
+                "_batch_size" : 128,
+                "nepochs" : 5,
+                "Schedule" : None,
+                "lossfun" : nn.L1Loss(),
+            }
 
-        trainer = mlutils.Trainer(model, _data, data_, **kw)
-        trainer.train()
+            trainer = mlutils.Trainer(model, _data, data_, **kw)
+            trainer.train()
 
-    torch.save(model.to("cpu").state_dict(), modelfile)
+        torch.save(model.to("cpu").state_dict(), modelfile)
+
+    # VISUALIZE
 
     return
 
-def train_mlp(device, outdir, resdir, name):
+def train_mlp(device, outdir, resdir, name, train=True):
 
     modelfile = outdir + "mlp" + name + ".pth"
     imagefile = resdir + "mlp" + name + ".png"
@@ -299,19 +272,20 @@ def train_mlp(device, outdir, resdir, name):
     out_dim = next(iter(_data))[1].shape[0]
     model = mlutils.MLP(in_dim, out_dim, width, hidden_dim, siren=True)
 
-    # # TRAIN
-    # for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
-    #     kw = {
-    #         "device" : device,
-    #         "lr" : lr,
-    #         "_batch_size" : 512,
-    #         "nepochs" : 10,
-    #         "Schedule" : None,
-    #     }
-    #     trainer = mlutils.Trainer(model, _data, data_, **kw)
-    #     trainer.train()
-    #
-    # torch.save(model.to("cpu").state_dict(), modelfile)
+    # TRAIN
+    if train:
+        for lr in [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]:
+            kw = {
+                "device" : device,
+                "lr" : lr,
+                "_batch_size" : 512,
+                "nepochs" : 10,
+                "Schedule" : None,
+            }
+            trainer = mlutils.Trainer(model, _data, data_, **kw)
+            trainer.train()
+        
+        torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
     model.load_state_dict(torch.load(modelfile, weights_only=True))

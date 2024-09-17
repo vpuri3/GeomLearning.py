@@ -143,30 +143,32 @@ def CT2d_block(ci, co, k=None, ctype=None, act=None, lnsize=None):
 # UNet
 # https://github.com/usuyama/pytorch-unet
 #------------------------------------------------#
-def double_conv(ci, co):
+def double_conv(ci, co, k):
+    assert k % 2 == 1
+    p = (k - 1) // 2
+
     return nn.Sequential(
-        nn.Conv2d(ci, co, kernel_size=3, padding=1),
+        nn.Conv2d(ci, co, kernel_size=k, padding=p),
         nn.ReLU(inplace=True),
-        nn.Conv2d(co, co, kernel_size=3, padding=1),
+        nn.Conv2d(co, co, kernel_size=k, padding=p),
         nn.ReLU(inplace=True)
     )
 
-
 class UNet(nn.Module):
-    def __init__(self, ci, co):
+    def __init__(self, ci, co, k):
         super().__init__()
 
-        self.dconv_down1 = double_conv(ci, 64)
-        self.dconv_down2 = double_conv(64, 128)
-        self.dconv_down3 = double_conv(128, 256)
-        self.dconv_down4 = double_conv(256, 512)
+        self.dconv_down1 = double_conv(ci ,  64, k)
+        self.dconv_down2 = double_conv(64 , 128, k)
+        self.dconv_down3 = double_conv(128, 256, k)
+        self.dconv_down4 = double_conv(256, 512, k)
 
         self.maxpool = nn.MaxPool2d(2)
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)        
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
-        self.dconv_up3 = double_conv(256 + 512, 256)
-        self.dconv_up2 = double_conv(128 + 256, 128)
-        self.dconv_up1 = double_conv(128 + 64, 64)
+        self.dconv_up3 = double_conv(256 + 512, 256, k)
+        self.dconv_up2 = double_conv(128 + 256, 128, k)
+        self.dconv_up1 = double_conv(128 +  64,  64, k)
 
         self.conv_last = nn.Conv2d(64, co, 1)
 
@@ -187,11 +189,11 @@ class UNet(nn.Module):
 
         x = self.dconv_up3(x)
         x = self.upsample(x)        
-        x = torch.cat([x, conv2], dim=1)       
+        x = torch.cat([x, conv2], dim=1)
 
         x = self.dconv_up2(x)
         x = self.upsample(x)        
-        x = torch.cat([x, conv1], dim=1)   
+        x = torch.cat([x, conv1], dim=1)
 
         x = self.dconv_up1(x)
 

@@ -80,7 +80,7 @@ class Shape:
 
     def final_mask(self):
         _, (M, _, _, _) = self.fields_dense()
-        return M[-1, :, :]
+        return M[-1]
 
     def plot(self, nt_plt = 5):
         _, (mask, temp, disp, sdf) = self.fields_dense()
