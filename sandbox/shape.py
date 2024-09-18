@@ -102,19 +102,19 @@ class Shape:
         _ix, ix_ = ix - 1, ix + 1
         _iz, iz_ = iz - 1, iz + 1
 
-        # map invalid indices to torch.nan
+        # map invalid indices to typemax(int)
         if debug:
             print(f"Number of invalid indices")
-            print(torch.argwhere(_ix < 0).len)
-            print(torch.argwhere(_iz < 0).len)
-            print(torch.argwhere(_ix >= self.nx).len)
-            print(torch.argwhere(_iz >= self.nz).len)
+            print(len(torch.argwhere(_ix < 0)))
+            print(len(torch.argwhere(_iz < 0)))
+            print(len(torch.argwhere(ix_ >= self.nx)))
+            print(len(torch.argwhere(iz_ >= self.nz)))
 
         int_max = torch.iinfo(ix.dtype).max
         _ix[torch.argwhere(_ix < 0)] = int_max
         _iz[torch.argwhere(_iz < 0)] = int_max
-        ix_[torch.argwhere(_ix >= self.nx)] = int_max
-        iz_[torch.argwhere(_iz >= self.nz)] = int_max
+        ix_[torch.argwhere(ix_ >= self.nx)] = int_max
+        iz_[torch.argwhere(iz_ >= self.nz)] = int_max
 
         # compute linear indices
         idx_lin = self.linear_index( ix, iz )
@@ -154,8 +154,8 @@ class Shape:
 
         return edges, idx_lin, idx_cart
 
-    def plot_final_graph(self):
-        edges, _, idx_cart = self.compute_final_graph()
+    def plot_final_graph(self, debug=False):
+        edges, _, idx_cart = self.compute_final_graph(debug=debug)
 
         edges    = edges.numpy(force=True)
         idx_cart = idx_cart.numpy(force=True)

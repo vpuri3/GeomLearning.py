@@ -400,8 +400,8 @@ if __name__ == "__main__":
     outdir = "./out/"
     resdir = "./res/"
 
-    # view_shape(resdir, "alldomain")
-    # view_shape(resdir, "hourglass")
+    view_shape(resdir, "alldomain")
+    view_shape(resdir, "hourglass")
 
     # train_mlp_sdf(device, outdir, residr, "hourglass")
 
@@ -412,7 +412,7 @@ if __name__ == "__main__":
     # train_cnn(device, outdir, resdir, "hourglass")
 
     # train_gnn_nextstep(device, outdir, resdir, "alldomain")
-    train_gnn_nextstep(device, outdir, resdir, "hourglass")
+    # train_gnn_nextstep(device, outdir, resdir, "hourglass")
 
     # train_cnn_nextstep(device, outdir, resdir, "alldomain", train=False)
     # train_cnn_nextstep(device, outdir, resdir, "hourglass", train=False)
