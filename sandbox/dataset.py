@@ -99,10 +99,10 @@ def makedata(
         x = x.reshape(self.nt, -1)
         z = z.reshape(self.nt, -1)
 
-        ex = x[:, edges[:, 0]] - x[:, edges[1]]
-        ez = z[:, edges[:, 0]] - z[:, edges[1]]
+        edge_x = x[:, edges[:, 0]] - x[:, edges[1]]
+        edge_z = z[:, edges[:, 0]] - z[:, edges[1]]
 
-        edge_features = torch.stack([ex, ez], dim=1)
+        edge_features = torch.stack([edge_x, edge_z], dim=1)
 
         raise NotImplementedError(f"Mesh datatype not implemented.")
     else:

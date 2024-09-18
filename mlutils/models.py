@@ -2,16 +2,25 @@
 import torch
 from torch import nn
 
+import torch_scatter
+import torch_geometric
+from torch_geometric.nn import MessagePassing
+
 import math
 
 __all__ = [
     "MLP",
     "Sine",
     "SDFClamp",
+    #
     "C2d_block",
     "CT2d_block",
-    "double_conv",
+    #
     "UNet",
+    "double_conv",
+    #
+    "MeshGraphNet",
+    "MeshGraphLayer",
 ]
 
 #------------------------------------------------#
@@ -52,15 +61,15 @@ class Sine(nn.Module):
     def forward(x):
         return torch.sin(x)
 
+@torch.no_grad()
 def siren_init_(layer: nn.Linear, w):
-    with torch.no_grad():
+    fan = nn.init._calculate_correct_fan(layer.weight, "fan_in")
+    bound = math.sqrt(6 / fan)
 
-        fan = nn.init._calculate_correct_fan(layer.weight, "fan_in")
-        bound = math.sqrt(6 / fan)
+    layer.bias.uniform_(-math.pi, math.pi)
+    layer.weight.uniform_(-bound, bound)
+    layer.weight.mul_(w)
 
-        layer.bias.uniform_(-math.pi, math.pi)
-        layer.weight.uniform_(-bound, bound)
-        layer.weight.mul_(w)
     return
 
 #------------------------------------------------#
@@ -75,7 +84,7 @@ class SDFClamp(nn.Module):
         return self.eps * self.act(x)
 
 #------------------------------------------------#
-# Conv
+# Conv blocks
 #------------------------------------------------#
 def C2d_block(ci, co, k=None, ctype=None, act=None, lnsize=None):
     """
@@ -110,7 +119,7 @@ def C2d_block(ci, co, k=None, ctype=None, act=None, lnsize=None):
     return nn.Sequential(*layers)
 
 #------------------------------------------------#
-# ConvTranspose
+# ConvTranspose blocks
 #------------------------------------------------#
 def CT2d_block(ci, co, k=None, ctype=None, act=None, lnsize=None):
     """
@@ -202,14 +211,90 @@ class UNet(nn.Module):
         return out
 
 #------------------------------------------------#
-# Graph Neural Networks
+# MeshGraphNets
+# https://medium.com/stanford-cs224w/learning-mesh-based-flow-simulations-on-graph-networks-44983679cf2d
 #------------------------------------------------#
-# import torch_scatter
-# import torch_geometric
+class MeshGraphNet(nn.Module):
+    def __init__(self, ci_node, ci_edge, co, hidden_dim, num_layers, **kwargs):
+        super().__init__()
+
+        self.node_encoder = nn.Sequential(
+            nn.Linear(ci_node, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+        )
+
+        self.edge_encoder = nn.Sequential(
+            nn.Linear(ci_edge, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+        )
+
+        self.processor = nn.ModuleList()
+        for _ in range(num_layers):
+            layer = MeshGraphLayer(hidden_dim, hidden_dim, **kwargs)
+            self.processor.append(layer)
+
+        self.decoder = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, co),
+        )
+
+        return
+
+    def forward(self, data):
+        xn, xe = data.x, data.edge_attr
+
+        xn = self.node_encoder(xn)
+        xe = self.edge_encoder(xe)
+
+        for layer in self.processor:
+            xn, xe = layer(xn, xe, data.edge_index)
+
+        xn = self.decoder(xn)
+
+        return xn
 #
-# from torch_geometric.nn.conv import MessagePassing
-# from torch_geometric.data import Data, DataLoader
 
+class MeshGraphLayer(MessagePassing):
+    def __init__(self, ci, co, **kwargs):
+        super().__init__(**kwargs)
 
+        self.node_mlp = nn.Sequential(
+            nn.Linear(ci, co)
+            nn.ReLU(),
+            nn.Linear(co, co),
+            nn.LayerNorm(co),
+        )
+
+        self.edge_mlp = nn.Sequential(
+            nn.Linear(ci, co)
+            nn.ReLU(),
+            nn.Linear(co, co),
+            nn.LayerNorm(co),
+        )
+
+        return
+
+    def forward(self, xn, xe, edge_index):
+        yn, ye = self.propagate(edge_index, x=xn, edge_attr=xe)
+
+        yn = torch.cat([yn, xn], dim=1) # self-aggregation
+        yn = self.node_mlp(yn)          # process
+        yn = yn + xn                    # residual connection
+
+        return yn, ye
+
+    def message(self, xi, xj, xe):
+        return
+
+    def aggregate(self, ye, edge_index):
+        # aggregate through concatenation
+        # maybe we need to modify as nodes have different degrees
+        return
+#
 #------------------------------------------------#
 #

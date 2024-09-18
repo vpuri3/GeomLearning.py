@@ -57,7 +57,7 @@ def train_gnn_nextstep(device, outdir, resdir, name, train=True):
     fig.savefig(graphfile, dpi=300)
 
     # nx, nz, nt = 128, 128, 100
-    shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
+    # shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
     data = sandbox.makedata(
         shape, inputs="tT", outputs="T", datatype="graph", mask="finaltime",
     )
@@ -296,7 +296,7 @@ def train_mlp_sdf(device, outdir, resdir, train=True):
 
     # TRAIN
     if train:
-        train_loop(model, data, device=device, _batch_size=128, lossfun=nn.L1Loss())
+        train_loop(model, _data, data_=data_, device=device, _batch_size=128, lossfun=nn.L1Loss())
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -366,7 +366,7 @@ def view_shape(resdir, name):
     fig.savefig(imagefile, dpi=300)
 
     # graph
-    nx, nz, nt = 32, 32, 10
+    nx, nz, nt = 16, 16, 10
     shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
     fig = shape.plot_final_graph()
     fig.savefig(graphfile, dpi=300)
@@ -376,11 +376,7 @@ def view_shape(resdir, name):
 
 if __name__ == "__main__":
 
-    # random seed
-    seed = 0
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+    mlutils.set_seed()
 
     parser = argparse.ArgumentParser(description = 'Sandbox')
     parser.add_argument('--gpu_device', default=0, help='GPU device', type=int)
@@ -400,10 +396,10 @@ if __name__ == "__main__":
     outdir = "./out/"
     resdir = "./res/"
 
-    view_shape(resdir, "alldomain")
-    view_shape(resdir, "hourglass")
+    # view_shape(resdir, "alldomain")
+    # view_shape(resdir, "hourglass")
 
-    # train_mlp_sdf(device, outdir, residr, "hourglass")
+    # train_mlp_sdf(device, outdir, resdir, "hourglass")
 
     # train_mlp(device, outdir, resdir, "alldomain")
     # train_mlp(device, outdir, resdir, "hourglass")

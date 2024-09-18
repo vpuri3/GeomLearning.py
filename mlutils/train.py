@@ -49,7 +49,7 @@ class Trainer:
         # TODO: loader pin_memory=True, pin_memory_device=device
         # would then remove batch.to(device) calls in training loop
         # TODO: loader sampler (replacement = True)
-        # check out minigpt for reference
+        # check out minigpt for reference on adding callbacks
 
         if device is None:
             device = (
@@ -65,6 +65,14 @@ class Trainer:
             _batch_size = 32
         if __batch_size is None:
             __batch_size = len(_data)
+        #
+
+        # branch on isinstance(_data, torch.utils.data.Dataset)
+
+        # if isinstance(_data[0], torch_geometric.data.Data):
+        #     pass
+        # else: # use torch
+        #     pass
 
         _loader  = DataLoader(_data, batch_size=_batch_size)
         __loader = DataLoader(_data, batch_size=__batch_size, shuffle=False)
@@ -192,13 +200,12 @@ class Trainer:
     def train_epoch(self):
         self.model.train()
 
-        batch_iterator = enumerate(self._loader)
         batch_iterator = tqdm(
-            batch_iterator, total=len(self._loader),
-            bar_format='{n_fmt}/{total_fmt} {desc}{bar}[{rate_fmt}]'
+            self._loader,
+            bar_format='{n_fmt}/{total_fmt} {desc}{bar}[{rate_fmt}]',
         )
 
-        for (batch, (x, u)) in batch_iterator:
+        for (x, u) in batch_iterator:
             x, u = x.to(self.device), u.to(self.device)
 
             uh = self.model(x)
@@ -217,6 +224,7 @@ class Trainer:
 
         return
 
+    @torch.no_grad()
     def evaluate(self, loader):
         self.model.eval()
 
@@ -226,16 +234,15 @@ class Trainer:
         # if statsfun:
         #     pass
 
-        with torch.no_grad():
-            for (x, u) in loader:
-                x, u = x.to(self.device), u.to(self.device)
-                uh = self.model(x)
-                loss = self.lossfun(uh, u)
-                avg_loss += loss.item()
+        for (x, u) in loader:
+            x, u = x.to(self.device), u.to(self.device)
+            uh = self.model(x)
+            loss = self.lossfun(uh, u)
+            avg_loss += loss.item()
 
-                # if statsfun:
-                #     pass
-                #
+            # if statsfun:
+            #     pass
+            #
             #
         #
 

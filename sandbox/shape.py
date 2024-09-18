@@ -171,7 +171,7 @@ class Shape:
         bg_graph.add_edges_from(bg_edgeV)
 
         # active graph
-        graph = nx.Graph()
+        graph = nx.DiGraph()
         nodes = [(idx[1], idx[0]) for idx in idx_cart]
         _ix, _iz = self.cartesian_index(edges[:, 0])
         ix_, iz_ = self.cartesian_index(edges[:, 1])
