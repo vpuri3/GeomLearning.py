@@ -85,7 +85,7 @@ def train_gnn_nextstep(device, outdir, resdir, name, train=True):
     #     pred1 = (model(xztT) + xztT[:, -1].unsqueeze(1)).squeeze(1)
     #     pred1 = torch.cat([xztT[0, -1].unsqueeze(0), pred1], dim=0)
     #
-    #     fig1 = shape.comparison_plot(pred1)
+    #     fig1 = shape.plot_compare(pred1)
     #     fig1.savefig(imagefile1, dpi=300)
     #
     #     preds2 = []
@@ -96,7 +96,7 @@ def train_gnn_nextstep(device, outdir, resdir, name, train=True):
     #         preds2.append(pred2)
     #     pred2 = torch.cat(preds2, dim=0)
     #
-    #     fig2 = shape.comparison_plot(pred2)
+    #     fig2 = shape.plot_compare(pred2)
     #     fig2.savefig(imagefile2, dpi=300)
 
     return
@@ -155,7 +155,7 @@ def train_cnn_nextstep(device, outdir, resdir, name, train=True):
         pred1 = (model(xztT) + xztT[:, -1].unsqueeze(1)).squeeze(1)
         pred1 = torch.cat([xztT[0, -1].unsqueeze(0), pred1], dim=0)
 
-        fig1 = shape.comparison_plot(pred1)
+        fig1 = shape.plot_compare(pred1)
         fig1.savefig(imagefile1, dpi=300)
 
         preds2 = []
@@ -166,7 +166,7 @@ def train_cnn_nextstep(device, outdir, resdir, name, train=True):
             preds2.append(pred2)
         pred2 = torch.cat(preds2, dim=0)
 
-        fig2 = shape.comparison_plot(pred2)
+        fig2 = shape.plot_compare(pred2)
         fig2.savefig(imagefile2, dpi=300)
 
     return
@@ -206,7 +206,7 @@ def train_cnn(device, outdir, resdir, name, train=True):
     xzt, _ = data[:]
     pred = model(xzt).squeeze(1)
 
-    fig = shape.comparison_plot(pred)
+    fig = shape.plot_compare(pred)
     fig.savefig(imagefile, dpi=300)
 
     return
@@ -268,7 +268,7 @@ def train_scalar_cnn(device, outdir, resdir, name, train=True):
     t, _ = data[:]
     pred = model(t).squeeze(1)
     
-    fig = shape.comparison_plot(pred)
+    fig = shape.plot_compare(pred)
     fig.savefig(imagefile, dpi=300)
 
     return
@@ -342,7 +342,7 @@ def train_mlp(device, outdir, resdir, name, train=True):
     xzt  = torch.stack([x, z, t], dim=3)
     pred = model(xzt).squeeze(-1) * mask[-1].unsqueeze(0)
 
-    fig = shape.comparison_plot(pred)
+    fig = shape.plot_compare(pred)
     fig.savefig(imagefile, dpi=300)
 
     return
@@ -350,6 +350,8 @@ def train_mlp(device, outdir, resdir, name, train=True):
 def view_shape(resdir, name):
 
     imagefile = resdir + "image_" + name + ".png"
+    histfile  = resdir + "hist_"  + name + ".png"
+    distfile  = resdir + "dist_"  + name + ".png"
     graphfile = resdir + "graph_" + name + ".png"
 
     if name == "hourglass":
@@ -362,8 +364,15 @@ def view_shape(resdir, name):
     # image
     nx, nz, nt = 512, 512, 10
     shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
+
     fig = shape.plot()
     fig.savefig(imagefile, dpi=300)
+
+    fig = shape.plot_history()
+    fig.savefig(histfile, dpi=300)
+
+    fig = shape.plot_distribution()
+    fig.savefig(distfile, dpi=300)
 
     # graph
     nx, nz, nt = 16, 16, 10
@@ -396,7 +405,7 @@ if __name__ == "__main__":
     outdir = "./out/"
     resdir = "./res/"
 
-    # view_shape(resdir, "alldomain")
+    view_shape(resdir, "alldomain")
     # view_shape(resdir, "hourglass")
 
     # train_mlp_sdf(device, outdir, resdir, "hourglass")

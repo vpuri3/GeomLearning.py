@@ -264,14 +264,14 @@ class MeshGraphLayer(MessagePassing):
         super().__init__(**kwargs)
 
         self.node_mlp = nn.Sequential(
-            nn.Linear(ci, co)
+            nn.Linear(2 * ci, co),
             nn.ReLU(),
             nn.Linear(co, co),
             nn.LayerNorm(co),
         )
 
         self.edge_mlp = nn.Sequential(
-            nn.Linear(ci, co)
+            nn.Linear(3 * ci, co),
             nn.ReLU(),
             nn.Linear(co, co),
             nn.LayerNorm(co),
@@ -280,21 +280,26 @@ class MeshGraphLayer(MessagePassing):
         return
 
     def forward(self, xn, xe, edge_index):
-        yn, ye = self.propagate(edge_index, x=xn, edge_attr=xe)
+        msg, ye = self.propagate(edge_index, x=xn, edge_attr=xe)
 
-        yn = torch.cat([yn, xn], dim=1) # self-aggregation
-        yn = self.node_mlp(yn)          # process
-        yn = yn + xn                    # residual connection
+        yn = torch.cat([msg, xn], dim=1) # cat messages with node features
+        yn = self.node_mlp(yn)           # apply node MLP
+        yn = yn + xn                     # residual connection
 
         return yn, ye
 
-    def message(self, xi, xj, xe):
-        return
+    def message(self, x_i, x_j, xe):
+        ye = torch.cat([x_i, x_j, xe], dim=1) # cat node and edge features
+        ye = self.edge_mlp(ye)                # apply edge MLP
+        ye = xe + ye                          # residual connection
+
+        return ye
 
     def aggregate(self, ye, edge_index):
-        # aggregate through concatenation
-        # maybe we need to modify as nodes have different degrees
-        return
+        node_dim=0
+        msg = torch_scatter.scatter(ye, edge_index[0,:], dim=node_dim, reduce='sum')
+
+        return msg, ye
 #
 #------------------------------------------------#
 #

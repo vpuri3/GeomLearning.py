@@ -33,7 +33,7 @@ class Shape:
      `t ∈ [ 0, 1]`
 
     """
-    def __init__(self, nx, nz, nt, nw1=None, nw2=None):
+    def __init__(self, nx, nz, nt, nw1=None, nw2=None, blend=False):
         self.nx = nx
         self.nz = nz
         self.nt = nt
@@ -45,6 +45,8 @@ class Shape:
 
         self.nw1 = nw1
         self.nw2 = nw2
+
+        self.blend = blend
 
         self.x = torch.linspace(-1, 1, nx)
         self.z = torch.linspace( 0, 1, nz)
@@ -61,6 +63,7 @@ class Shape:
         temp = 1 + z - torch.sin(t)
         disp = torch.zeros(x.size()) * torch.nan
 
+        # SDF
         bdist = torch.abs(z)
         tdist = torch.abs(z - t)
         rdist = torch.abs(torch.abs(x) - radius)
@@ -154,6 +157,7 @@ class Shape:
 
         return edges, idx_lin, idx_cart
 
+    @torch.no_grad()
     def plot_final_graph(self, debug=False):
         edges, _, idx_cart = self.compute_final_graph(debug=debug)
 
@@ -203,6 +207,7 @@ class Shape:
 
         return fig
 
+    @torch.no_grad()
     def plot(self, nt_plt = 5):
         _, (mask, temp, disp, sdf) = self.fields_dense()
 
@@ -249,7 +254,8 @@ class Shape:
 
         return fig
 
-    def comparison_plot(self, pred, nt_plt=5, nextstep=False):
+    @torch.no_grad()
+    def plot_compare(self, pred, nt_plt=5, nextstep=False):
 
         _, (_, temp, _, _) = self.fields_dense()
 
@@ -290,6 +296,46 @@ class Shape:
             fig.colorbar(p0, ax=axs[0, i])
             fig.colorbar(p1, ax=axs[1, i])
             fig.colorbar(p2, ax=axs[2, i])
+
+        return fig
+
+    @torch.no_grad()
+    def plot_history(self, nz=5):
+        x = torch.zeros(nz, self.nt)
+        z = torch.linspace(0, 1, nz).reshape(-1, 1) * torch.ones(1, self.nt)
+        t = torch.ones(nz, 1) * self.t.reshape(1, -1)
+
+        _, temp, _, _ = self.fields(x, z, t)
+
+        fig, ax = plt.subplots(1,1)
+
+        for iz in range(nz):
+            ax.plot(self.t, temp[iz, :], label=f"z={z[iz, 0].item():.2e}")
+
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Temperature")
+        ax.legend(loc="center left")
+        ax.set_title("Temperature history")
+
+        return fig
+
+    @torch.no_grad()
+    def plot_distribution(self, nt=5):
+        x = torch.zeros(nt, self.nz)
+        z = torch.ones(nt, 1) * self.z.reshape(1, -1)
+        t = torch.linspace(0, 1, nt).reshape(-1, 1) * torch.ones(1, self.nz)
+
+        _, temp, _, _ = self.fields(x, z, t)
+
+        fig, ax = plt.subplots(1,1)
+
+        for it in range(nt):
+            ax.plot(self.z, temp[it, :], label=f"t={t[it, 0].item():.2e}")
+
+        ax.set_xlabel("Z-Position")
+        ax.set_ylabel("Temperature")
+        ax.legend(loc="center right")
+        ax.set_title("Temperature distribution along centerline")
 
         return fig
 #
