@@ -36,12 +36,19 @@ def train_loop(model, data, lrs=None, nepochs=None, **kw):
 
     return model
 
-def train_gnn_nextstep(device, outdir, resdir, name, train=True):
+def train_gnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
 
-    modelfile  = outdir + "gnn_nextstep_" + name + ".pth"
-    graphfile  = resdir + "gnn_nextstep_" + name + "_graph" + ".png"
-    imagefile1 = resdir + "gnn_nextstep_" + name + ".png"
-    imagefile2 = resdir + "gnn_nextstep_" + name + "_autoregressive" + ".png"
+    outname = outdir + "gnn_nextstep_" + name
+    resname = resdir + "gnn_nextstep_" + name
+
+    if blend:
+        outname = outname + "_blend"
+        resname = resname + "_blend"
+
+    modelfile  = outname + ".pth"
+    graphfile  = resname + "_graph" + ".png"
+    imagefile1 = resname + ".png"
+    imagefile2 = resname + "_autoregressive" + ".png"
 
     # DATA
     if name == "hourglass":
@@ -115,11 +122,18 @@ class MaskedUNet(nn.Module):
         return x * self.M
 #
 
-def train_cnn_nextstep(device, outdir, resdir, name, train=True):
+def train_cnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
 
-    modelfile  = outdir + "cnn_nextstep_" + name + ".pth"
-    imagefile1 = resdir + "cnn_nextstep_" + name + ".png"
-    imagefile2 = resdir + "cnn_nextstep_" + name + "_autoregressive" + ".png"
+    outname = outdir + "cnn_nextstep_" + name
+    resname = resdir + "cnn_nextstep_" + name
+
+    if blend:
+        outname = outname + "_blend"
+        resname = resname + "_blend"
+
+    modelfile  = outname + ".pth"
+    imagefile1 = resname + ".png"
+    imagefile2 = resname + "_autoregressive" + ".png"
 
     # DATA
     if name == "hourglass":
@@ -130,7 +144,7 @@ def train_cnn_nextstep(device, outdir, resdir, name, train=True):
         nw2 = torch.inf
 
     nx, nz, nt = 256, 256, 100
-    shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
+    shape = sandbox.Shape(nx, nz, nt, nw1, nw2, blend=blend)
     data = sandbox.makedata(
         shape, inputs="tT", outputs="T", datatype="image-nextstep",
         mask="finaltime",
@@ -305,8 +319,8 @@ def train_mlp_sdf(device, outdir, resdir, train=True):
 
 def train_mlp(device, outdir, resdir, name, train=True):
 
-    modelfile = outdir + "mlp" + name + ".pth"
-    imagefile = resdir + "mlp" + name + ".png"
+    modelfile = outdir + "mlp_" + name + ".pth"
+    imagefile = resdir + "mlp_" + name + ".png"
 
     # DATA
 
@@ -347,12 +361,16 @@ def train_mlp(device, outdir, resdir, name, train=True):
 
     return
 
-def view_shape(resdir, name):
+def view_shape(resdir, name, blend=False):
 
-    imagefile = resdir + "image_" + name + ".png"
-    histfile  = resdir + "hist_"  + name + ".png"
-    distfile  = resdir + "dist_"  + name + ".png"
-    graphfile = resdir + "graph_" + name + ".png"
+    basename = resdir + "shape_" + name
+    if blend:
+        basename = basename + "_blend"
+
+    imagefile = basename + "_image" + ".png"
+    histfile  = basename + "_hist"  + ".png"
+    distfile  = basename + "_dist"  + ".png"
+    graphfile = basename + "_graph" + ".png"
 
     if name == "hourglass":
         nw1 = None
@@ -362,8 +380,8 @@ def view_shape(resdir, name):
         nw2 = torch.inf
 
     # image
-    nx, nz, nt = 512, 512, 10
-    shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
+    nx, nz, nt = 512, 512, 100
+    shape = sandbox.Shape(nx, nz, nt, nw1, nw2, blend=blend)
 
     fig = shape.plot()
     fig.savefig(imagefile, dpi=300)
@@ -405,8 +423,11 @@ if __name__ == "__main__":
     outdir = "./out/"
     resdir = "./res/"
 
-    view_shape(resdir, "alldomain")
+    # view_shape(resdir, "alldomain")
+    # view_shape(resdir, "alldomain", blend=True)
+    #
     # view_shape(resdir, "hourglass")
+    # view_shape(resdir, "hourglass", blend=True)
 
     # train_mlp_sdf(device, outdir, resdir, "hourglass")
 
@@ -421,6 +442,9 @@ if __name__ == "__main__":
 
     # train_cnn_nextstep(device, outdir, resdir, "alldomain", train=False)
     # train_cnn_nextstep(device, outdir, resdir, "hourglass", train=False)
+
+    # train_cnn_nextstep(device, outdir, resdir, "alldomain", blend=True, train=True)
+    # train_cnn_nextstep(device, outdir, resdir, "hourglass", blend=True, train=True)
 
     # train_scalar_cnn(device, outdir, resdir, "alldomain")
     # train_scalar_cnn(device, outdir, resdir, "hourglass")

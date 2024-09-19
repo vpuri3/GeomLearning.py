@@ -54,29 +54,42 @@ class Shape:
 
         return
 
-    def fields(self, x, z, t):
+    def fields(self, x, z, t, tol=1e-6):
         radius = self.nw1 * (self.nw2 - torch.sin(torch.pi * z))
-        global_mask = torch.lt(torch.abs(x), radius)
-        time_mask = torch.lt(z, t)
+        side_mask_bool = torch.lt(torch.abs(x), radius)
 
-        mask = global_mask * time_mask
+        if self.blend:
+            d = t - z
+            time_mask = torch.sigmoid(50 * d)
+            time_mask_bool = time_mask > tol
+        else:
+            time_mask = torch.lt(z, t)
+            time_mask_bool = time_mask
+
+        mask      = side_mask_bool * time_mask
+        mask_bool = side_mask_bool * time_mask_bool
+
         temp = 1 + z - torch.sin(t)
         disp = torch.zeros(x.size()) * torch.nan
+
+        # apply mask
+        temp = temp * mask
+        disp = disp * mask
 
         # SDF
         bdist = torch.abs(z)
         tdist = torch.abs(z - t)
         rdist = torch.abs(torch.abs(x) - radius)
 
-        tdist += 1e10 * (~global_mask)
-        rdist += 1e10 * (~time_mask)
+        tdist += 1e10 * (~side_mask_bool)
+        rdist += 1e10 * (~time_mask_bool)
 
         dist = torch.minimum(bdist, tdist)
         dist = torch.minimum(dist , rdist)
         sign = 1 - 2 * mask
         sdf  = dist * sign
 
-        return mask, temp * mask, disp * mask, sdf
+        return mask_bool, temp, disp, sdf
 
     def fields_dense(self):
         t, z, x = torch.meshgrid([self.t, self.z, self.x], indexing='ij')
