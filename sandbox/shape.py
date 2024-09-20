@@ -54,29 +54,32 @@ class Shape:
 
         return
 
-    def fields(self, x, z, t, tol=1e-6):
-        radius = self.nw1 * (self.nw2 - torch.sin(torch.pi * z))
-        side_mask_bool = torch.lt(torch.abs(x), radius)
+    def dt(self):
+        return 1 / (self.nt - 1)
 
+    def radius(self, z):
+        return self.nw1 * (self.nw2 - torch.sin(torch.pi * z))
+
+    def side_mask(self, x, z):
+        return torch.lt(torch.abs(x), self.radius(z))
+
+    def time_mask(self, z, t):
         if self.blend:
             d = t - z
-            time_mask = torch.sigmoid(50 * d)
-            time_mask_bool = time_mask > tol
+            return torch.sigmoid(80 * d)
         else:
-            time_mask = torch.lt(z, t)
-            time_mask_bool = time_mask
+            return torch.lt(z, t)
 
-        mask      = side_mask_bool * time_mask
+    def mask(self, x, z, t):
+        return self.side_mask(x, z) * self.time_mask(z, t)
+
+    def sdf(self, x, z, t, tol=1e-6):
+        radius = self.radius(z)
+        side_mask_bool = self.side_mask(x, z) > tol
+        time_mask_bool = self.time_mask(z, t) > tol
+
         mask_bool = side_mask_bool * time_mask_bool
 
-        temp = 1 + z - torch.sin(t)
-        disp = torch.zeros(x.size()) * torch.nan
-
-        # apply mask
-        temp = temp * mask
-        disp = disp * mask
-
-        # SDF
         bdist = torch.abs(z)
         tdist = torch.abs(z - t)
         rdist = torch.abs(torch.abs(x) - radius)
@@ -86,14 +89,25 @@ class Shape:
 
         dist = torch.minimum(bdist, tdist)
         dist = torch.minimum(dist , rdist)
-        sign = 1 - 2 * mask
-        sdf  = dist * sign
+        sign = 1 - 2 * mask_bool
 
-        return mask_bool, temp, disp, sdf
+        return dist * sign
+
+    def fields(self, x, z, t, tol=1e-6):
+        mask = self.mask(x, z, t)
+        temp = 1 + z - torch.sin(t)
+        disp = torch.zeros(x.size()) * torch.nan
+        sdf  = self.sdf(x, z, t, tol=tol)
+
+        temp *= mask
+        disp *= mask
+
+        return mask, temp, disp, sdf
 
     def fields_dense(self):
         t, z, x = torch.meshgrid([self.t, self.z, self.x], indexing='ij')
         fields = self.fields(x, z, t)
+
         return (x, z, t), fields
 
     def final_mask(self):

@@ -12,7 +12,7 @@ import math
 import time # todo
 
 # local
-from mlutils.utils import num_parameters
+from mlutils.utils import num_parameters, select_device
 
 __all__ = [
     'Trainer',
@@ -51,14 +51,7 @@ class Trainer:
         # TODO: loader sampler (replacement = True)
         # check out minigpt for reference on adding callbacks
 
-        if device is None:
-            device = (
-                "cuda" if torch.cuda.is_available()
-                else "mps" if torch.backends.mps.is_available()
-                else "cpu"
-            )
-
-        print(f"using device {device}")
+        device = select_device(device, verbose=True)
 
         # DATA
         if _batch_size is None:

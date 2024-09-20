@@ -73,53 +73,35 @@ def train_gnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
     # ci, co, k = 2, 1, 3
     # model = MaskedUNet(shape, ci, co, k)
 
-    # # MODEL
-    # ci, co, k = 2, 1, 3
-    # model = MaskedUNet(shape, ci, co, k)
-    #
-    # # TRAIN
-    # if train:
-    #     train_loop(model, data, device=device, _batch_size=1)
-    #     torch.save(model.to("cpu").state_dict(), modelfile)
-    #
-    # # VISUALIZE
-    # model.eval()
-    # model.load_state_dict(torch.load(modelfile, weights_only=True))
-    #
-    # with torch.no_grad():
-    #     xztT, _ = data[:]
-    #
-    #     pred1 = (model(xztT) + xztT[:, -1].unsqueeze(1)).squeeze(1)
-    #     pred1 = torch.cat([xztT[0, -1].unsqueeze(0), pred1], dim=0)
-    #
-    #     fig1 = shape.plot_compare(pred1)
-    #     fig1.savefig(imagefile1, dpi=300)
-    #
-    #     preds2 = []
-    #     preds2.append(xztT[0, -1].unsqueeze(0))
-    #     for i in range(xztT.shape[0]):
-    #         pred2 = preds2[-1]
-    #         pred2 = pred2 + model(xztT[i].unsqueeze(0)).squeeze(1)
-    #         preds2.append(pred2)
-    #     pred2 = torch.cat(preds2, dim=0)
-    #
-    #     fig2 = shape.plot_compare(pred2)
-    #     fig2.savefig(imagefile2, dpi=300)
-
     return
 
 class MaskedUNet(nn.Module):
     def __init__(self, shape, ci, co, k):
         super().__init__()
 
-        M = shape.final_mask().unsqueeze(0).unsqueeze(0)
-        self.register_buffer('M', M)
+        self.shape = shape
         self.unet = mlutils.UNet(ci, co, k)
-        return
+
+        # M = shape.final_mask().unsqueeze(0).unsqueeze(0)
+        # self.register_buffer('M', M)
+
+    @torch.no_grad()
+    def compute_mask(self, x):
+        x0, z0, t0 = [x[0,c,:,:] for c in range(3)]
+        t1 = t0 + self.shape.dt()
+        M = self.shape.mask(x0, z0, t1)
+
+        # M = self.shape.mask(x0, z0, torch.ones_like(t0))
+
+        return M.unsqueeze(0).unsqueeze(0)
 
     def forward(self, x):
-        x = self.unet(x)
-        return x * self.M
+        y = self.unet(x)
+
+        # M = self.M
+        M = self.compute_mask(x)
+
+        return y * M
 #
 
 def train_cnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
@@ -146,19 +128,19 @@ def train_cnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
     nx, nz, nt = 256, 256, 100
     shape = sandbox.Shape(nx, nz, nt, nw1, nw2, blend=blend)
     data = sandbox.makedata(
-        shape, inputs="tT", outputs="T", datatype="image-nextstep",
+        shape, inputs="xztT", outputs="T", datatype="image-nextstep",
         mask="finaltime",
     )
 
     # MODEL
-    ci, co, k = 2, 1, 3
+    ci, co, k = 4, 1, 3
     model = MaskedUNet(shape, ci, co, k)
 
     # TRAIN
     if train:
         train_loop(model, data, device=device, _batch_size=1)
         torch.save(model.to("cpu").state_dict(), modelfile)
-
+    
     # VISUALIZE
     model.eval()
     model.load_state_dict(torch.load(modelfile, weights_only=True))
@@ -166,19 +148,34 @@ def train_cnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
     with torch.no_grad():
         xztT, _ = data[:]
 
-        pred1 = (model(xztT) + xztT[:, -1].unsqueeze(1)).squeeze(1)
+        pred1 = mlutils.eval_model(xztT, model, device, batch_size=4)
+        pred1 = (pred1 + xztT[:, -1].unsqueeze(1)).squeeze(1)
         pred1 = torch.cat([xztT[0, -1].unsqueeze(0), pred1], dim=0)
+
+        def process(y0, y1):
+            xzt = y0[:, 0:3, :, :]
+            temp = y0[:, -1, :, :].unsqueeze(1) + y1
+            return torch.cat([xzt, temp], dim=1)
+        
+        def save(ys):
+            temps = [y[:, -1, :, :] for y in ys]
+            return torch.cat(temps, dim=0)
+        
+        pred2 = mlutils.autoregressive_rollout(
+            xztT[0].unsqueeze(0), model, len(data),
+            process=process, save=save, device=device,
+        )
+        
+        # preds2 = []
+        # preds2.append(xztT[0, -1].unsqueeze(0))
+        # for i in range(xztT.shape[0]):
+        #     pred2 = preds2[-1]
+        #     pred2 = pred2 + model(xztT[i].unsqueeze(0)).squeeze(1)
+        #     preds2.append(pred2)
+        # pred2 = torch.cat(preds2, dim=0)
 
         fig1 = shape.plot_compare(pred1)
         fig1.savefig(imagefile1, dpi=300)
-
-        preds2 = []
-        preds2.append(xztT[0, -1].unsqueeze(0))
-        for i in range(xztT.shape[0]):
-            pred2 = preds2[-1]
-            pred2 = pred2 + model(xztT[i].unsqueeze(0)).squeeze(1)
-            preds2.append(pred2)
-        pred2 = torch.cat(preds2, dim=0)
 
         fig2 = shape.plot_compare(pred2)
         fig2.savefig(imagefile2, dpi=300)
@@ -403,7 +400,7 @@ def view_shape(resdir, name, blend=False):
 
 if __name__ == "__main__":
 
-    mlutils.set_seed()
+    mlutils.set_seed(123)
 
     parser = argparse.ArgumentParser(description = 'Sandbox')
     parser.add_argument('--gpu_device', default=0, help='GPU device', type=int)
@@ -434,17 +431,17 @@ if __name__ == "__main__":
     # train_mlp(device, outdir, resdir, "alldomain")
     # train_mlp(device, outdir, resdir, "hourglass")
 
-    # train_cnn(device, outdir, resdir, "alldomain")
-    # train_cnn(device, outdir, resdir, "hourglass")
-
     # train_gnn_nextstep(device, outdir, resdir, "alldomain")
     # train_gnn_nextstep(device, outdir, resdir, "hourglass")
 
     # train_cnn_nextstep(device, outdir, resdir, "alldomain", train=False)
     # train_cnn_nextstep(device, outdir, resdir, "hourglass", train=False)
 
-    # train_cnn_nextstep(device, outdir, resdir, "alldomain", blend=True, train=True)
-    # train_cnn_nextstep(device, outdir, resdir, "hourglass", blend=True, train=True)
+    # train_cnn_nextstep(device, outdir, resdir, "alldomain", blend=True, train=False)
+    train_cnn_nextstep(device, outdir, resdir, "hourglass", blend=True, train=True)
+
+    # train_cnn(device, outdir, resdir, "alldomain")
+    # train_cnn(device, outdir, resdir, "hourglass")
 
     # train_scalar_cnn(device, outdir, resdir, "alldomain")
     # train_scalar_cnn(device, outdir, resdir, "hourglass")
