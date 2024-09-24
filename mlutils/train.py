@@ -9,7 +9,8 @@ from tqdm import tqdm
 
 # builtin
 import math
-import time # todo
+import time
+import collections
 
 # local
 from mlutils.utils import num_parameters, select_device
@@ -167,26 +168,43 @@ class Trainer:
         self.wandb = wandb
         self.config = config
 
-        return
+        # callback
+        self.callbacks = collections.defaultdict(list)
+
+        # iteration
+        self.epoch = 0
+        self.start_time = 0.0
+        self.epoch_time = 0.0
+        self.epoch_dt   = 0.0
+
+    # https://github.com/karpathy/minGPT/
+    def add_callback(self, event: str, callback):
+        self.callbacks[event].append(callback)
+
+    def set_callback(self, event: str, callback):
+        self.callbacks[event] = [callback]
+
+    def trigger_callback(self, event: str):
+        for callback in self.callbacks[event]: # self.callbacks.get(event, []):
+            callback(self)
 
     def train(self):
+        self.start_time = time.time()
+        self.print_train_banner(self.epoch, self.nepochs)
+        self.trigger_callback("epoch_end")
+        self.statistics()
 
-        self.print_train_banner(0, 0)
-        self.callback()
+        for _ in range(1, self.nepochs + 1):
+            self.epoch += 1
+            self.print_train_banner(self.epoch, self.nepochs)
 
-        for epoch in range(1, self.nepochs + 1):
-            self.print_train_banner(epoch, self.nepochs)
+            self.epoch_time = time.time() - self.start_time
             self.train_epoch()
-            self.callback()
+            self.epoch_dt = time.time() - self.epoch_time - self.start_time
+
+            self.trigger_callback("epoch_end")
+            self.statistics()
         #
-
-        return
-
-    @staticmethod
-    def print_train_banner(epoch, nepochs):
-        print(f"-------------------------------")
-        print(f"Epoch {epoch} / {nepochs}")
-        print(f"-------------------------------")
 
         return
 
@@ -213,6 +231,7 @@ class Trainer:
                 f"LR: {self.schedule.get_last_lr()[0]:.2e} " +
                 f"LOSS: {loss.item():.8e}"
             )
+            self.trigger_callback("batch_end")
         #
 
         return
@@ -244,7 +263,7 @@ class Trainer:
 
         return loss, stats
 
-    def callback(self):
+    def statistics(self):
         _loss, _stats = self.evaluate(self._loader)
 
         if self.loader_ is not None:
@@ -257,6 +276,8 @@ class Trainer:
         print(f"\t TEST  LOSS: {loss_:>.8e}, STATS: {stats_}")
         print()
 
+        print(f"EPOCH START TIME: {self.epoch_time:.4f}s, DT: {self.epoch_dt:.4f}s")
+
         if self.wandb:
             wandb.log({
                 "epoch" : 0,
@@ -268,4 +289,11 @@ class Trainer:
         #
 
         return (_loss, _stats), (loss_, stats_)
+
+    @staticmethod
+    def print_train_banner(epoch, nepochs):
+        print(f"-------------------------------")
+        print(f"Epoch {epoch} / {nepochs}")
+        print(f"-------------------------------")
+
 #
