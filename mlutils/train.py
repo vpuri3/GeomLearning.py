@@ -68,6 +68,15 @@ class Trainer:
         # else: # use torch
         #     pass
 
+        # train_loader = DataLoader(
+        #     self.train_dataset,
+        #     sampler=torch.utils.data.RandomSampler(self.train_dataset, replacement=True, num_samples=int(1e10)),
+        #     shuffle=False,
+        #     pin_memory=True,
+        #     batch_size=config.batch_size,
+        #     num_workers=config.num_workers,
+        # )
+
         _loader  = DataLoader(_data, batch_size=_batch_size)
         __loader = DataLoader(_data, batch_size=__batch_size, shuffle=False)
 
@@ -188,7 +197,26 @@ class Trainer:
         for callback in self.callbacks[event]: # self.callbacks.get(event, []):
             callback(self)
 
+    def save(self, save_path: str):
+        data = {
+            "epoch": self.epoch,
+            "model": self.model.state_dict(), # move to cpu first?
+            # "opt": self.opt
+        }
+        torch.save(data, save_path)
+        return
+
+    def load(self, load_path: str):
+        print(f"Loading {load_path}")
+        data = torch.load(load_path)
+
+        self.epoch = data["epoch"]
+        self.model.load_state_dict(data["model"])
+        self.model.to(self.device)
+
     def train(self):
+        # move to device here?
+
         self.start_time = time.time()
         self.print_train_banner(self.epoch, self.nepochs)
         self.trigger_callback("epoch_end")
@@ -216,11 +244,11 @@ class Trainer:
             bar_format='{n_fmt}/{total_fmt} {desc}{bar}[{rate_fmt}]',
         )
 
-        for (x, u) in batch_iterator:
-            x, u = x.to(self.device), u.to(self.device)
+        for (x, y) in batch_iterator:
+            x, y = x.to(self.device), y.to(self.device)
 
-            uh = self.model(x)
-            loss = self.lossfun(uh, u)
+            yh = self.model(x)
+            loss = self.lossfun(yh, y)
 
             loss.backward()
             self.opt.step()
@@ -246,10 +274,10 @@ class Trainer:
         # if statsfun:
         #     pass
 
-        for (x, u) in loader:
-            x, u = x.to(self.device), u.to(self.device)
-            uh = self.model(x)
-            loss = self.lossfun(uh, u)
+        for (x, y) in loader:
+            x, y = x.to(self.device), y.to(self.device)
+            yh = self.model(x)
+            loss = self.lossfun(yh, y)
             avg_loss += loss.item()
 
             # if statsfun:

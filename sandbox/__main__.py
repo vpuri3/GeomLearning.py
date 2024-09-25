@@ -32,6 +32,9 @@ def train_loop(model, data, lrs=None, nepochs=None, **kw):
             "nepochs" : nepochs[i],
         }
         trainer = mlutils.Trainer(model, data, **kw)
+        # def cb_epoch(trainer: mlutils.Trainer):
+        #     print(f"epoch callback")
+        # trainer.add_callback("epoch_end", cb_epoch)
         trainer.train()
 
     return model
@@ -97,8 +100,6 @@ class MaskedUNet(nn.Module):
 
     def forward(self, x):
         y = self.unet(x)
-
-        # M = self.M
         M = self.compute_mask(x)
 
         return y * M
@@ -140,7 +141,7 @@ def train_cnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
     if train:
         train_loop(model, data, device=device, _batch_size=1)
         torch.save(model.to("cpu").state_dict(), modelfile)
-    
+
     # VISUALIZE
     model.eval()
     model.load_state_dict(torch.load(modelfile, weights_only=True))
@@ -156,16 +157,17 @@ def train_cnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
             xzt = y0[:, 0:3, :, :]
             temp = y0[:, -1, :, :].unsqueeze(1) + y1
             return torch.cat([xzt, temp], dim=1)
-        
+
         def save(ys):
             temps = [y[:, -1, :, :] for y in ys]
             return torch.cat(temps, dim=0)
-        
+
+        # begin rollout from timestep 10
         pred2 = mlutils.autoregressive_rollout(
             xztT[0].unsqueeze(0), model, len(data),
             process=process, save=save, device=device,
         )
-        
+
         # preds2 = []
         # preds2.append(xztT[0, -1].unsqueeze(0))
         # for i in range(xztT.shape[0]):
@@ -406,12 +408,7 @@ if __name__ == "__main__":
     parser.add_argument('--gpu_device', default=0, help='GPU device', type=int)
     args = parser.parse_args()
 
-    device = (
-        "cuda" if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available()
-        else "cpu"
-    )
-
+    device = mlutils.select_device()
     if device == "cuda":
         device += f":{args.gpu_device}"
 
@@ -438,7 +435,7 @@ if __name__ == "__main__":
     # train_cnn_nextstep(device, outdir, resdir, "hourglass", train=False)
 
     # train_cnn_nextstep(device, outdir, resdir, "alldomain", blend=True, train=False)
-    train_cnn_nextstep(device, outdir, resdir, "hourglass", blend=True, train=True)
+    # train_cnn_nextstep(device, outdir, resdir, "hourglass", blend=True, train=False)
 
     # train_cnn(device, outdir, resdir, "alldomain")
     # train_cnn(device, outdir, resdir, "hourglass")
