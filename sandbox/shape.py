@@ -235,7 +235,7 @@ class Shape:
         return fig
 
     @torch.no_grad()
-    def plot(self, nt_plt = 5):
+    def plot(self, nt_plt = 5, animate = False):
         _, (mask, temp, disp, sdf) = self.fields_dense()
 
         # equivalent to `x.detatch().cpu().numpy()`
@@ -275,9 +275,13 @@ class Shape:
         #========================#
         fig.tight_layout()
 
-        # ani = anim.FuncAnimation(
-        #     fig, update, frames=range(self.nt), interval=50
-        # )
+        if animate:
+            # ani = anim.FuncAnimation(
+            #     fig, update, frames=range(self.nt), interval=50
+            # )
+            pass
+        #
+
 
         return fig
 

@@ -18,10 +18,9 @@ import mlutils
 def train_loop(model, data, lrs=None, nepochs=None, **kw):
 
     if lrs is None:
-        lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5]
-
+        lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 5e-6]
     if nepochs is None:
-        nepochs = [2, 5, 10, 10, 10]
+        nepochs = [5, 10, 20, 20, 10, 5]
 
     assert len(lrs) == len(nepochs)
 
@@ -126,11 +125,10 @@ def train_cnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
         nw1 = torch.inf
         nw2 = torch.inf
 
-    nx, nz, nt = 256, 256, 100
+    nx, nz, nt = 256, 256, 200
     shape = sandbox.Shape(nx, nz, nt, nw1, nw2, blend=blend)
     data = sandbox.makedata(
-        shape, inputs="xztT", outputs="T", datatype="image-nextstep",
-        mask="finaltime",
+        shape, inputs="xztT", outputs="T", datatype="image-nextstep", mask="finaltime",
     )
 
     # MODEL
@@ -139,7 +137,7 @@ def train_cnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
 
     # TRAIN
     if train:
-        train_loop(model, data, device=device, _batch_size=1)
+        train_loop(model, data, device=device, _batch_size=2)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -169,8 +167,8 @@ def train_cnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
         #     process=process, save=save, device=device,
         # )
 
+        K = nt // 8
         preds2 = []
-        K = 10
         for k in range(K):
             preds2.append(xztT[k, -1].unsqueeze(0))
         for k in range(K-1, xztT.shape[0]):
@@ -438,7 +436,7 @@ if __name__ == "__main__":
     # train_cnn_nextstep(device, outdir, resdir, "hourglass", train=False)
 
     # train_cnn_nextstep(device, outdir, resdir, "alldomain", blend=True, train=False)
-    train_cnn_nextstep(device, outdir, resdir, "hourglass", blend=True, train=False)
+    # train_cnn_nextstep(device, outdir, resdir, "hourglass", blend=True, train=False)
 
     # train_cnn(device, outdir, resdir, "alldomain")
     # train_cnn(device, outdir, resdir, "hourglass")
