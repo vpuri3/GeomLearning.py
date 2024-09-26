@@ -276,14 +276,14 @@ class Shape:
         fig.tight_layout()
 
         if animate:
+
             # ani = anim.FuncAnimation(
             #     fig, update, frames=range(self.nt), interval=50
             # )
-            pass
-        #
 
-
-        return fig
+            return fig, anim
+        else:
+            return fig
 
     @torch.no_grad()
     def plot_compare(self, pred, nt_plt=5, nextstep=False):

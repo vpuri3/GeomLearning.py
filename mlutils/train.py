@@ -44,6 +44,7 @@ class Trainer:
         statsfun=None,
 
         wandb=False,
+        verbose=True,
     ):
 
         # TODO: early stopping
@@ -81,23 +82,27 @@ class Trainer:
         __loader = DataLoader(_data, batch_size=__batch_size, shuffle=False)
 
         if data_ is not None:
-            print(f"Number of training samples: {len(_data)}")
+            if verbose:
+                print(f"Number of training samples: {len(_data)}")
             if batch_size_ is None:
                 batch_size_ = len(data_)
             loader_ = DataLoader(data_, batch_size=batch_size_ , shuffle=False)
         else:
-            print(f"Number of test samples: 0")
+            if verbose:
+                print(f"Number of test samples: 0")
             loader_ = None
 
-        for (x, y) in _loader:
-            print(f"Shape of x: {x.shape} {x.dtype}")
-            print(f"Shape of u: {y.shape} {y.dtype}")
-            break
+        if verbose:
+            for (x, y) in _loader:
+                print(f"Shape of x: {x.shape} {x.dtype}")
+                print(f"Shape of u: {y.shape} {y.dtype}")
+                break
 
         # MODEL
-        print(model)
-        print(f"number of parameters: {num_parameters(model)}")
-        print(f"Moving model to: {device}")
+        if verbose:
+            # print(model)
+            print(f"number of parameters: {num_parameters(model)}")
+            print(f"Moving model to: {device}")
         model.to(device)
 
         # OPTIMIZER
@@ -142,7 +147,7 @@ class Trainer:
 
             "learning_rate" : lr,
             "weight_decay" : weight_decay,
-            "optimizer" : str(opt),
+            # "optimizer" : str(opt),
             "schedule"  : str(schedule),
 
             "nepochs" : nepochs,

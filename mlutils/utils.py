@@ -11,6 +11,9 @@ __all__ = [
     "set_seed",
     "select_device",
     "num_parameters",
+    "mean_std",
+    "normalize",
+    "unnormalize",
     "eval_model",
     "autoregressive_rollout",
 ]
@@ -36,6 +39,28 @@ def select_device(device=None, verbose=False):
 def num_parameters(model : nn.Module):
     return sum(p.numel() for p in model.parameters())
 
+def mean_std(x: torch.tensor, channel_dim = None):
+    dims = list(range(x.ndim))
+    if channel_dim is None:
+        channel_dim = x.ndim-1
+    del dims[channel_dim]
+
+    xbar = x.mean(dims)
+    xstd = x.std(dims)
+
+    # fix broadcasting
+    for _ in range(x.ndim-channel_dim-1):
+        xbar = xbar.unsqueeze(-1)
+        xstd = xstd.unsqueeze(-1)
+
+    return xbar, xstd
+
+def normalize(x: torch.Tensor, xbar: torch.Tensor, xstd: torch.Tensor):
+    return (x - xbar) / xstd
+
+def unnormalize(xnorm: torch.Tensor, xbar: torch.Tensor, xstd: torch.Tensor):
+    return xnorm * xstd + xbar
+
 def eval_model(
     x : torch.Tensor,
     model : nn.Module,
@@ -43,7 +68,6 @@ def eval_model(
     batch_size=1,
     verbose=False,
 ):
-
     device = select_device(device, verbose=verbose)
 
     model = model.to(device)

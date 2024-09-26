@@ -2,6 +2,8 @@
 import torch
 from torch.utils.data import Dataset, TensorDataset
 
+import mlutils
+
 __all__ = [
     'makedata',
 ]
@@ -60,6 +62,7 @@ def makedata(
         inside = torch.argwhere(M3D.reshape(-1)).reshape(-1)
         point = point[inside]
         value = value[inside]
+        channel_dim = 3
     elif datatype == "point-image":
         # batches over time-dimension
         point = torch.stack(point, dim=1) # [N, C, W, H]
@@ -67,11 +70,13 @@ def makedata(
 
         value = torch.stack(value, dim=1) # [N, C, W, H]
         value = value * M3D.unsqueeze(1)
+        channel_dim = 1
     elif datatype == "image":
         # batches over time-dimension
         point = torch.stack(point, dim=1) # [N, C, H, W]
         value = torch.stack(value, dim=1)
         value = value * M3D.unsqueeze(1)
+        channel_dim = 1
     elif datatype == "image-nextstep":
         # batches over time-dimension
         point = torch.stack(point, dim=1)
@@ -80,7 +85,8 @@ def makedata(
         value = value * M3D.unsqueeze(1)
 
         point = point[0:-1] 
-        value = value[1:] - value[0:-1]
+        value = (value[1:] - value[0:-1]) / shape.dt()
+        channel_dim = 1
     elif datatype == "graph":
 
         assert mask == "finaltime"
@@ -104,14 +110,28 @@ def makedata(
 
         edge_features = torch.stack([edge_x, edge_z], dim=1)
 
+        channel_dim = 4
+
         raise NotImplementedError(f"Mesh datatype not implemented.")
     else:
         raise NotImplementedError(f"Got incompatible datatype: {datatype}.")
 
+    xbar, xstd = mlutils.mean_std(point, channel_dim)
+    ybar, ystd = mlutils.mean_std(value, channel_dim)
+
+    metadata = {
+        "channel_dim" : channel_dim,
+        "xbar" : xbar, "xstd" : xstd,
+        "ybar" : ybar, "ystd" : ystd,
+    }
+
+    # point = mlutils.normalize(point, xbar, xstd)
+    # value = mlutils.normalize(value, ybar, ystd)
+
     data = TensorDataset(point, value)
 
     if split is None:
-        return data
+        return data, metadata
     else:
-        return torch.utils.data.random_split(data, split)
+        return torch.utils.data.random_split(data, split), metadata
 #
