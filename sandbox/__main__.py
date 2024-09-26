@@ -163,18 +163,21 @@ def train_cnn_nextstep(device, outdir, resdir, name, blend=False, train=True):
             return torch.cat(temps, dim=0)
 
         # begin rollout from timestep 10
-        pred2 = mlutils.autoregressive_rollout(
-            xztT[0].unsqueeze(0), model, len(data),
-            process=process, save=save, device=device,
-        )
 
-        # preds2 = []
-        # preds2.append(xztT[0, -1].unsqueeze(0))
-        # for i in range(xztT.shape[0]):
-        #     pred2 = preds2[-1]
-        #     pred2 = pred2 + model(xztT[i].unsqueeze(0)).squeeze(1)
-        #     preds2.append(pred2)
-        # pred2 = torch.cat(preds2, dim=0)
+        # pred2 = mlutils.autoregressive_rollout(
+        #     xztT[0].unsqueeze(0), model, len(data),
+        #     process=process, save=save, device=device,
+        # )
+
+        preds2 = []
+        K = 10
+        for k in range(K):
+            preds2.append(xztT[k, -1].unsqueeze(0))
+        for k in range(K-1, xztT.shape[0]):
+            pred2 = preds2[-1]
+            pred2 = pred2 + model(xztT[k].unsqueeze(0)).squeeze(1)
+            preds2.append(pred2)
+        pred2 = torch.cat(preds2, dim=0)
 
         fig1 = shape.plot_compare(pred1)
         fig1.savefig(imagefile1, dpi=300)
@@ -435,7 +438,7 @@ if __name__ == "__main__":
     # train_cnn_nextstep(device, outdir, resdir, "hourglass", train=False)
 
     # train_cnn_nextstep(device, outdir, resdir, "alldomain", blend=True, train=False)
-    # train_cnn_nextstep(device, outdir, resdir, "hourglass", blend=True, train=False)
+    train_cnn_nextstep(device, outdir, resdir, "hourglass", blend=True, train=False)
 
     # train_cnn(device, outdir, resdir, "alldomain")
     # train_cnn(device, outdir, resdir, "hourglass")
