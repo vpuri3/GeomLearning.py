@@ -94,30 +94,20 @@ def makedata(
         point = torch.stack(point, dim=-1) # [Nt, Nz, Nx, C]
         value = torch.stack(value, dim=-1)
 
-        edge_index, idx = shape.create_final_graph()
-        ix, iz = shape.cartesian_index(idx_lin)
+        shape.create_final_graph()
+        glo_ix, glo_iz = shape.cartesian_index(shape.glo_node_index)
 
-        # node features # (Temp, time)
-        point = point[:, ix, iz, :] # [Nt, Nodes, C]
-        value = value[:, ix, iz, :]
+        # node features and targets
+        point = point[:, glo_ix, glo_iz, :] # [Nt, Nodes, C]
+        value = value[:, glo_ix, glo_iz, :]
 
         # edge features # (x-relative, z-relative)
         x = x.reshape(shape.nt, -1)
         z = z.reshape(shape.nt, -1)
 
-        edge_x = x[:, edge_index[0]] - x[:, edge_index[1]]
-        edge_z = z[:, edge_index[0]] - z[:, edge_index[1]]
-        edge_attr = torch.stack([edge_x, edge_z], dim=-1) # [Nt, Nedges, C]
-
-        ## edge_index has the global indices, not indices corresopnding to
-        ## the active graph
-
-        print(edge_index.shape)
-        print(torch.max(edge_index[0]))
-        print(torch.max(edge_index[1]))
-        print(point.shape)
-        print(value.shape)
-        assert False
+        edge_dx = x[:, shape.glo_edge_index[0]] - x[:, shape.glo_edge_index[1]]
+        edge_dz = z[:, shape.glo_edge_index[0]] - z[:, shape.glo_edge_index[1]]
+        edge_attr = torch.stack([edge_dx, edge_dz], dim=-1) # [Nt, Nedges, C]
 
         channel_dim = 2
     else:
@@ -127,9 +117,7 @@ def makedata(
     ybar, ystd = mlutils.mean_std(value, channel_dim)
 
     metadata = {
-        # shape
-        "nx" : shape.nx, "nz" : shape.nz, "nt" : shape.nt,
-        "nw1" : shape.nw1, "nw2" : shape.nw2,
+        "shape" : shape,
         # data
         "channel_dim" : channel_dim,
         "xbar" : xbar, "xstd" : xstd,
@@ -142,13 +130,11 @@ def makedata(
     if "graph" in datatype:
         data = [
             pyg.data.Data(x=point[i], y=value[i],
-                edge_index=edge_index, edge_aatr=edge_attr,
+                edge_index=shape.loc_edge_index, edge_aatr=edge_attr,
             )
             for i in range(shape.nt)
         ]
-        metadata = {
-            **metadata, "idx_lin" : idx_lin, "idx_cart" : idx_cart,
-        }
+        metadata = {**metadata, }
     else:
         data = TensorDataset(point, value)
 

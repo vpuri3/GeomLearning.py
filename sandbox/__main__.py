@@ -184,21 +184,21 @@ class MaskedGNN(nn.Module):
 
     @torch.no_grad()
     def compute_mask(self, x):
-        x0, z0, t0 = [x[0,c,:,:] for c in range(3)]
+        x0, z0, t0 = [x[:,c] for c in range(3)]
         t1 = t0 + self.shape.dt()
         M = self.shape.mask(x0, z0, t1)
-        return M.unsqueeze(0).unsqueeze(0)
+        return M.unsqueeze(1)
 
     def forward(self, data):
-        # M = self.compute_mask(x)
+        x, edge_index = data.x, data.edge_index
+        M = self.compute_mask(x)
         # x = self.gnn(x)
         # return x * M
         # return self.gnn(data.x, data.edge_index)
-        x, edge_index = data.x, data.edge_index
         x = self.conv1(x, edge_index)
         x = nn.functional.relu(x)
         x = self.conv2(x, edge_index)
-        return x
+        return x * M
 #
 
 def train_gnn(device, outdir, resdir, name, blend=True, train=True):
@@ -231,11 +231,11 @@ def train_gnn(device, outdir, resdir, name, blend=True, train=True):
     # nx, nz, nt = 128, 128, 100
     # shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
     data, metadata = sandbox.makedata(
-        shape, inputs="tT", outputs="T", datatype="graph", mask="finaltime",
+        shape, inputs="xztT", outputs="T", datatype="graph", mask="finaltime",
     )
 
     # MODEL
-    ci, co, w = 2, 1, 32
+    ci, co, w = 4, 1, 128
     model = MaskedGNN(shape, ci, co, w)
     if train:
         train_loop(model, data, device=device, E=50, gnn=True, _batch_size=4)
@@ -300,11 +300,11 @@ if __name__ == "__main__":
     outdir = "./out/"
     resdir = "./res/"
 
-    view_shape(resdir, "alldomain")
-    view_shape(resdir, "hourglass")
+    # view_shape(resdir, "alldomain")
+    # view_shape(resdir, "hourglass")
 
     # train_cnn(device, outdir, resdir, "alldomain", train=True)
     # train_cnn(device, outdir, resdir, "hourglass", train=True)
 
-    # train_gnn(device, outdir, resdir, "hourglass", train=True)
+    train_gnn(device, outdir, resdir, "hourglass", train=True)
 #
