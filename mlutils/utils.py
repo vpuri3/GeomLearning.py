@@ -45,13 +45,13 @@ def mean_std(x: torch.tensor, channel_dim = None):
         channel_dim = x.ndim-1
     del dims[channel_dim]
 
-    xbar = x.mean(dims)
-    xstd = x.std(dims)
+    xbar = x.mean(dims, keepdim=True)
+    xstd = x.std(dims, keepdim=True)
 
-    # fix broadcasting
-    for _ in range(x.ndim-channel_dim-1):
-        xbar = xbar.unsqueeze(-1)
-        xstd = xstd.unsqueeze(-1)
+    # # fix broadcasting
+    # for _ in range(x.ndim-channel_dim-1):
+    #     xbar = xbar.unsqueeze(-1)
+    #     xstd = xstd.unsqueeze(-1)
 
     return xbar, xstd
 

@@ -1,5 +1,6 @@
 #
 import torch
+import torch_geometric as pyg
 from torch.utils.data import Dataset, TensorDataset
 
 import mlutils
@@ -88,31 +89,37 @@ def makedata(
         value = (value[1:] - value[0:-1]) / shape.dt()
         channel_dim = 1
     elif datatype == "graph":
-
         assert mask == "finaltime"
 
-        point = torch.stack(point, dim=point[0].ndim) # [Nt, Nz, Nx, C]
-        value = torch.stack(value, dim=value[0].ndim)
+        point = torch.stack(point, dim=-1) # [Nt, Nz, Nx, C]
+        value = torch.stack(value, dim=-1)
 
-        edges, idx_lin, idx_cart = shape.create_final_graph()
+        edge_index, idx_lin, idx_cart = shape.create_final_graph()
         iz, ix =  idx_cart[:, 0], idx_cart[:, 1]
 
         # node features # (Temp, time)
-        point = point[:, ix, iz, :] # [Nt, V, C]
+        point = point[:, ix, iz, :] # [Nt, Nodes, C]
         value = value[:, ix, iz, :]
 
         # edge features # (x-relative, z-relative)
-        x = x.reshape(self.nt, -1)
-        z = z.reshape(self.nt, -1)
+        x = x.reshape(shape.nt, -1)
+        z = z.reshape(shape.nt, -1)
 
-        edge_x = x[:, edges[:, 0]] - x[:, edges[1]]
-        edge_z = z[:, edges[:, 0]] - z[:, edges[1]]
+        edge_x = x[:, edge_index[0]] - x[:, edge_index[1]]
+        edge_z = z[:, edge_index[0]] - z[:, edge_index[1]]
+        edge_attr = torch.stack([edge_x, edge_z], dim=-1) # [Nt, Nedges, C]
 
-        edge_features = torch.stack([edge_x, edge_z], dim=1)
+        ## edge_index has the global indices, not indices corresopnding to
+        ## the active graph
 
-        channel_dim = 4
+        print(edge_index.shape)
+        print(torch.max(edge_index[0]))
+        print(torch.max(edge_index[1]))
+        print(point.shape)
+        print(value.shape)
+        assert False
 
-        raise NotImplementedError(f"Mesh datatype not implemented.")
+        channel_dim = 2
     else:
         raise NotImplementedError(f"Got incompatible datatype: {datatype}.")
 
@@ -120,6 +127,10 @@ def makedata(
     ybar, ystd = mlutils.mean_std(value, channel_dim)
 
     metadata = {
+        # shape
+        "nx" : shape.nx, "nz" : shape.nz, "nt" : shape.nt,
+        "nw1" : shape.nw1, "nw2" : shape.nw2,
+        # data
         "channel_dim" : channel_dim,
         "xbar" : xbar, "xstd" : xstd,
         "ybar" : ybar, "ystd" : ystd,
@@ -128,7 +139,18 @@ def makedata(
     # point = mlutils.normalize(point, xbar, xstd)
     # value = mlutils.normalize(value, ybar, ystd)
 
-    data = TensorDataset(point, value)
+    if "graph" in datatype:
+        data = [
+            pyg.data.Data(x=point[i], y=value[i],
+                edge_index=edge_index, edge_aatr=edge_attr,
+            )
+            for i in range(shape.nt)
+        ]
+        metadata = {
+            **metadata, "idx_lin" : idx_lin, "idx_cart" : idx_cart,
+        }
+    else:
+        data = TensorDataset(point, value)
 
     if split is None:
         return data, metadata

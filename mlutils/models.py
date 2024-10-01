@@ -3,7 +3,7 @@ import torch
 from torch import nn
 
 import torch_scatter
-import torch_geometric
+import torch_geometric as pyg
 from torch_geometric.nn import MessagePassing
 
 import math
@@ -164,22 +164,43 @@ def double_conv(ci, co, k):
     )
 
 class UNet(nn.Module):
-    def __init__(self, ci, co, k):
+    def __init__(self, ci, co, k, w=256, H=None, W=None):
         super().__init__()
 
+        ######################
         self.dconv_down1 = double_conv(ci ,  64, k)
         self.dconv_down2 = double_conv(64 , 128, k)
         self.dconv_down3 = double_conv(128, 256, k)
         self.dconv_down4 = double_conv(256, 512, k)
-
+        
         self.maxpool = nn.MaxPool2d(2)
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-
+        
         self.dconv_up3 = double_conv(256 + 512, 256, k)
         self.dconv_up2 = double_conv(128 + 256, 128, k)
         self.dconv_up1 = double_conv(128 +  64,  64, k)
-
+        
         self.conv_last = nn.Conv2d(64, co, 1)
+
+        # self.ln_down1 = nn.LayerNorm([ 64, H//2, W//2])
+        # self.ln_down2 = nn.LayerNorm([128, H//2, W//2])
+        # self.ln_down3 = nn.LayerNorm([256, H//2, W//2])
+        # self.ln_down4 = nn.LayerNorm([512, H//2, W//2])
+        ######################
+
+        # self.dconv_down1 = double_conv(ci, w, k)
+        # self.dconv_down2 = double_conv( w, w, k)
+        # self.dconv_down3 = double_conv( w, w, k)
+        # self.dconv_down4 = double_conv( w, w, k)
+        #
+        # self.maxpool = nn.MaxPool2d(2)
+        # self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        #
+        # self.dconv_up3 = double_conv(2*w, w, k)
+        # self.dconv_up2 = double_conv(2*w, w, k)
+        # self.dconv_up1 = double_conv(2*w, w, k)
+        #
+        # self.conv_last = nn.Conv2d(w, co, 1)
 
     def forward(self, x):
         conv1 = self.dconv_down1(x)

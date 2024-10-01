@@ -122,7 +122,7 @@ class Shape:
         iz = idx // self.nx
         return (ix, iz)
 
-    def compute_final_graph(self, bidirectional=True, debug=False):
+    def create_final_graph(self, bidirectional=True, debug=False):
         M = self.final_mask()
 
         idx_cart = torch.argwhere(M)
@@ -175,21 +175,24 @@ class Shape:
             # prune between left/right, up/down
             raise NotImplementedError()
 
-        edges = torch.cat([
+        edge_index = torch.cat([
             lft_edges,
             rgt_edges,
             top_edges,
             btm_edges,
         ], dim=0)
 
-        return edges, idx_lin, idx_cart
+        # edge_index [Nedges, 2]
+        edge_index = edge_index.T.contiguous()
+
+        return edge_index, idx_lin, idx_cart
 
     @torch.no_grad()
     def plot_final_graph(self, debug=False):
-        edges, _, idx_cart = self.compute_final_graph(debug=debug)
+        edge_index, _, idx_cart = self.create_final_graph(debug=debug)
 
-        edges    = edges.numpy(force=True)
-        idx_cart = idx_cart.numpy(force=True)
+        edge_index = edge_index.numpy(force=True)
+        idx_cart   = idx_cart.numpy(force=True)
 
         # background graph
         bg_graph = nx.Graph()
@@ -202,11 +205,11 @@ class Shape:
         bg_graph.add_edges_from(bg_edgeV)
 
         # active graph
+        _ix, _iz = self.cartesian_index(edge_index[0])
+        ix_, iz_ = self.cartesian_index(edge_index[1])
+
         graph = nx.DiGraph()
         nodes = [(idx[1], idx[0]) for idx in idx_cart]
-        _ix, _iz = self.cartesian_index(edges[:, 0])
-        ix_, iz_ = self.cartesian_index(edges[:, 1])
-
         edges = [((_ix[i], _iz[i]), (ix_[i], iz_[i])) for i in range(len(_ix))]
 
         graph.add_nodes_from(nodes)

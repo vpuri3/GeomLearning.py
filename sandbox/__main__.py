@@ -2,7 +2,7 @@
 # 3rd party
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+import torch_geometric as pyg
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,11 +15,12 @@ import argparse
 import sandbox
 import mlutils
 
-def train_loop(model, data, lrs=None, nepochs=None, **kw):
+def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
     if lrs is None:
         lrs = [5e-4, 1e-4, 5e-5, 1e-5, 5e-6]
     if nepochs is None:
-        nepochs = [10, 20, 20, 10, 5]
+        nepochs = [.20*E, .25*E, .25*E, .20*E, .1*E]
+        nepochs = [int(e) for e in nepochs]
     assert len(lrs) == len(nepochs)
 
     for i in range(len(lrs)):
@@ -36,29 +37,58 @@ def train_loop(model, data, lrs=None, nepochs=None, **kw):
 class MaskedUNet(nn.Module):
     def __init__(self, shape, ci, co, k):
         super().__init__()
-
         self.shape = shape
         self.unet = mlutils.UNet(ci, co, k)
-
-        # M = shape.final_mask().unsqueeze(0).unsqueeze(0)
-        # self.register_buffer('M', M)
 
     @torch.no_grad()
     def compute_mask(self, x):
         x0, z0, t0 = [x[0,c,:,:] for c in range(3)]
         t1 = t0 + self.shape.dt()
         M = self.shape.mask(x0, z0, t1)
-
-        # M = self.shape.mask(x0, z0, torch.ones_like(t0))
-
         return M.unsqueeze(0).unsqueeze(0)
 
     def forward(self, x):
-        y = self.unet(x)
         M = self.compute_mask(x)
-
-        return y * M
+        x = self.unet(x)
+        return x * M
 #
+
+class MaskedUNet2(nn.Module):
+    def __init__(self, shape, w=128, act=nn.ReLU()):
+        super().__init__()
+        self.encoder = nn.Sequential(                 # [N, 3, 256, 256]
+            mlutils.C2d_block(4, w, None, "2x", act), # [128]
+            mlutils.C2d_block(w, w, None, "2x", act), # [64]
+            mlutils.C2d_block(w, w, None, "2x", act), # [32]
+            mlutils.C2d_block(w, w, None, "2x", act), # [16]
+        )
+
+        self.bottleneck = nn.Sequential( # [N, w, 16, 16]
+            nn.Conv2d(w, w, kernel_size=3, padding=1), act, # [16]
+            nn.Conv2d(w, w, kernel_size=3, padding=1), act, # [16]
+        )
+
+        self.decoder = nn.Sequential( # [N, w, 16, 16]
+            mlutils.CT2d_block(w, w, None, "2x", act), # 32
+            mlutils.CT2d_block(w, w, None, "2x", act), # 64
+            mlutils.CT2d_block(w, w, None, "2x", act), # 128
+            mlutils.CT2d_block(w, 1, None, "2x", act), # 256
+        )
+        return
+
+    @torch.no_grad()
+    def compute_mask(self, x):
+        x0, z0, t0 = [x[0,c,:,:] for c in range(3)]
+        t1 = t0 + self.shape.dt()
+        M = self.shape.mask(x0, z0, t1)
+        return M.unsqueeze(0).unsqueeze(0)
+
+    def forward(self, x):
+        M = self.compute_mask(x)
+        x = self.encoder(x)
+        x = self.bottleneck(x)
+        x = self.decoder(x)
+        return x * M
 
 def train_cnn(device, outdir, resdir, name, blend=True, train=True):
 
@@ -93,7 +123,7 @@ def train_cnn(device, outdir, resdir, name, blend=True, train=True):
 
     # TRAIN
     if train:
-        train_loop(model, data, device=device, _batch_size=2)
+        train_loop(model, data, device=device, _batch_size=4, E=100)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -140,6 +170,37 @@ def train_cnn(device, outdir, resdir, name, blend=True, train=True):
         fig2.savefig(imagefile2, dpi=300)
     return
 
+class MaskedGNN(nn.Module):
+    def __init__(self, shape, ci, co, w):
+        super().__init__()
+        self.shape = shape
+        # self.gnn = pyg.nn.Sequential("x, edge_index", [
+        #     (pyg.nn.GCNConv(ci, w), "x, edge_index -> x"),
+        #     nn.ReLU(),
+        #     (pyg.nn.GCNConv(w, co), "x, edge_index -> x"),
+        # ])
+        self.conv1 = pyg.nn.GCNConv(ci,  w)
+        self.conv2 = pyg.nn.GCNConv( w, co)
+
+    @torch.no_grad()
+    def compute_mask(self, x):
+        x0, z0, t0 = [x[0,c,:,:] for c in range(3)]
+        t1 = t0 + self.shape.dt()
+        M = self.shape.mask(x0, z0, t1)
+        return M.unsqueeze(0).unsqueeze(0)
+
+    def forward(self, data):
+        # M = self.compute_mask(x)
+        # x = self.gnn(x)
+        # return x * M
+        # return self.gnn(data.x, data.edge_index)
+        x, edge_index = data.x, data.edge_index
+        x = self.conv1(x, edge_index)
+        x = nn.functional.relu(x)
+        x = self.conv2(x, edge_index)
+        return x
+#
+
 def train_gnn(device, outdir, resdir, name, blend=True, train=True):
 
     outname = outdir + "gnn_nextstep_" + name
@@ -169,13 +230,16 @@ def train_gnn(device, outdir, resdir, name, blend=True, train=True):
 
     # nx, nz, nt = 128, 128, 100
     # shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
-    data = sandbox.makedata(
+    data, metadata = sandbox.makedata(
         shape, inputs="tT", outputs="T", datatype="graph", mask="finaltime",
     )
 
-    # # MODEL
-    # ci, co, k = 2, 1, 3
-    # model = MaskedUNet(shape, ci, co, k)
+    # MODEL
+    ci, co, w = 2, 1, 32
+    model = MaskedGNN(shape, ci, co, w)
+    if train:
+        train_loop(model, data, device=device, E=50, gnn=True, _batch_size=4)
+        torch.save(model.to("cpu").state_dict(), modelfile)
 
     return
 
@@ -237,8 +301,10 @@ if __name__ == "__main__":
     resdir = "./res/"
 
     # view_shape(resdir, "alldomain")
-    # view_shape(resdir, "hourglass")
+    view_shape(resdir, "hourglass")
 
     # train_cnn(device, outdir, resdir, "alldomain", train=True)
-    train_cnn(device, outdir, resdir, "hourglass", train=False)
+    # train_cnn(device, outdir, resdir, "hourglass", train=True)
+
+    # train_gnn(device, outdir, resdir, "hourglass", train=True)
 #
