@@ -300,7 +300,7 @@ if __name__ == "__main__":
     outdir = "./out/"
     resdir = "./res/"
 
-    # view_shape(resdir, "alldomain")
+    view_shape(resdir, "alldomain")
     view_shape(resdir, "hourglass")
 
     # train_cnn(device, outdir, resdir, "alldomain", train=True)

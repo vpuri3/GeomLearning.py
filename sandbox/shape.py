@@ -128,18 +128,11 @@ class Shape:
         idx_cart = torch.argwhere(M)
         iz, ix =  idx_cart[:, 0], idx_cart[:, 1]
 
-        # left/right/top/bottom neighbors
+        # left/right/top/bottom neighbors on global mesh
         _ix, ix_ = ix - 1, ix + 1
         _iz, iz_ = iz - 1, iz + 1
 
         # map invalid indices to typemax(int)
-        if debug:
-            print(f"Number of invalid indices")
-            print(len(torch.argwhere(_ix < 0)))
-            print(len(torch.argwhere(_iz < 0)))
-            print(len(torch.argwhere(ix_ >= self.nx)))
-            print(len(torch.argwhere(iz_ >= self.nz)))
-
         int_max = torch.iinfo(ix.dtype).max
         _ix[torch.argwhere(_ix < 0)] = int_max
         _iz[torch.argwhere(_iz < 0)] = int_max
@@ -147,70 +140,74 @@ class Shape:
         iz_[torch.argwhere(iz_ >= self.nz)] = int_max
 
         # compute linear indices
-        idx_lin = self.linear_index( ix, iz )
-        lft_lin = self.linear_index(_ix, iz )
-        rgt_lin = self.linear_index(ix_, iz )
-        top_lin = self.linear_index( ix, _iz)
-        btm_lin = self.linear_index( ix, iz_)
+        index = self.linear_index( ix, iz )
+        ilft = self.linear_index(_ix, iz )
+        irgt = self.linear_index(ix_, iz )
+        itop = self.linear_index( ix, _iz)
+        ibtm = self.linear_index( ix, iz_)
 
-        # only consider neighbors that are in idx_cart
-        lft_in = torch.isin(lft_lin, idx_lin)
-        rgt_in = torch.isin(rgt_lin, idx_lin)
-        top_in = torch.isin(top_lin, idx_lin)
-        btm_in = torch.isin(btm_lin, idx_lin)
-
-        # get indices of valid neighbors
-        ilft = torch.argwhere(lft_in)
-        irgt = torch.argwhere(rgt_in)
-        itop = torch.argwhere(top_in)
-        ibtm = torch.argwhere(btm_in)
+        # only consider neighbors that are in index (in the active graph)
+        ilft_valid = torch.argwhere(torch.isin(ilft, index))
+        irgt_valid = torch.argwhere(torch.isin(irgt, index))
+        itop_valid = torch.argwhere(torch.isin(itop, index))
+        ibtm_valid = torch.argwhere(torch.isin(ibtm, index))
 
         # create edge if neighbor is in idx_cart
-        lft_edges = torch.cat([idx_lin[ilft], lft_lin[ilft]], dim=1)
-        rgt_edges = torch.cat([idx_lin[irgt], rgt_lin[irgt]], dim=1)
-        top_edges = torch.cat([idx_lin[itop], top_lin[itop]], dim=1)
-        btm_edges = torch.cat([idx_lin[ibtm], btm_lin[ibtm]], dim=1)
+        lft_edges = torch.cat([index[ilft_valid], ilft[ilft_valid]], dim=1)
+        rgt_edges = torch.cat([index[irgt_valid], irgt[irgt_valid]], dim=1)
+        top_edges = torch.cat([index[itop_valid], itop[itop_valid]], dim=1)
+        btm_edges = torch.cat([index[ibtm_valid], ibtm[ibtm_valid]], dim=1)
 
         if not bidirectional:
             # prune between left/right, up/down
+            # torch.unique
             raise NotImplementedError()
 
-        edge_index = torch.cat([
-            lft_edges,
-            rgt_edges,
-            top_edges,
-            btm_edges,
-        ], dim=0)
+        edge_index = torch.cat([lft_edges, rgt_edges, top_edges, btm_edges], dim=0)
+        edge_index = edge_index.T.contiguous() # [2, Nedges]
 
-        # edge_index [Nedges, 2]
-        edge_index = edge_index.T.contiguous()
+        # assign to self
+        self.glo_node_index = index
+        self.glo_edge_index = edge_index
+        self.loc_edge_index = self.glo2loc(edge_index)
 
-        return edge_index, idx_lin, idx_cart
+        return self.glo_node_index, self.loc_edge_index
+
+    def loc2glo(self, indices: torch.Tensor):
+        return self.glo_node_index[indices]
+
+    def glo2loc(self, indices: torch.Tensor):
+        mask = self.glo_node_index.view(1, -1) == indices.reshape(-1, 1)
+        idxs = torch.nonzero(mask, as_tuple=False)[:, 1]
+        return idxs.reshape(indices.shape)
 
     @torch.no_grad()
     def plot_final_graph(self, debug=False):
-        edge_index, _, idx_cart = self.create_final_graph(debug=debug)
-
-        edge_index = edge_index.numpy(force=True)
-        idx_cart   = idx_cart.numpy(force=True)
 
         # background graph
         bg_graph = nx.Graph()
         bg_nodes = [(ix, iz) for ix in range(self.nx) for iz in range(self.nz)]
         bg_edgeH = [((ix, iz), (ix+1, iz)) for ix in range(self.nx-1) for iz in range(self.nz)]
         bg_edgeV = [((ix, iz), (ix, iz+1)) for ix in range(self.nx) for iz in range(self.nz-1)]
-        
+
         bg_graph.add_nodes_from(bg_nodes)
         bg_graph.add_edges_from(bg_edgeH)
         bg_graph.add_edges_from(bg_edgeV)
 
         # active graph
-        _ix, _iz = self.cartesian_index(edge_index[0])
-        ix_, iz_ = self.cartesian_index(edge_index[1])
+        glo_node_index, loc_edge_index = self.create_final_graph(debug=debug)
+        glo_edge_index = self.loc2glo(loc_edge_index)
+
+        glo_node_index = glo_node_index.numpy(force=True)
+        glo_edge_index = glo_edge_index.numpy(force=True)
+
+        ix , iz  = self.cartesian_index(glo_node_index)
+        _ix, _iz = self.cartesian_index(glo_edge_index[0])
+        ix_, iz_ = self.cartesian_index(glo_edge_index[1])
 
         graph = nx.DiGraph()
-        nodes = [(idx[1], idx[0]) for idx in idx_cart]
-        edges = [((_ix[i], _iz[i]), (ix_[i], iz_[i])) for i in range(len(_ix))]
+        nodes = zip(ix, iz)
+        edges = zip(zip(_ix, _iz), zip(ix_, iz_))
 
         graph.add_nodes_from(nodes)
         graph.add_edges_from(edges)

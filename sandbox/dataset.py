@@ -94,8 +94,8 @@ def makedata(
         point = torch.stack(point, dim=-1) # [Nt, Nz, Nx, C]
         value = torch.stack(value, dim=-1)
 
-        edge_index, idx_lin, idx_cart = shape.create_final_graph()
-        iz, ix =  idx_cart[:, 0], idx_cart[:, 1]
+        edge_index, idx = shape.create_final_graph()
+        ix, iz = shape.cartesian_index(idx_lin)
 
         # node features # (Temp, time)
         point = point[:, ix, iz, :] # [Nt, Nodes, C]
