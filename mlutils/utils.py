@@ -1,7 +1,7 @@
 #
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+import torch_geometric as pyg
 
 import numpy as np
 
@@ -15,6 +15,7 @@ __all__ = [
     "normalize",
     "unnormalize",
     "eval_model",
+    "eval_gnn",
     "autoregressive_rollout",
 ]
 
@@ -61,32 +62,45 @@ def normalize(x: torch.Tensor, xbar: torch.Tensor, xstd: torch.Tensor):
 def unnormalize(xnorm: torch.Tensor, xbar: torch.Tensor, xstd: torch.Tensor):
     return xnorm * xstd + xbar
 
+#=======================================================================#
 def eval_model(
-    x : torch.Tensor,
-    model : nn.Module,
-    device=None,
-    batch_size=1,
-    verbose=False,
+    x: torch.Tensor, model: nn.Module, device=None,
+    batch_size=1, verbose=False,
 ):
     device = select_device(device, verbose=verbose)
-
-    model = model.to(device)
-    loader = DataLoader(x, shuffle=False, batch_size=batch_size)
+    loader = torch.utils.data.DataLoader(x, shuffle=False, batch_size=batch_size)
+    model  = model.to(device)
 
     ys = []
     for xx in loader:
         xx = xx.to(device)
         yy = model(xx).to("cpu")
-
         del xx
         ys.append(yy)
 
     model = model.to("cpu")
     y = torch.cat(ys, dim=0)
-
-    # clear GPU memory
     torch.cuda.empty_cache()
+    return y
 
+def eval_gnn(
+    data, model: nn.Module, device=None,
+    batch_size=1, verbose=False,
+):
+    device = select_device(device, verbose=verbose)
+    loader = pyg.loader.DataLoader(data, shuffle=False, batch_size=batch_size)
+    model  = model.to(device)
+
+    ys = []
+    for batch in loader:
+        batch = batch.to(device)
+        y = model(batch).to("cpu")
+        del batch
+        ys.append(y)
+
+    model = model.to("cpu")
+    y = torch.cat(ys, dim=0)
+    torch.cuda.empty_cache()
     return y
 
 def autoregressive_rollout(
@@ -124,4 +138,5 @@ def autoregressive_rollout(
     torch.cuda.empty_cache()
 
     return y
+#=======================================================================#
 #

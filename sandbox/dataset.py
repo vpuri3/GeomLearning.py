@@ -91,15 +91,19 @@ def makedata(
     elif datatype == "graph":
         assert mask == "finaltime"
 
-        point = torch.stack(point, dim=-1) # [Nt, Nz, Nx, C]
+        # stack features [Nt, Nxz, C]
+        point = torch.stack(point, dim=-1)
         value = torch.stack(value, dim=-1)
 
+        point = point.reshape(shape.nt, shape.nz * shape.nx, -1)
+        value = value.reshape(shape.nt, shape.nz * shape.nx, -1)
+
+        # create graph
         shape.create_final_graph()
-        glo_ix, glo_iz = shape.cartesian_index(shape.glo_node_index)
 
         # node features and targets
-        point = point[:, glo_ix, glo_iz, :] # [Nt, Nodes, C]
-        value = value[:, glo_ix, glo_iz, :]
+        point = point[:, shape.glo_node_index, :] # [Nt, Nodes, C]
+        value = value[:, shape.glo_node_index, :]
 
         # edge features # (x-relative, z-relative)
         x = x.reshape(shape.nt, -1)
@@ -130,7 +134,7 @@ def makedata(
     if "graph" in datatype:
         data = [
             pyg.data.Data(x=point[i], y=value[i],
-                edge_index=shape.loc_edge_index, edge_aatr=edge_attr,
+                edge_index=shape.loc_edge_index, edge_attr=edge_attr,
             )
             for i in range(shape.nt)
         ]

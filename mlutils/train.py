@@ -195,7 +195,7 @@ class Trainer:
         # TODO: loader sampler (replacement = True)
 
         if self.gnn:
-            DL = pyg.data.DataLoader
+            DL = pyg.loader.DataLoader
         else:
             DL = torch.utils.data.DataLoader
 

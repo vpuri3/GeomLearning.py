@@ -17,9 +17,9 @@ import mlutils
 
 def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
     if lrs is None:
-        lrs = [5e-4, 1e-4, 5e-5, 1e-5, 5e-6]
+        lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 5e-6]
     if nepochs is None:
-        nepochs = [.20*E, .25*E, .25*E, .20*E, .1*E]
+        nepochs = [.1*E, .1*E, .25*E, .25*E, .2*E, .1*E]
         nepochs = [int(e) for e in nepochs]
     assert len(lrs) == len(nepochs)
 
@@ -33,6 +33,97 @@ def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
         trainer.train()
 
     return model
+
+class MaskedGNN(nn.Module):
+    def __init__(self, shape, ci, co, w, num_layers):
+        super().__init__()
+        self.shape = shape
+        # self.gnn = pyg.nn.Sequential("x, edge_index", [
+        #     (pyg.nn.GCNConv(ci, w), "x, edge_index -> x"),
+        #     nn.ReLU(),
+        #     (pyg.nn.GCNConv(w, co), "x, edge_index -> x"),
+        # ])
+        self.act = nn.ReLU()
+        self.encoder = pyg.nn.GCNConv(ci,  w)
+        self.decoder = pyg.nn.GCNConv( w, co)
+        self.processor = nn.ModuleList()
+        for _ in range(num_layers):
+            layer = pyg.nn.GCNConv(w, w)
+            self.processor.append(layer)
+
+    @torch.no_grad()
+    def compute_mask(self, x):
+        x0, z0, t0 = [x[:,c] for c in range(3)]
+        t1 = t0 + self.shape.dt()
+        M = self.shape.mask(x0, z0, t1)
+        return M.unsqueeze(1)
+
+    def forward(self, data):
+        x, edge_index = data.x, data.edge_index
+        M = self.compute_mask(x)
+        
+        x = self.encoder(x, edge_index)
+        x = self.act(x)
+        for layer in self.processor:
+            x = layer(x, edge_index)
+            x = self.act(x)
+        x = self.decoder(x, edge_index)
+
+        return x * M
+#
+
+def train_gnn(device, outdir, resdir, name, blend=True, train=True):
+    outname = outdir + "gnn_nextstep_" + name
+    resname = resdir + "gnn_nextstep_" + name
+
+    if blend:
+        outname = outname + "_blend"
+        resname = resname + "_blend"
+
+    modelfile  = outname + ".pth"
+    imagefile1 = resname + ".png"
+    imagefile2 = resname + "_autoregressive" + ".png"
+
+    # DATA
+    if name == "hourglass":
+        nw1 = None
+        nw2 = None
+    elif name == "alldomain":
+        nw1 = torch.inf
+        nw2 = torch.inf
+
+    nx, nz, nt = 128, 128, 100
+    shape = sandbox.Shape(nx, nz, nt, nw1, nw2, blend=blend)
+
+    data, metadata = sandbox.makedata(
+        shape, inputs="xzt", outputs="T", datatype="graph", mask="finaltime",
+    )
+
+    # MODEL
+    ci, co, w, num_layers = 3, 1, 128, 4
+    model = MaskedGNN(shape, ci, co, w, num_layers)
+    if train:
+        train_loop(model, data, device=device, E=100, gnn=True, _batch_size=4)
+        torch.save(model.to("cpu").state_dict(), modelfile)
+
+    # VISUALIZE
+
+    with torch.no_grad():
+        num_nodes = data[0].num_nodes
+        temp = mlutils.eval_gnn(data, model, device, batch_size=4)
+        temp = temp.reshape(shape.nt, num_nodes)
+
+        print(torch.max(temp))
+        print(torch.min(temp))
+
+        pred1 = torch.zeros(nt, nz * nx)
+        pred1[:, shape.glo_node_index] = temp # 1
+        pred1 = pred1.reshape(nt, nz, nx)
+
+        fig1 = shape.plot_compare(pred1)
+        fig1.savefig(imagefile1, dpi=300)
+
+    return
 
 class MaskedUNet(nn.Module):
     def __init__(self, shape, ci, co, k):
@@ -168,79 +259,6 @@ def train_cnn(device, outdir, resdir, name, blend=True, train=True):
 
         fig2 = shape.plot_compare(pred2)
         fig2.savefig(imagefile2, dpi=300)
-    return
-
-class MaskedGNN(nn.Module):
-    def __init__(self, shape, ci, co, w):
-        super().__init__()
-        self.shape = shape
-        # self.gnn = pyg.nn.Sequential("x, edge_index", [
-        #     (pyg.nn.GCNConv(ci, w), "x, edge_index -> x"),
-        #     nn.ReLU(),
-        #     (pyg.nn.GCNConv(w, co), "x, edge_index -> x"),
-        # ])
-        self.conv1 = pyg.nn.GCNConv(ci,  w)
-        self.conv2 = pyg.nn.GCNConv( w, co)
-
-    @torch.no_grad()
-    def compute_mask(self, x):
-        x0, z0, t0 = [x[:,c] for c in range(3)]
-        t1 = t0 + self.shape.dt()
-        M = self.shape.mask(x0, z0, t1)
-        return M.unsqueeze(1)
-
-    def forward(self, data):
-        x, edge_index = data.x, data.edge_index
-        M = self.compute_mask(x)
-        # x = self.gnn(x)
-        # return x * M
-        # return self.gnn(data.x, data.edge_index)
-        x = self.conv1(x, edge_index)
-        x = nn.functional.relu(x)
-        x = self.conv2(x, edge_index)
-        return x * M
-#
-
-def train_gnn(device, outdir, resdir, name, blend=True, train=True):
-
-    outname = outdir + "gnn_nextstep_" + name
-    resname = resdir + "gnn_nextstep_" + name
-
-    if blend:
-        outname = outname + "_blend"
-        resname = resname + "_blend"
-
-    modelfile  = outname + ".pth"
-    graphfile  = resname + "_graph" + ".png"
-    imagefile1 = resname + ".png"
-    imagefile2 = resname + "_autoregressive" + ".png"
-
-    # DATA
-    if name == "hourglass":
-        nw1 = None
-        nw2 = None
-    elif name == "alldomain":
-        nw1 = torch.inf
-        nw2 = torch.inf
-
-    nx, nz, nt = 32, 32, 100
-    shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
-    fig = shape.plot_final_graph()
-    fig.savefig(graphfile, dpi=300)
-
-    # nx, nz, nt = 128, 128, 100
-    # shape = sandbox.Shape(nx, nz, nt, nw1, nw2)
-    data, metadata = sandbox.makedata(
-        shape, inputs="xztT", outputs="T", datatype="graph", mask="finaltime",
-    )
-
-    # MODEL
-    ci, co, w = 4, 1, 128
-    model = MaskedGNN(shape, ci, co, w)
-    if train:
-        train_loop(model, data, device=device, E=50, gnn=True, _batch_size=4)
-        torch.save(model.to("cpu").state_dict(), modelfile)
-
     return
 
 def view_shape(resdir, name, blend=True):
