@@ -52,11 +52,12 @@ class GSplat(nn.Module):
         """
         assert mask.dtype == torch.bool # indexable
 
-        if mask.sum().item() > 0:
+        if mask.sum().item() == 0:
             return
 
+        self.mask[mask] = False
         for buf in self.buffers():
-            buf.data[...] = self._prune(buf.data, mask)
+            buf[...] = self._prune(buf, mask)
         for param in self.parameters():
             param.data[...] = self._prune(param.data, mask)
 

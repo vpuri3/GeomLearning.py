@@ -67,8 +67,8 @@ def train(device, outdir, resdir):
     config = {
         "KERNEL_SIZE"            : 101,           # config["KERNEL_SIZE"]
         "image_size"             : (128, 128, 3), # (256, 256, 3), # tuple(config["image_size"])
-        "primary_gaussians"      : 200, # 1000,          # config["primary_samples"]
-        "backup_gaussians"       : 400, # 4000,          # config["backup_samples"]
+        "primary_gaussians"      : 500, # 1000,          # config["primary_samples"]
+        "backup_gaussians"       : 2000, # 4000,          # config["backup_samples"]
         "num_epochs"             : 2000,          # config["num_epochs"]
         "densification_interval" : 100, #300,           # config["densification_interval"]
         "learning_rate"          : 0.001,         # config["learning_rate"]
@@ -107,7 +107,7 @@ def train(device, outdir, resdir):
     for epoch in range(1, num_epochs+1):
 
         # pruning
-        if epoch % (densification_interval + 1) == 0 and epoch > 0:
+        if epoch % (densification_interval + 0) == 0 and epoch > 0:
             mask_rm = model.mask * (model.alpha < 0.01).view(-1)
             num_rm = mask_rm.sum().item()
             print(f"Pruning {num_rm} Gaussians.")
