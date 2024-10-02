@@ -69,15 +69,10 @@ class GSplat(nn.Module):
         assert mask.dtype == torch.bool # indexable
         return torch.cat([x[~mask], 0 * x[mask]], dim=0)
 
-    def split(self, idx: torch.Tensor, scale_factor = 1.6):
-        i0, i1 = self.clone(idx)
-        self.scale.data[idx  ] /= scale_factor
-        self.scale.data[i0:i1] /= scale_factor
-        return
-
+    @torch.no_grad()
     def clone(self, idx):
         if len(idx) == 0:
-            return
+            return 0,0
 
         # indices of newly formed Gaussians
         i0 = self.active_gaussians()

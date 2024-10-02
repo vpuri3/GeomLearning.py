@@ -62,12 +62,12 @@ def train(device, outdir, resdir):
     # load config
     # with open(configfile, 'r') as config_file:
     #     config = yaml.safe_load(config_file)
-    
+
     # Extract values from the loaded config
     config = {
         "KERNEL_SIZE"            : 101,           # config["KERNEL_SIZE"]
         "image_size"             : (128, 128, 3), # (256, 256, 3), # tuple(config["image_size"])
-        "primary_gaussians"      : 100, # 1000,          # config["primary_samples"]
+        "primary_gaussians"      : 200, # 1000,          # config["primary_samples"]
         "backup_gaussians"       : 400, # 4000,          # config["backup_samples"]
         "num_epochs"             : 2000,          # config["num_epochs"]
         "densification_interval" : 100, #300,           # config["densification_interval"]
@@ -143,14 +143,22 @@ def train(device, outdir, resdir):
 
             # split points with large coordinate gradients
             # and large gaussian values (i.e. model.scale)
-            if len(common_idx) > 0:
-                print(f"Splitting {len(common_idx)} Gaussians.")
-                model.split(common_idx)
+            print(f"Splitting {len(common_idx)} Gaussians.")
+            i0, i1 = model.clone(common_idx)
+
+            scale_factor = 1.6
+            model.scale.data[common_idx] /= scale_factor
+            model.scale.data[i0:i1     ] /= scale_factor
 
             # clone points with large coordinate gradients
             # and small gaussian values (i.e. model.scale)
             print(f"Cloning {len(distinct_idx)} Gaussians.")
-            model.clone(distinct_idx)
+            i0, i1 = model.clone(distinct_idx)
+
+            step_size = 0.01
+            pos_grad = model.mean.grad[distinct_idx]
+            pos_grad_mag = torch.norm(pos_grad, dim=1, keepdim=True)
+            model.mean.data[i0:i1] += pos_grad / (pos_grad_mag + 1e-6)
 
         # update optimizer
         opt.step()
