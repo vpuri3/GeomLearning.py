@@ -13,6 +13,8 @@ import mlutils
 
 # builtin
 import os
+import gc
+import time
 import argparse
 import requests
 
@@ -66,9 +68,9 @@ def train(device, outdir, resdir):
         "KERNEL_SIZE"            : 101,           # config["KERNEL_SIZE"]
         "image_size"             : (128, 128, 3), # (256, 256, 3), # tuple(config["image_size"])
         "primary_gaussians"      : 100, # 1000,          # config["primary_samples"]
-        "backup_gaussians"       : 100, # 4000,          # config["backup_samples"]
+        "backup_gaussians"       : 400, # 4000,          # config["backup_samples"]
         "num_epochs"             : 2000,          # config["num_epochs"]
-        "densification_interval" : 300,           # config["densification_interval"]
+        "densification_interval" : 100, #300,           # config["densification_interval"]
         "learning_rate"          : 0.001,         # config["learning_rate"]
         "display_interval"       : 100,           # config["display_interval"]
         "gradient_threshold"     : 0.002,         # config["gradient_threshold"]
@@ -102,27 +104,65 @@ def train(device, outdir, resdir):
     loss_hist = []
     opt = optim.Adam(model.parameters(), lr=learning_rate)
 
-    for epoch in range(config["num_epochs"]):
+    for epoch in range(1, num_epochs+1):
 
         # pruning
-        if epoch % (densification_interval+1) == 0 and epoch > 0:
-            with torch.no_grad():
-                # update model.mask
-                pass
-        #
+        if epoch % (densification_interval + 1) == 0 and epoch > 0:
+            mask_rm = model.mask * (model.alpha < 0.01).view(-1)
+            num_rm = mask_rm.sum().item()
+            print(f"Pruning {num_rm} Gaussians.")
+            model.prune(mask_rm)
 
+        # loss computation
         opt.zero_grad()
         image = model()
         loss  = gsplat2d.combined_loss(image, target, lambda_param=0.2)
         loss.backward()
+
+        # densification
+        if epoch % densification_interval == 0 and epoch > 0:
+
+            # gradient norm of position
+            grad_mean = torch.norm(model.mean.grad[model.mask], dim=1, p=2)
+
+            # covariance (S matrix)
+            scale_val = torch.norm(torch.sigmoid(model.scale[model.mask]), dim=1, p=2)
+
+            mean_sort , mean_idx_sort  = torch.sort(grad_mean, descending=True)
+            scale_sort, scale_idx_sort = torch.sort(scale_val, descending=True)
+
+            mask_mean  = mean_sort  > gradient_threshold
+            mask_scale = scale_sort > gradient_threshold
+
+            idx_mean  = mean_idx_sort[mask_mean]
+            idx_scale = scale_idx_sort[mask_scale]
+
+            common_idx_mask = torch.isin(idx_mean, idx_scale)
+            common_idx   = idx_mean[ common_idx_mask]
+            distinct_idx = idx_mean[~common_idx_mask]
+
+            # split points with large coordinate gradients
+            # and large gaussian values (i.e. model.scale)
+            if len(common_idx) > 0:
+                print(f"Splitting {len(common_idx)} Gaussians.")
+                model.split(common_idx)
+
+            # clone points with large coordinate gradients
+            # and small gaussian values (i.e. model.scale)
+            print(f"Cloning {len(distinct_idx)} Gaussians.")
+            model.clone(distinct_idx)
+
+        # update optimizer
         opt.step()
 
-        print(f"Epoch [{epoch} / {num_epochs}]: LOSS: {loss.item()}")
-
-        # # GC every so often (?)
-        # if epoch % 10 == 0:
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
+        # IO
+        loss_hist.append(loss.item())
+        if epoch % 20 == 0:
+            print(
+                f"Epoch [{epoch} / {num_epochs}]: " +
+                f"NG: {model.active_gaussians()}, " +
+                f"LOSS: {loss.item()}"
+            )
     # endfor
 
     image = model()

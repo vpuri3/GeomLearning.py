@@ -13,10 +13,13 @@ __all__ = [
 class GSplat(nn.Module):
     def __init__(self, N, n=None, image_size=[256, 256, 3]):
         super().__init__()
-        self.num_gaussans = N
+        self.num_gaussians = N
         if n is None:
             n = N
         H, W, C = image_size
+
+        self.register_buffer("mask", torch.ones(N, dtype=torch.bool))
+        self.mask[n:] = False
 
         self.image_size = image_size
         self.scale = nn.Parameter(torch.logit(torch.rand(N, 2)))
@@ -25,18 +28,70 @@ class GSplat(nn.Module):
         self.color = nn.Parameter(torch.rand(N, C))
         self.alpha = nn.Parameter(torch.logit(torch.rand(N, 1)))
 
-        self.register_buffer("mask", torch.ones(N, dtype=torch.bool))
-        self.mask[n:] = 0
+    def total_gaussians(self):
+        return self.num_gaussians
+
+    def active_gaussians(self):
+        return self.mask.sum().item()
 
     def forward(self):
-        mask  = self.mask.view(-1, 1)
-        scale = torch.sigmoid(self.scale)
-        rot   = torch.tanh(self.rot) * torch.pi / 2
-        mean  = torch.tanh(self.mean)
-        alpha = torch.sigmoid(self.alpha)
-        color = torch.sigmoid(self.color) * alpha.view(-1, 1) * mask
+        mask = self.mask
+        scale = torch.sigmoid(self.scale[mask])
+        rot   = torch.tanh(self.rot[mask]) * torch.pi / 2
+        mean  = torch.tanh(self.mean[mask])
+        alpha = torch.sigmoid(self.alpha[mask])
+        color = torch.sigmoid(self.color[mask]) * alpha.view(-1, 1)
 
         return rasterize(scale, rot, mean, color, self.image_size)
+
+    @torch.no_grad()
+    def prune(self, mask: torch.Tensor):
+        """
+        move to end where mask is True
+        and zero out its values
+        """
+        assert mask.dtype == torch.bool # indexable
+
+        if mask.sum().item() > 0:
+            return
+
+        for buf in self.buffers():
+            buf.data[...] = self._prune(buf.data, mask)
+        for param in self.parameters():
+            param.data[...] = self._prune(param.data, mask)
+
+        return
+
+    @torch.no_grad()
+    def _prune(self, x: torch.Tensor, mask: torch.Tensor):
+        assert mask.ndim == 1
+        assert len(mask) == len(x)
+        assert mask.dtype == torch.bool # indexable
+        return torch.cat([x[~mask], 0 * x[mask]], dim=0)
+
+    def split(self, idx: torch.Tensor, scale_factor = 1.6):
+        i0, i1 = self.clone(idx)
+        self.scale.data[idx  ] /= scale_factor
+        self.scale.data[i0:i1] /= scale_factor
+        return
+
+    def clone(self, idx):
+        if len(idx) == 0:
+            return
+
+        # indices of newly formed Gaussians
+        i0 = self.active_gaussians()
+        i1 = min(i0 + len(idx), self.total_gaussians())
+
+        # ensure new indices correspond to dead gaussians
+        assert torch.all(~self.mask[i0:i1])
+
+        # copy over parameters
+        self.mask[i0:i1] = True
+        for param in self.parameters():
+            param.data[i0:i1] = param.data[idx]
+
+        return i0, i1
 #
 
 def rasterize(
