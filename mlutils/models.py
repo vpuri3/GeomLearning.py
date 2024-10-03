@@ -167,7 +167,6 @@ class UNet(nn.Module):
     def __init__(self, ci, co, k, w=256, H=None, W=None):
         super().__init__()
 
-        ######################
         self.dconv_down1 = double_conv(ci ,  64, k)
         self.dconv_down2 = double_conv(64 , 128, k)
         self.dconv_down3 = double_conv(128, 256, k)
@@ -181,26 +180,6 @@ class UNet(nn.Module):
         self.dconv_up1 = double_conv(128 +  64,  64, k)
         
         self.conv_last = nn.Conv2d(64, co, 1)
-
-        # self.ln_down1 = nn.LayerNorm([ 64, H//2, W//2])
-        # self.ln_down2 = nn.LayerNorm([128, H//2, W//2])
-        # self.ln_down3 = nn.LayerNorm([256, H//2, W//2])
-        # self.ln_down4 = nn.LayerNorm([512, H//2, W//2])
-        ######################
-
-        # self.dconv_down1 = double_conv(ci, w, k)
-        # self.dconv_down2 = double_conv( w, w, k)
-        # self.dconv_down3 = double_conv( w, w, k)
-        # self.dconv_down4 = double_conv( w, w, k)
-        #
-        # self.maxpool = nn.MaxPool2d(2)
-        # self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        #
-        # self.dconv_up3 = double_conv(2*w, w, k)
-        # self.dconv_up2 = double_conv(2*w, w, k)
-        # self.dconv_up1 = double_conv(2*w, w, k)
-        #
-        # self.conv_last = nn.Conv2d(w, co, 1)
 
     def forward(self, x):
         conv1 = self.dconv_down1(x)
@@ -268,12 +247,13 @@ class MeshGraphNet(nn.Module):
 
     def forward(self, data):
         xn, xe = data.x, data.edge_attr
+        edge_index = data.edge_index
 
         xn = self.node_encoder(xn)
         xe = self.edge_encoder(xe)
 
         for layer in self.processor:
-            xn, xe = layer(xn, xe, data.edge_index)
+            xn, xe = layer(xn, xe, edge_index)
 
         xn = self.decoder(xn)
 
@@ -309,7 +289,8 @@ class MeshGraphLayer(MessagePassing):
 
         return yn, ye
 
-    def message(self, x_i, x_j, xe):
+    def message(self, x_i, x_j, edge_attr):
+        xe = edge_attr
         ye = torch.cat([x_i, x_j, xe], dim=1) # cat node and edge features
         ye = self.edge_mlp(ye)                # apply edge MLP
         ye = xe + ye                          # residual connection

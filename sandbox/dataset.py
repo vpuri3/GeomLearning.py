@@ -109,9 +109,9 @@ def makedata(
         x = x.reshape(shape.nt, -1)
         z = z.reshape(shape.nt, -1)
 
-        edge_dx = x[:, shape.glo_edge_index[0]] - x[:, shape.glo_edge_index[1]]
-        edge_dz = z[:, shape.glo_edge_index[0]] - z[:, shape.glo_edge_index[1]]
-        edge_attr = torch.stack([edge_dx, edge_dz], dim=-1) # [Nt, Nedges, C]
+        edge_dx = x[0, shape.glo_edge_index[0]] - x[0, shape.glo_edge_index[1]]
+        edge_dz = z[0, shape.glo_edge_index[0]] - z[0, shape.glo_edge_index[1]]
+        edge_attr = torch.stack([edge_dx, edge_dz], dim=-1) # [Nedges, C]
 
         channel_dim = 2
     else:

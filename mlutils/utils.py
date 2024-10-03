@@ -32,6 +32,7 @@ def select_device(device=None, verbose=False):
             else "mps" if torch.backends.mps.is_available()
             else "cpu"
         )
+    # TODO: check if device is available
     if verbose:
         print(f"using device {device}")
 

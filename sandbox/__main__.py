@@ -19,7 +19,7 @@ def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
     if lrs is None:
         lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 5e-6]
     if nepochs is None:
-        nepochs = [.1*E, .1*E, .25*E, .25*E, .2*E, .1*E]
+        nepochs = [.1*E, .2*E, .25*E, .25*E, .1*E, .1*E]
         nepochs = [int(e) for e in nepochs]
     assert len(lrs) == len(nepochs)
 
@@ -38,11 +38,6 @@ class MaskedGNN(nn.Module):
     def __init__(self, shape, ci, co, w, num_layers):
         super().__init__()
         self.shape = shape
-        # self.gnn = pyg.nn.Sequential("x, edge_index", [
-        #     (pyg.nn.GCNConv(ci, w), "x, edge_index -> x"),
-        #     nn.ReLU(),
-        #     (pyg.nn.GCNConv(w, co), "x, edge_index -> x"),
-        # ])
         self.act = nn.ReLU()
         self.encoder = pyg.nn.GCNConv(ci,  w)
         self.decoder = pyg.nn.GCNConv( w, co)
@@ -72,6 +67,25 @@ class MaskedGNN(nn.Module):
         return x * M
 #
 
+class MaskedMGN(nn.Module):
+    def __init__(self, shape, ci, co, w, num_layers):
+        super().__init__()
+        self.shape = shape
+        self.gnn = mlutils.MeshGraphNet(ci, 2, co, w, num_layers)
+
+    @torch.no_grad()
+    def compute_mask(self, x):
+        x0, z0, t0 = [x[:,c] for c in range(3)]
+        t1 = t0 + self.shape.dt()
+        M = self.shape.mask(x0, z0, t1)
+        return M.unsqueeze(1)
+
+    def forward(self, data):
+        M = self.compute_mask(data.x)
+        x = self.gnn(data)
+        return x * M
+#
+
 def train_gnn(device, outdir, resdir, name, blend=True, train=True):
     outname = outdir + "gnn_nextstep_" + name
     resname = resdir + "gnn_nextstep_" + name
@@ -92,7 +106,7 @@ def train_gnn(device, outdir, resdir, name, blend=True, train=True):
         nw1 = torch.inf
         nw2 = torch.inf
 
-    nx, nz, nt = 128, 128, 100
+    nx, nz, nt = 128, 128, 50
     shape = sandbox.Shape(nx, nz, nt, nw1, nw2, blend=blend)
 
     data, metadata = sandbox.makedata(
@@ -100,10 +114,16 @@ def train_gnn(device, outdir, resdir, name, blend=True, train=True):
     )
 
     # MODEL
-    ci, co, w, num_layers = 3, 1, 128, 4
-    model = MaskedGNN(shape, ci, co, w, num_layers)
+    # ci, co, w, num_layers = 3, 1, 256, 4
+    # model = MaskedGNN(shape, ci, co, w, num_layers)
+    ci, co, w, num_layers = 3, 1, 256, 4
+    model = MaskedMGN(shape, ci, co, w, num_layers)
+
+    # TRAIN
     if train:
-        train_loop(model, data, device=device, E=100, gnn=True, _batch_size=4)
+        train_loop(
+            model, data, device=device, E=100, gnn=True, _batch_size=4,
+        )
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
