@@ -18,7 +18,7 @@ import time
 import argparse
 import requests
 
-def test_raster(device, outdir, resdir):
+def test_raster(device, outdir):
 
     # scale_x = torch.tensor([1.0, 0.5, 0.5], device=device)
     # scale_y = torch.tensor([1.0, 0.5, 1.5], device=device)
@@ -36,149 +36,82 @@ def test_raster(device, outdir, resdir):
     ax.imshow(image.numpy(force=True))
     ax.axis("off")
     fig.tight_layout()
-    fig.savefig(resdir + "raster.png", dpi=300)
+    fig.savefig(outdir + "raster.png", dpi=300)
 
     return
 
-def download_config(outdir, resdir):
+def download_config(outdir):
     url1 = 'https://raw.githubusercontent.com/OutofAi/2D-Gaussian-Splatting/main/Image-01.png'
-    filename1 = resdir + url1.split('/')[-1]
+    filename1 = outdir + url1.split('/')[-1]
     response1 = requests.get(url1)
     with open(filename1, 'wb') as f:
         f.write(response1.content)
 
     url2 = 'https://raw.githubusercontent.com/OutofAi/2D-Gaussian-Splatting/main/config.yml'
-    filename2 = resdir + url2.split('/')[-1]
+    filename2 = outdir + url2.split('/')[-1]
     response2 = requests.get(url2)
     with open(filename2, 'wb') as f:
         f.write(response2.content)
     return filename1, filename2
 
-def train(device, outdir, resdir):
+def train(device, outdir):
 
-    imagefile  = resdir + "Image-01.png"
-    configfile = resdir + "config.yaml"
+    imagefile  = outdir + "Image-01.png"
 
-    # load config
-    # with open(configfile, 'r') as config_file:
-    #     config = yaml.safe_load(config_file)
-
-    # Extract values from the loaded config
-    config = {
-        "KERNEL_SIZE"            : 101,           # config["KERNEL_SIZE"]
-        "image_size"             : (128, 128, 3), # (256, 256, 3), # tuple(config["image_size"])
-        "primary_gaussians"      : 500, # 1000,          # config["primary_samples"]
-        "backup_gaussians"       : 2000, # 4000,          # config["backup_samples"]
-        "num_epochs"             : 2000,          # config["num_epochs"]
-        "densification_interval" : 100, #300,           # config["densification_interval"]
-        "learning_rate"          : 0.001,         # config["learning_rate"]
-        "display_interval"       : 100,           # config["display_interval"]
-        "gradient_threshold"     : 0.002,         # config["gradient_threshold"]
-        "gauss_threshold"        : 0.75,          # config["gaussian_threshold"]
-        "display_loss"           : False,         # config["display_loss"]
-    }
-
-    nG = config["primary_gaussians"]
-    NG = nG + config["backup_gaussians"]
-    image_size = config["image_size"]
-
-    num_epochs = config["num_epochs"]
-    learning_rate = config["learning_rate"]
-    densification_interval = config["densification_interval"]
-    gradient_threshold = config["gradient_threshold"]
-    gauss_threshold = config["gauss_threshold"]
+    # hyper-parameters
+    nG = 200
+    NG = 500
+    image_size = (128, 128, 3)
+    num_epochs = 2000
+    learning_rate = 0.001
+    densification_interval = 100
+    gradient_threshold = 0.002
+    gauss_threshold = 0.75
 
     # get target image
     target = PIL.Image.open(imagefile)
-    target = target.resize(config["image_size"][0:-1])
+    target = target.resize(image_size[0:-1])
     target = np.array(target.convert("RGB")) / 255.0
     target = torch.tensor(target).to(torch.float)
 
-    # initialize GSplat
+    # create model
     model = gsplat2d.GSplat(NG, nG, image_size)
 
-    # move to device
-    model  = model.to(device)
-    target = target.to(device)
+    # create dataset
+    data = [(0, target)]
+    def collate_fn(batch):
+        batch = torch.utils.data._utils.collate.default_collate(batch)
+        return batch[0], batch[1].squeeze(0)
 
-    loss_hist = []
-    opt = optim.Adam(model.parameters(), lr=learning_rate)
+    loader = torch.utils.data.DataLoader(data, collate_fn=collate_fn)
 
-    for epoch in range(1, num_epochs+1):
+    # create trainer
+    trainer = mlutils.Trainer(
+        model, data, device=device, nepochs=2000, lr=learning_rate,
+        collate_fn=collate_fn,
+        stats_every=20, print_config=False, lossfun=gsplat2d.combined_loss,
+    )
 
-        # pruning
-        if epoch % (densification_interval + 0) == 0 and epoch > 0:
-            mask_rm = model.mask * (model.alpha < 0.01).view(-1)
-            num_rm = mask_rm.sum().item()
-            print(f"Pruning {num_rm} Gaussians.")
-            model.prune(mask_rm)
+    def cb_prune(trainer: mlutils.Trainer):
+        return gsplat2d.prune(trainer.model, trainer.epoch, densification_interval)
 
-        # loss computation
-        opt.zero_grad()
-        image = model()
-        loss  = gsplat2d.combined_loss(image, target, lambda_param=0.2)
-        loss.backward()
+    def cb_split_clone(trainer: mlutils.Trainer):
+        return gsplat2d.split_clone(trainer.model, trainer.epoch, densification_interval, gradient_threshold)
 
-        # densification
-        if epoch % densification_interval == 0 and epoch > 0:
+    # call back functions for densification
+    trainer.add_callback("batch_start", cb_prune)
+    trainer.add_callback("batch_post_grad", cb_split_clone)
 
-            # gradient norm of position
-            grad_mean = torch.norm(model.mean.grad[model.mask], dim=1, p=2)
+    # train model
+    trainer.train()
 
-            # covariance (S matrix)
-            scale_val = torch.norm(torch.sigmoid(model.scale[model.mask]), dim=1, p=2)
-
-            mean_sort , mean_idx_sort  = torch.sort(grad_mean, descending=True)
-            scale_sort, scale_idx_sort = torch.sort(scale_val, descending=True)
-
-            mask_mean  = mean_sort  > gradient_threshold
-            mask_scale = scale_sort > gradient_threshold
-
-            idx_mean  = mean_idx_sort[mask_mean]
-            idx_scale = scale_idx_sort[mask_scale]
-
-            common_idx_mask = torch.isin(idx_mean, idx_scale)
-            common_idx   = idx_mean[ common_idx_mask]
-            distinct_idx = idx_mean[~common_idx_mask]
-
-            # split points with large coordinate gradients
-            # and large gaussian values (i.e. model.scale)
-            print(f"Splitting {len(common_idx)} Gaussians.")
-            i0, i1 = model.clone(common_idx)
-
-            scale_factor = 1.6
-            model.scale.data[common_idx] /= scale_factor
-            model.scale.data[i0:i1     ] /= scale_factor
-
-            # clone points with large coordinate gradients
-            # and small gaussian values (i.e. model.scale)
-            print(f"Cloning {len(distinct_idx)} Gaussians.")
-            i0, i1 = model.clone(distinct_idx)
-
-            step_size = 0.01
-            pos_grad = model.mean.grad[distinct_idx]
-            pos_grad_mag = torch.norm(pos_grad, dim=1, keepdim=True)
-            model.mean.data[i0:i1] += pos_grad / (pos_grad_mag + 1e-6)
-
-        # update optimizer
-        opt.step()
-
-        # IO
-        loss_hist.append(loss.item())
-        if epoch % 20 == 0:
-            print(
-                f"Epoch [{epoch} / {num_epochs}]: " +
-                f"NG: {model.active_gaussians()}, " +
-                f"LOSS: {loss.item()}"
-            )
-    # endfor
-
+    # save output image
     image = model()
     fig, ax = plt.subplots(1, 1)
     ax.imshow(image.numpy(force=True))
     ax.axis("off")
     fig.tight_layout()
-    fig.savefig(resdir + "out.png", dpi=300)
+    fig.savefig(outdir + "out.png", dpi=300)
 
     return
 
@@ -195,12 +128,10 @@ if __name__ == "__main__":
 
     print(f"using device {device}")
 
-    outdir = "./out-gsplat/"
-    resdir = "./res-gsplat/"
-
-    # test_raster(device, outdir, resdir)
-    # imagefile, configfile = download_config(outdir, resdir)
-    train(device, outdir, resdir)
+    outdir = "./gsplat2d/"
+    # test_raster(device, outdir)
+    # imagefile, configfile = download_config(outdir)
+    train(device, outdir)
 
     pass
 #

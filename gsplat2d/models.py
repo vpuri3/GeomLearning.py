@@ -28,13 +28,7 @@ class GSplat(nn.Module):
         self.color = nn.Parameter(torch.rand(N, C))
         self.alpha = nn.Parameter(torch.logit(torch.rand(N, 1)))
 
-    def total_gaussians(self):
-        return self.num_gaussians
-
-    def active_gaussians(self):
-        return self.mask.sum().item()
-
-    def forward(self):
+    def forward(self, *args):
         mask = self.mask
         scale = torch.sigmoid(self.scale[mask])
         rot   = torch.tanh(self.rot[mask]) * torch.pi / 2
@@ -43,6 +37,12 @@ class GSplat(nn.Module):
         color = torch.sigmoid(self.color[mask]) * alpha.view(-1, 1)
 
         return rasterize(scale, rot, mean, color, self.image_size)
+
+    def total_gaussians(self):
+        return self.num_gaussians
+
+    def active_gaussians(self):
+        return self.mask.sum().item()
 
     @torch.no_grad()
     def prune(self, mask: torch.Tensor):
@@ -119,7 +119,7 @@ def rasterize(
     ], dim=-2)
 
     COV = R @ S @ S @ R.transpose(-1, -2) # [N, 2, 2]
-    CINV = torch.inverse(COV)
+    CINV = torch.inverse(COV + 1e-6)
 
     #================#
     # CREATE GRID CORRESPONDING TO TARGET IMAGE
