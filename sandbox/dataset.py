@@ -88,7 +88,7 @@ def makedata(
         point = point[0:-1] 
         value = (value[1:] - value[0:-1]) / shape.dt()
         channel_dim = 1
-    elif datatype == "graph":
+    elif "graph" in datatype:
         assert mask == "finaltime"
 
         # stack features [Nt, Nxz, C]
@@ -113,6 +113,10 @@ def makedata(
         edge_dz = z[0, shape.glo_edge_index[0]] - z[0, shape.glo_edge_index[1]]
         edge_attr = torch.stack([edge_dx, edge_dz], dim=-1) # [Nedges, C]
 
+        if "nextstep" in datatype:
+            point = point[0:-1]
+            value = (value[1:] - value[0:-1]) / shape.dt()
+
         channel_dim = 2
     else:
         raise NotImplementedError(f"Got incompatible datatype: {datatype}.")
@@ -136,7 +140,7 @@ def makedata(
             pyg.data.Data(x=point[i], y=value[i],
                 edge_index=shape.loc_edge_index, edge_attr=edge_attr,
             )
-            for i in range(shape.nt)
+            for i in range(len(value))
         ]
         metadata = {**metadata, }
     else:

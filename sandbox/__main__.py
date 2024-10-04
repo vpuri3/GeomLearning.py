@@ -86,9 +86,69 @@ class MaskedMGN(nn.Module):
         return x * M
 #
 
-def train_gnn(device, outdir, resdir, name, blend=True, train=True):
+def train_gnn_nextstep(device, outdir, resdir, name, blend=True, train=True):
     outname = outdir + "gnn_nextstep_" + name
     resname = resdir + "gnn_nextstep_" + name
+
+    if blend:
+        outname = outname + "_blend"
+        resname = resname + "_blend"
+
+    modelfile  = outname + ".pth"
+    imagefile1 = resname + ".png"
+    imagefile2 = resname + "_autoregressive" + ".png"
+
+    # DATA
+    if name == "hourglass":
+        nw1 = None
+        nw2 = None
+    elif name == "alldomain":
+        nw1 = torch.inf
+        nw2 = torch.inf
+
+    nx, nz, nt = 256, 256, 200
+    shape = sandbox.Shape(nx, nz, nt, nw1, nw2, blend=blend)
+    data, metadata = sandbox.makedata(
+        shape, inputs="xztT", outputs="T", datatype="graph-nextstep", mask="finaltime",
+    )
+
+    # MODEL
+    ci, co, w, num_layers = 4, 1, 128, 4
+    model = MaskedMGN(shape, ci, co, w, num_layers)
+
+    # TRAIN
+    if train:
+        train_loop(model, data, device=device, E=200, gnn=True, _batch_size=2,)
+        torch.save(model.to("cpu").state_dict(), modelfile)
+
+    # VISUALIZE
+    with torch.no_grad():
+        dt = shape.dt()
+        _nt = len(data) # nt-1
+        num_nodes = data[0].num_nodes
+
+        # temp = mlutils.eval_gnn(data, model, device, batch_size=4)
+        # temp = temp.reshape(shape.nt, num_nodes)
+
+        temp_prev = torch.stack([d.x[:,-1] for d in data], dim=0)
+        dTdt = mlutils.eval_gnn(data, model, device, batch_size=4)
+        dTdt = dTdt.reshape(_nt, num_nodes)
+
+        temp = temp_prev + dTdt * dt
+        temp = torch.cat([temp_prev[0].unsqueeze(0), temp], dim=0)
+
+        pred1 = torch.zeros(nt, nz * nx)
+        pred1[:, shape.glo_node_index] = temp
+        pred1 = pred1.reshape(nt, nz, nx)
+
+        fig1 = shape.plot_compare(pred1)
+        fig1.savefig(imagefile1, dpi=300)
+
+    return
+
+def train_gnn(device, outdir, resdir, name, blend=True, train=True):
+    outname = outdir + "gnn_" + name
+    resname = resdir + "gnn_" + name
 
     if blend:
         outname = outname + "_blend"
@@ -120,9 +180,7 @@ def train_gnn(device, outdir, resdir, name, blend=True, train=True):
 
     # TRAIN
     if train:
-        train_loop(
-            model, data, device=device, E=100, gnn=True, _batch_size=2,
-        )
+        train_loop(model, data, device=device, E=100, gnn=True, _batch_size=2,)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
@@ -340,5 +398,6 @@ if __name__ == "__main__":
     # train_cnn(device, outdir, resdir, "alldomain", train=True)
     # train_cnn(device, outdir, resdir, "hourglass", train=True)
 
-    train_gnn(device, outdir, resdir, "hourglass", train=True)
+    # train_gnn(device, outdir, resdir, "hourglass", train=False)
+    train_gnn_nextstep(device, outdir, resdir, "hourglass", train=True)
 #
