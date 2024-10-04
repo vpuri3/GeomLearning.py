@@ -409,5 +409,7 @@ if __name__ == "__main__":
     # train_cnn(device, outdir, resdir, "hourglass", train=False)
 
     # train_gnn(device, outdir, resdir, "hourglass", train=False)
-    train_gnn_nextstep(device, outdir, resdir, "hourglass", train=False)
+    # train_gnn_nextstep(device, outdir, resdir, "hourglass", train=False)
+
+    train_gnn_nextstep(device, outdir, resdir, "hourglass", blend=False, train=True)
 #
