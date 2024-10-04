@@ -133,38 +133,48 @@ def train_gnn_nextstep(device, outdir, resdir, name, blend=True, train=True):
         ####
         # NEXT STEP
         ####
-        temp_prev = torch.stack([d.x[:,-1] for d in data], dim=0)
-        dTdt = mlutils.eval_gnn(data, model, device, batch_size=4)
-        dTdt = dTdt.reshape(_nt, num_nodes)
 
-        temp = temp_prev + dTdt * dt
-        temp = torch.cat([temp_prev[0].unsqueeze(0), temp], dim=0)
-
-        pred1 = torch.zeros(nt, nz * nx)
-        pred1[:, shape.glo_node_index] = temp
-        pred1 = pred1.reshape(nt, nz, nx)
-
-        fig1 = shape.plot_compare(pred1)
-        fig1.savefig(imagefile1, dpi=300)
+        # temp_prev = torch.stack([d.x[:,-1] for d in data], dim=0)
+        # dTdt = mlutils.eval_gnn(data, model, device, batch_size=4)
+        # dTdt = dTdt.reshape(_nt, num_nodes)
+        #
+        # temp = temp_prev + dTdt * dt
+        # temp = torch.cat([temp_prev[0].unsqueeze(0), temp], dim=0)
+        #
+        # pred1 = torch.zeros(nt, nz * nx)
+        # pred1[:, shape.glo_node_index] = temp
+        # pred1 = pred1.reshape(nt, nz, nx)
+        #
+        # fig1 = shape.plot_compare(pred1)
+        # fig1.savefig(imagefile1, dpi=300)
 
         ####
         # NEXT STEP AUTOREGRESSIVE
         ####
 
-        # K = nt // 8
-        # preds2 = []
-        # for k in range(K):
-        #     preds2.append(xztT[k, -1].unsqueeze(0))
-        # for k in range(K-1, xztT.shape[0]):
-        #     pred2 = preds2[-1]
-        #     resid = model(xztT[k].unsqueeze(0)).squeeze(1)
-        #     pred2 = pred2 + dt * resid
-        #     preds2.append(pred2)
-        # pred2 = torch.cat(preds2, dim=0)
-        #
-        # fig2 = shape.plot_compare(pred2)
-        # fig2.savefig(imagefile2, dpi=300)
+        K = nt // 3 # 8
+        temps = []
+        graph = data[0].clone()
 
+        for k in range(K):
+            temps.append(data[k].x[:, -1])
+        for k in range(K-1, _nt):
+            print(k)
+            time = dt * k
+            temp_prev = temps[-1]
+            graph.x[:, -2] = time
+            graph.x[:, -1] = temp_prev
+            dTdt = model(graph).squeeze(-1)
+            temp = temp_prev + dt * dTdt
+            temps.append(temp)
+        temp = torch.stack(temps, dim=0)
+
+        pred2 = torch.zeros(nt, nz * nx)
+        pred2[:, shape.glo_node_index] = temp
+        pred2 = pred2.reshape(nt, nz, nx)
+
+        fig2 = shape.plot_compare(pred2)
+        fig2.savefig(imagefile2, dpi=300)
 
     return
 
@@ -206,6 +216,8 @@ def train_gnn(device, outdir, resdir, name, blend=True, train=True):
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
+    model.eval()
+    model.load_state_dict(torch.load(modelfile, weights_only=True))
 
     with torch.no_grad():
         num_nodes = data[0].num_nodes
@@ -239,43 +251,6 @@ class MaskedUNet(nn.Module):
         x = self.unet(x)
         return x * M
 #
-
-class MaskedUNet2(nn.Module):
-    def __init__(self, shape, w=128, act=nn.ReLU()):
-        super().__init__()
-        self.encoder = nn.Sequential(                 # [N, 3, 256, 256]
-            mlutils.C2d_block(4, w, None, "2x", act), # [128]
-            mlutils.C2d_block(w, w, None, "2x", act), # [64]
-            mlutils.C2d_block(w, w, None, "2x", act), # [32]
-            mlutils.C2d_block(w, w, None, "2x", act), # [16]
-        )
-
-        self.bottleneck = nn.Sequential( # [N, w, 16, 16]
-            nn.Conv2d(w, w, kernel_size=3, padding=1), act, # [16]
-            nn.Conv2d(w, w, kernel_size=3, padding=1), act, # [16]
-        )
-
-        self.decoder = nn.Sequential( # [N, w, 16, 16]
-            mlutils.CT2d_block(w, w, None, "2x", act), # 32
-            mlutils.CT2d_block(w, w, None, "2x", act), # 64
-            mlutils.CT2d_block(w, w, None, "2x", act), # 128
-            mlutils.CT2d_block(w, 1, None, "2x", act), # 256
-        )
-        return
-
-    @torch.no_grad()
-    def compute_mask(self, x):
-        x0, z0, t0 = [x[0,c,:,:] for c in range(3)]
-        t1 = t0 + self.shape.dt()
-        M = self.shape.mask(x0, z0, t1)
-        return M.unsqueeze(0).unsqueeze(0)
-
-    def forward(self, x):
-        M = self.compute_mask(x)
-        x = self.encoder(x)
-        x = self.bottleneck(x)
-        x = self.decoder(x)
-        return x * M
 
 def train_cnn(device, outdir, resdir, name, blend=True, train=True):
 
