@@ -106,9 +106,8 @@ def train_gnn(device, outdir, resdir, name, blend=True, train=True):
         nw1 = torch.inf
         nw2 = torch.inf
 
-    nx, nz, nt = 128, 128, 50
+    nx, nz, nt = 256, 256, 200
     shape = sandbox.Shape(nx, nz, nt, nw1, nw2, blend=blend)
-
     data, metadata = sandbox.makedata(
         shape, inputs="xzt", outputs="T", datatype="graph", mask="finaltime",
     )
@@ -116,13 +115,13 @@ def train_gnn(device, outdir, resdir, name, blend=True, train=True):
     # MODEL
     # ci, co, w, num_layers = 3, 1, 256, 4
     # model = MaskedGNN(shape, ci, co, w, num_layers)
-    ci, co, w, num_layers = 3, 1, 256, 4
+    ci, co, w, num_layers = 3, 1, 128, 4
     model = MaskedMGN(shape, ci, co, w, num_layers)
 
     # TRAIN
     if train:
         train_loop(
-            model, data, device=device, E=100, gnn=True, _batch_size=4,
+            model, data, device=device, E=100, gnn=True, _batch_size=2,
         )
         torch.save(model.to("cpu").state_dict(), modelfile)
 
@@ -132,9 +131,6 @@ def train_gnn(device, outdir, resdir, name, blend=True, train=True):
         num_nodes = data[0].num_nodes
         temp = mlutils.eval_gnn(data, model, device, batch_size=4)
         temp = temp.reshape(shape.nt, num_nodes)
-
-        print(torch.max(temp))
-        print(torch.min(temp))
 
         pred1 = torch.zeros(nt, nz * nx)
         pred1[:, shape.glo_node_index] = temp # 1
