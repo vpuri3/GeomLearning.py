@@ -152,7 +152,7 @@ def train_gnn_nextstep(device, outdir, resdir, name, blend=True, train=True):
         # NEXT STEP AUTOREGRESSIVE
         ####
 
-        K = nt // 3 # 8
+        K = nt // 8 # 8
         temps = []
         graph = data[0].clone()
 
