@@ -122,14 +122,17 @@ def train_gnn_nextstep(device, outdir, resdir, name, blend=True, train=True):
         torch.save(model.to("cpu").state_dict(), modelfile)
 
     # VISUALIZE
+    model.eval()
+    model.load_state_dict(torch.load(modelfile, weights_only=True))
+
     with torch.no_grad():
         dt = shape.dt()
         _nt = len(data) # nt-1
         num_nodes = data[0].num_nodes
 
-        # temp = mlutils.eval_gnn(data, model, device, batch_size=4)
-        # temp = temp.reshape(shape.nt, num_nodes)
-
+        ####
+        # NEXT STEP
+        ####
         temp_prev = torch.stack([d.x[:,-1] for d in data], dim=0)
         dTdt = mlutils.eval_gnn(data, model, device, batch_size=4)
         dTdt = dTdt.reshape(_nt, num_nodes)
@@ -143,6 +146,25 @@ def train_gnn_nextstep(device, outdir, resdir, name, blend=True, train=True):
 
         fig1 = shape.plot_compare(pred1)
         fig1.savefig(imagefile1, dpi=300)
+
+        ####
+        # NEXT STEP AUTOREGRESSIVE
+        ####
+
+        # K = nt // 8
+        # preds2 = []
+        # for k in range(K):
+        #     preds2.append(xztT[k, -1].unsqueeze(0))
+        # for k in range(K-1, xztT.shape[0]):
+        #     pred2 = preds2[-1]
+        #     resid = model(xztT[k].unsqueeze(0)).squeeze(1)
+        #     pred2 = pred2 + dt * resid
+        #     preds2.append(pred2)
+        # pred2 = torch.cat(preds2, dim=0)
+        #
+        # fig2 = shape.plot_compare(pred2)
+        # fig2.savefig(imagefile2, dpi=300)
+
 
     return
 
@@ -399,5 +421,5 @@ if __name__ == "__main__":
     # train_cnn(device, outdir, resdir, "hourglass", train=True)
 
     # train_gnn(device, outdir, resdir, "hourglass", train=False)
-    train_gnn_nextstep(device, outdir, resdir, "hourglass", train=True)
+    train_gnn_nextstep(device, outdir, resdir, "hourglass", train=False)
 #
