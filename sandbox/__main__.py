@@ -134,25 +134,25 @@ def train_gnn_nextstep(device, outdir, resdir, name, blend=True, train=True):
         # NEXT STEP
         ####
 
-        # temp_prev = torch.stack([d.x[:,-1] for d in data], dim=0)
-        # dTdt = mlutils.eval_gnn(data, model, device, batch_size=4)
-        # dTdt = dTdt.reshape(_nt, num_nodes)
-        #
-        # temp = temp_prev + dTdt * dt
-        # temp = torch.cat([temp_prev[0].unsqueeze(0), temp], dim=0)
-        #
-        # pred1 = torch.zeros(nt, nz * nx)
-        # pred1[:, shape.glo_node_index] = temp
-        # pred1 = pred1.reshape(nt, nz, nx)
-        #
-        # fig1 = shape.plot_compare(pred1)
-        # fig1.savefig(imagefile1, dpi=300)
+        temp_prev = torch.stack([d.x[:,-1] for d in data], dim=0)
+        dTdt = mlutils.eval_gnn(data, model, device, batch_size=4)
+        dTdt = dTdt.reshape(_nt, num_nodes)
+        
+        temp = temp_prev + dTdt * dt
+        temp = torch.cat([temp_prev[0].unsqueeze(0), temp], dim=0)
+        
+        pred1 = torch.zeros(nt, nz * nx)
+        pred1[:, shape.glo_node_index] = temp
+        pred1 = pred1.reshape(nt, nz, nx)
+        
+        fig1 = shape.plot_compare(pred1)
+        fig1.savefig(imagefile1, dpi=300)
 
         ####
         # NEXT STEP AUTOREGRESSIVE
         ####
 
-        K = nt // 8 # 8
+        K = 1 # nt // 8
         temps = []
         graph = data[0].clone()
 
@@ -294,12 +294,22 @@ def train_cnn(device, outdir, resdir, name, blend=True, train=True):
 
     with torch.no_grad():
         xztT, _ = data[:]
-
         dt = shape.dt()
+
+        ####
+        # NEXT STEP
+        ####
 
         pred1 = mlutils.eval_model(xztT, model, device, batch_size=4)
         pred1 = (dt * pred1 + xztT[:, -1].unsqueeze(1)).squeeze(1)
         pred1 = torch.cat([xztT[0, -1].unsqueeze(0), pred1], dim=0)
+
+        fig1 = shape.plot_compare(pred1)
+        fig1.savefig(imagefile1, dpi=300)
+
+        ####
+        # NEXT STEP AUTOREGRESSIVE
+        ####
 
         # def process(y0, y1):
         #     xzt = y0[:, 0:3, :, :]
@@ -316,17 +326,21 @@ def train_cnn(device, outdir, resdir, name, blend=True, train=True):
 
         K = nt // 8
         preds2 = []
-        for k in range(K):
-            preds2.append(xztT[k, -1].unsqueeze(0))
-        for k in range(K-1, xztT.shape[0]):
-            pred2 = preds2[-1]
-            resid = model(xztT[k].unsqueeze(0)).squeeze(1)
-            pred2 = pred2 + dt * resid
-            preds2.append(pred2)
-        pred2 = torch.cat(preds2, dim=0)
+        input = xztT[0].clone().unsqueeze(0) # [1, c, nz, nt]
+        _nt = len(xztT)                    # shape.nt - 1
 
-        fig1 = shape.plot_compare(pred1)
-        fig1.savefig(imagefile1, dpi=300)
+        for k in range(K):
+            preds2.append(xztT[k, -1]) # [nz, nx]
+        for k in range(K-1, _nt):
+            print(k)
+            time = dt * k
+            temp_prev = preds2[-1]
+            input[:, -2] = time
+            input[:, -1] = temp_prev
+            dTdt = model(input).squeeze(0).squeeze(0)
+            pred2 = temp_prev + dt * dTdt
+            preds2.append(pred2)
+        pred2 = torch.stack(preds2, dim=0) # [nt, nz, nx]
 
         fig2 = shape.plot_compare(pred2)
         fig2.savefig(imagefile2, dpi=300)
@@ -392,8 +406,7 @@ if __name__ == "__main__":
     # view_shape(resdir, "alldomain")
     # view_shape(resdir, "hourglass")
 
-    # train_cnn(device, outdir, resdir, "alldomain", train=True)
-    # train_cnn(device, outdir, resdir, "hourglass", train=True)
+    # train_cnn(device, outdir, resdir, "hourglass", train=False)
 
     # train_gnn(device, outdir, resdir, "hourglass", train=False)
     train_gnn_nextstep(device, outdir, resdir, "hourglass", train=False)
