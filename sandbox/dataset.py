@@ -1,7 +1,7 @@
 #
 import torch
 import torch_geometric as pyg
-from torch.utils.data import Dataset, TensorDataset
+from torch.utils.data import TensorDataset
 
 import mlutils
 

@@ -284,6 +284,7 @@ class Trainer:
             self.opt.step()
             self.schedule.step()
             self.trigger_callbacks("batch_end")
+            self.opt.zero_grad()
 
             if print_batch:
                 batch_iterator.set_description(

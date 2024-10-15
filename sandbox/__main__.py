@@ -400,8 +400,8 @@ if __name__ == "__main__":
 
     print(f"using device {device}")
 
-    outdir = "./out/"
-    resdir = "./res/"
+    outdir = "./out/sandbox/"
+    resdir = "./res/sandbox/"
 
     # view_shape(resdir, "alldomain")
     # view_shape(resdir, "hourglass")

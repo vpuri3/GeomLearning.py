@@ -189,26 +189,24 @@ def extract(source_dir, target_dir):
     if not os.path.isdir(target_dir):
         os.mkdir(target_dir)
 
-    zipfiles = os.listdir(source_dir)
+    zipfiles = [f for f in os.listdir(source_dir) if f.endswith('.zip')]
     for filename in zipfiles:
-        if filename.endswith('.zip'):
+        # extract zip file
+        zip_path = os.path.join(source_dir, filename)
+        extract_dir = os.path.join(target_dir, "extracted")
+        os.makedirs(extract_dir, exist_ok=True)
+        print(f"Unzipping {filename}...")
+        # unzip(zip_path, extract_dir)
 
-            # extract zip file
-            zip_path = os.path.join(source_dir, filename)
-            extract_dir = os.path.join(target_dir, "extracted")
-            os.makedirs(extract_dir, exist_ok=True)
-            print(f"Unzipping {filename}...")
-            # unzip(zip_path, extract_dir)
+        # get data
+        data_dir = os.path.join(extract_dir, "SandBox")
+        out_dir  = os.path.join(target_dir, filename[:-4])
+        err_file = os.path.join(out_dir, "error.txt")
+        extract_data(data_dir, out_dir, err_file)
 
-            # get data
-            data_dir = os.path.join(extract_dir, "SandBox")
-            out_dir  = os.path.join(target_dir, filename[:-4])
-            err_file = os.path.join(out_dir, "error.txt")
-            extract_data(data_dir, out_dir, err_file)
-
-            # clean up
-            print(f"Cleaning up extracted file: {extract_dir}")
-            # shutil.rmtree(extract_dir)
+        # clean up
+        print(f"Cleaning up extracted file: {extract_dir}")
+        # shutil.rmtree(extract_dir)
         break
     return
 

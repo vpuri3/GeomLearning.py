@@ -210,6 +210,16 @@ class UNet(nn.Module):
 
         return out
 
+# #------------------------------------------------#
+# #  GraphNeuralNetwork Superclass
+# #------------------------------------------------#
+# class GraphNeuralNetwork(nn.Module):
+#     def forward_normalized(self, data):
+#         # modify data: x, y, edge_attr
+#         # with data: (xbar, xstd), (ybar, ystd), (ebar, estd)
+#
+#         return x
+
 #------------------------------------------------#
 # MeshGraphNets
 # https://medium.com/stanford-cs224w/learning-mesh-based-flow-simulations-on-graph-networks-44983679cf2d
