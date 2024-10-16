@@ -10,7 +10,9 @@ import shutil
 import collections
 
 __all__ = [
-    "extract",
+    'extract_zips',
+    'extract_from_dir',
+    'extract_from_zip',
 ]
 
 #=================================#
@@ -113,10 +115,6 @@ def get_values_from_ens(filename, num_nodes, dim):
 #=================================#
 # grab results
 #=================================#
-
-__all__.append('extract_data')
-__all__.append('get_case_info')
-__all__.append('get_timeseries_results')
 
 def get_case_info(casedir):
 
@@ -233,9 +231,9 @@ def get_timeseries_results(casedir):
 
     return results
 
-def extract_data(data_dir, out_dir, error_file, timeseries=None):
-    if not os.path.isdir(out_dir):
-        os.mkdir(out_dir)
+def extract_from_dir(data_dir, out_dir, error_file, timeseries=None):
+    os.makedirs(out_dir, exist_ok=True)
+
     cases = os.listdir(data_dir)
     cases = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
     print(f"Loading displacement results from: {data_dir} into {out_dir}")
@@ -276,30 +274,38 @@ def unzip(zip_path, extract_dir):
     with zipfile.ZipFile(zip_path, "r") as zip:
         zip.extractall(extract_dir)
 
-def extract(source_dir, target_dir, timeseries=None):
-    if not os.path.isdir(target_dir):
-        os.mkdir(target_dir)
+def extract_from_zip(source_zip, target_dir, timeseries=None):
+    os.makedirs(target_dir, exist_ok=True)
 
-    zipfiles = [f for f in os.listdir(source_dir) if f.endswith('.zip')]
-    for filename in zipfiles:
-        # extract zip file
-        zip_path = os.path.join(source_dir, filename)
-        extract_dir = os.path.join(target_dir, "extracted")
-        os.makedirs(extract_dir, exist_ok=True)
-        print(f"Unzipping {filename}...")
-        # unzip(zip_path, extract_dir)
+    # extract to temporary directory
+    extract_dir = os.path.join(target_dir, "extracted")
+    os.makedirs(extract_dir, exist_ok=True)
+    print(f"Unzipping {source_zip}...")
+    unzip(source_zip, extract_dir)
 
-        # get data
-        data_dir = os.path.join(extract_dir, "SandBox")
-        out_dir  = os.path.join(target_dir, filename[:-4])
-        err_file = os.path.join(out_dir, "error.txt")
-        extract_data(data_dir, out_dir, err_file, timeseries=timeseries)
+    # get data
+    data_dir = os.path.join(extract_dir, "SandBox")
+    out_dir  = os.path.join(target_dir, filename[:-4])
+    err_file = os.path.join(out_dir, "error.txt")
+    extract_from_dir(data_dir, out_dir, err_file, timeseries=timeseries)
 
-        # clean up
-        print(f"Cleaning up extracted file: {extract_dir}")
-        # shutil.rmtree(extract_dir)
-        break
+    # clean up
+    print(f"Cleaning up extracted file: {extract_dir}")
+    shutil.rmtree(extract_dir)
+
     return
 
+def extract_zips(source_dir, target_dir, timeseries=None):
+    os.makedirs(target_dir, exist_ok=True)
+    zip_names = [f for f in os.listdir(source_dir) if f.endswith('.zip')]
+
+    for zip_name in zip_names:
+        zip_file = os.path.join(source_dir, zip_name)
+        out_dir  = os.path.join(target_dir, zip_name[:-4])
+
+        os.makedirs(out_dir)
+        extract_from_zip(zip_file, out_dir, timeseries=timeseries)
+
+    return
 #=================================#
 #

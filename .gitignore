@@ -168,6 +168,7 @@ cython_debug/
 # VTK
 *.vtu
 *.vtk
+*.pvd
 
 # wandb
 wandb/

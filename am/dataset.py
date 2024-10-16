@@ -10,6 +10,7 @@ import mlutils
 __all__ = [
     'GraphDataset',
     'makegraph',
+    'timeseries_dataset',
 ]
 
 class GraphDataset(pyg.data.Dataset):
@@ -109,4 +110,22 @@ def makegraph(data):
         x=x, y=y, edge_index=edge_index, edge_attr=edge_attr,
         pos=verts, elems=elems, **metadata,
     )
+#
+
+def timeseries_dataset(case_file: str):
+    assert case_file.endswith('.pt'), f"got invalid file name {case_file}"
+
+    case = torch.load(case_file, weights_only=False)
+    nsteps = len(case['verts'])
+
+    dataset = []
+
+    for i in range(nsteps):
+        step = dict(verts=case['verts'][i], elems=case['elems'][i],
+                    temp =case['temp' ][i], disp =case['disp' ][i],
+                    von_mises_stress=case['von_mises_stress'][i])
+        graph = makegraph(step)
+        dataset.append(graph)
+
+    return dataset
 #

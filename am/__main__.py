@@ -88,21 +88,50 @@ def extract_timeseries_data():
     # info = am.get_case_info(case_dir)
     # results = am.get_timeseries_results(case_dir)
 
-    am.extract_data(ext_dir, out_dir, errfile, timeseries=True)
+    am.extract_from_dir(ext_dir, out_dir, errfile, timeseries=True)
 
     return
 
-def view_timeseries_data():
+def view_timeseries_data(resdir):
+    import os
     import numpy as np
     data_dir = "/home/shared/netfabb_ti64_hires_out/tmp/"
 
-    case_file = os.path.join(data_dir, "101635_11b839a3_5.pt")
-    # case_file = os.path.join(data_dir, "83419_82b6bccd_0.npz")
-    # case_file = os.path.join(data_dir, "77980_f6ed5970_4.npz")
+    # case_file = os.path.join(data_dir, "101635_11b839a3_5.pt")
+    # case_file = os.path.join(data_dir, "77980_f6ed5970_4.pt")
+    case_file = os.path.join(data_dir, "21232_dae006f4_0.pt")
 
-    case = torch.load(case_file, weights_only=False)
-    for key in case:
-        print(key, len(case[key]))
+    out_dir  = os.path.join(resdir, 'timeseries')
+    os.makedirs(out_dir, exist_ok=True)
+
+    dataset = am.timeseries_dataset(case_file)
+    visualize_timeseries_pyv(dataset, out_dir)
+
+    return
+
+def visualize_timeseries_pyv(dataset, out_dir):
+    N = len(dataset)
+
+    for i in range(N):
+        graph = dataset[i]
+        mesh = am.mesh_pyv(graph.x, graph.elems)
+        mesh.point_data['target'] = graph.y.numpy(force=True)
+        mesh.save(os.path.join(out_dir, f'data{str(i).zfill(2)}.vtk'))
+
+    pvd_file = os.path.join(out_dir, 'time_series.pvd')
+    write_pvd(pvd_file, N, 'data')
+
+    return
+
+def write_pvd(pvd_file, N, vtk_name):
+    with open(pvd_file, "w") as f:
+        f.write('<?xml version="1.0"?>\n')
+        f.write('<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n')
+        f.write('  <Collection>\n')
+        for i in range(N):
+            f.write(f'    <DataSet timestep="{i}" group="" part="0" file="{vtk_name}{str(i).zfill(2)}.vtk"/>\n')
+        f.write('  </Collection>\n')
+        f.write('</VTKFile>\n')
 
     return
 
@@ -130,14 +159,14 @@ if __name__ == "__main__":
     #===============#
     # Final time data
     #===============#
-    # am.extract(DATADIR_RAW, DATADIR_OUT)
+    # am.extract_zips(DATADIR_RAW, DATADIR_OUT)
     # train_MGN(device, outdir, resdir, train=False)
 
     #===============#
     # Timeseries data
     #===============#
     # extract_timeseries_data()
-    view_timeseries_data()
+    view_timeseries_data(resdir)
 
     pass
 #
