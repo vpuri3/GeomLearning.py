@@ -1,6 +1,7 @@
 # 3rd party
 import torch
 import torch_geometric as pyg
+from tqdm import tqdm
 
 # builtin
 import os
@@ -46,8 +47,8 @@ def train_MGN(device, outdir, resdir, train=True):
     #=================#
     # MODEL
     #=================#
-    ci, ce, co, w, num_layers = 3, 3, 1, 64, 4
-    model = mlutils.MeshGraphNet(ci, ce, co, w, num_layers)
+    # ci, ce, co, w, num_layers = 3, 3, 1, 64, 4
+    # model = mlutils.MeshGraphNet(ci, ce, co, w, num_layers)
 
     #=================#
     # TRAIN
@@ -60,15 +61,20 @@ def train_MGN(device, outdir, resdir, train=True):
     #=================#
     # VISUALIZE
     #=================#
-    model.eval()
-    model.load_state_dict(torch.load(modelfile, weights_only=True))
+    # model.eval()
+    # model.load_state_dict(torch.load(modelfile, weights_only=True))
+
+    for i in tqdm(range(5, 20)):
+        graph = dataset[i]
+        print(graph.edge_index.shape[1])
+        fig = am.visualize_mpl(graph, make_edge=False)
+        fig.savefig(os.path.join(resdir, f'data{str(i).zfill(2)}'), dpi=300)
 
     return
 
 if __name__ == "__main__":
 
     mlutils.set_seed(123)
-
     parser = argparse.ArgumentParser(description = 'Sandbox')
     parser.add_argument('--gpu_device', default=0, help='GPU device', type=int)
     args = parser.parse_args()
@@ -87,7 +93,10 @@ if __name__ == "__main__":
     if not os.path.exists(resdir):
         os.mkdir(resdir)
 
-    train_MGN(device, outdir, resdir)
+    #===============#
+    # train
+    #===============#
+    train_MGN(device, outdir, resdir, train=False)
 
     #===============#
     # extract data from zip files

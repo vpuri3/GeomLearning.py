@@ -1,6 +1,7 @@
 import torch
 import torch_geometric as pyg
 import numpy as np
+from tqdm import tqdm
 
 import os
 
@@ -33,7 +34,7 @@ class GraphDataset(pyg.data.Dataset):
     def process(self):
         raw_paths = self.raw_paths
         proc_paths = self.processed_paths
-        for idx in range(len(self)):
+        for idx in tqdm(range(len(self))):
             data = np.load(raw_paths[idx])
             graph = makegraph(data)
             torch.save(graph, proc_paths[idx])
@@ -49,10 +50,10 @@ class GraphDataset(pyg.data.Dataset):
 
 def makegraph(data):
 
-    elems = torch.tensor(data['elems'], dtype=torch.int)    # [Ne, 8]
-    verts = torch.tensor(data['verts'], dtype=torch.float)  # [Nv, 3]
-    temp  = torch.tensor(data['temp'], dtype = torch.float) # [Nv, 1]
-    disp  = torch.tensor(data['disp'], dtype = torch.float) # [Nv, 3]
+    elems = torch.tensor(data['elems'], dtype=torch.int)     # [Ne, 8]
+    verts = torch.tensor(data['verts'], dtype=torch.float)   # [Nv, 3]
+    temp  = torch.tensor(data['temp'] , dtype = torch.float) # [Nv, 1]
+    disp  = torch.tensor(data['disp'] , dtype = torch.float) # [Nv, 3]
     vmstr = torch.tensor(data['von_mises_stress'], dtype = torch.float) # [Nv, 1]
 
     # get edges
@@ -98,12 +99,12 @@ def makegraph(data):
         "ebar" : ebar, "estd" : estd,
     }
 
-    x = mlutils.normalize(x, xbar, xstd)
-    y = mlutils.normalize(y, ybar, ystd)
-    edge_attr = mlutils.normalize(edge_attr, ebar, estd)
+    # x = mlutils.normalize(x, xbar, xstd)
+    # y = mlutils.normalize(y, ybar, ystd)
+    # edge_attr = mlutils.normalize(edge_attr, ebar, estd)
 
     return pyg.data.Data(
         x=x, y=y, edge_index=edge_index, edge_attr=edge_attr,
-        **metadata, # pos=verts,
+        pos=verts, elems=elems, **metadata,
     )
 #
