@@ -75,6 +75,21 @@ def train_MGN(device, outdir, resdir, train=True):
 
     return
 
+def timeseries_data():
+    ext_dir = "/home/shared/netfabb_ti64_hires_out/extracted/SandBox/"
+    out_dir = "/home/shared/netfabb_ti64_hires_out/tmp/"
+
+    # only look at one case for now
+    errfile = os.path.join(out_dir, "error.txt")
+    casedir = os.path.join(ext_dir, "101635_11b839a3_5")
+    # casedir = os.path.join(ext_dir, "83419_82b6bccd_0")
+    # casedir = os.path.join(ext_dir, "77980_f6ed5970_4")
+
+    info = am.get_case_info(casedir)
+    print(info['base_names'][0])
+
+    return
+
 if __name__ == "__main__":
 
     mlutils.set_seed(123)
@@ -99,12 +114,13 @@ if __name__ == "__main__":
     #===============#
     # train
     #===============#
-    train_MGN(device, outdir, resdir, train=False)
+    # train_MGN(device, outdir, resdir, train=False)
 
     #===============#
     # extract data from zip files
     #===============#
     # am.extract(DATADIR_RAW, DATADIR_OUT)
+    timeseries_data()
 
     pass
 #

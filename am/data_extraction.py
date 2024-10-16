@@ -26,15 +26,17 @@ __all__ = [
 def get_basefile(full_path):
     return os.path.normpath(os.path.basename(full_path))
 
-def extract_frames_from_case(filename):
-    with open(filename,'r') as f:
+def extract_frames_from_case(casefile): # mechanical.case
+    with open(casefile,'r') as f:
         lines = f.readlines()
 
+    nframes = []
     for line in lines:
         if "number of steps:" in line:
-            return int(line[17:])
+            fr = int(line[17:])
+            nframes.append(fr)
 
-    return []
+    return nframes
 
 def read80(f):
     return f.read(80).decode('utf-8').strip()
@@ -109,35 +111,111 @@ def get_values_from_ens(filename, N, nv):
 
 #=================================#
 # grab results
-# modify only: get_file_info, get_all_results, extract_data
 #=================================#
-def get_file_info(filename):
-    basename = get_basefile(filename) + "_"
-    if not os.path.exists(f"{filename}/results/{basename}mechanical.case"):
+
+__all__.append('get_case_info')
+__all__.append('get_timeseries_results')
+
+def get_case_info(casedir):
+
+    basename = get_basefile(casedir) + "_"
+    if not os.path.exists(f"{casedir}/results/{basename}mechanical.case"):
         basename = ""
-        if not os.path.exists(f"{filename}/results/mechanical.case"):
+        casefile = os.path.join(casedir, 'results', 'mechanical.case')
+        if not os.path.exists(casefile):
             return dict(error="Error preparing simulation.")
-    with open(f'{filename}/{basename}mechanical.out') as f:
+
+    mech_outfile = os.path.join(casedir, f"{basename}mechanical.out")
+    with open(mech_outfile) as f:
         if 'Analysis terminated' in f.read():
             return dict(error="Error running simulation.")
-    case_file = f"{filename}/results/{basename}mechanical.case"
 
-    frame_count = extract_frames_from_case(case_file)
-    if frame_count == []:
-        return dict(error=f"Case file missing frame count. {filename}")
+    casefile = os.path.join(casedir, 'results', f'{basename}mechanical.case')
+    nframes = extract_frames_from_case(casefile)
+    if nframes == []:
+        return dict(error=f"Case file missing frame count. {casedir}")
 
-    semi_frame_count = frame_count//2+1
-    geo_file = f"{filename}/results/{basename}mechanical_{semi_frame_count}.geo"
+    frame_count, semi_frame_count = nframes
+    assert (frame_count % 2) == 0, f"Frame count must be even. Got {frame_count}."
+    assert (semi_frame_count - 2) == (frame_count - 2) // 2, f"Got incompatible frame counts, {frame_count}, {semi_frame_count}."
+
+    basefilename = f"{casedir}/results/{basename}mechanical00_{frame_count}."
+    geo_file = os.path.join(casedir, 'results', f'{basename}mechanical_{semi_frame_count}.geo')
     if not os.path.exists(geo_file):
         return dict(error="Missing Geo file.")
-    basefilename = f"{filename}/results/{basename}mechanical00_{frame_count}."
 
-    return dict(geo=geo_file, basefilename=basefilename)
+    # # Grab files corresponding to all time-steps
+    # NetFabb write state twice for every layer. This is why there are ~twice
+    # as many `base_names` as `geo_files`. We want to grab the later file.
+    # 
+    # For both geo_files and base_names, the last two files correspond to 
+    # "cooling" and "substrate removal". We will skip those files for now.
+    #
+    # Based on mechanical.out, thermal.out
 
-def get_all_results(filename):
-    info = get_file_info(filename)
+    geo_files  = [] # 0:semi_frame_count
+    base_names = [] # 1:frame_count
+
+    for i in range(1, semi_frame_count - 1):
+        geo_path  = os.path.join(casedir, 'results', f'{basename}mechanical_{i}.geo')
+        assert os.path.exists(geo_path ), f"Geo file {geo_path} not found."
+        geo_files.append(geo_path)
+
+        ii = 2 * i
+        base_name = os.path.join(casedir, 'results', f'{basename}mechanical00_{ii}')
+        dis_path = base_name + '.dis.ens'
+        assert os.path.exists(dis_path), f"Base file {dis_path} not found."
+        base_names.append(base_name)
+
+    assert len(geo_files) == len(base_names)
+
+    # for i in range(1, semi_frame_count + 1):
+    #     geo_path  = os.path.join(casedir, 'results', f'{basename}mechanical_{i}.geo')
+    #     assert os.path.exists(geo_path ), f"Geo file {geo_path} not found."
+    #     geo_files.append(geo_path)
+    #
+    # for i in range(frame_count):
+    #     ii = i+1
+    #     base_name = os.path.join(casedir, 'results', f'{basename}mechanical00_{ii}')
+    #     dis_path = base_name + '.dis.ens'
+    #     assert os.path.exists(dis_path), f"Base file {dis_path} not found."
+    #     base_names.append(base_name)
+
+    return dict(
+        geo=geo_file, basefilename=basefilename,
+        geo_files=geo_files, base_names=base_names,
+    )
+
+def get_timeseries_results(casedir):
+    info = get_case_info(casedir)
     if len(info) == 1:
-        return [info["error"],] # Simulation failed
+        return [info["error"],]
+
+    verts = []
+    elems = []
+    for geo_file in info['geo_files']:
+        v, e = get_vertices_from_geo(geo_file, return_elements=True)
+        verts.append(v) # [Nv, 3]
+        elems.append(e) # [Ne, 8]
+
+    # output fields and their dimensions
+    fields = dict(dis=("disp", 3), svm=("von_mises_stress", 1), tmp=("temp", 1))
+
+    # dictionary to hold results
+    results = dict(verts=verts, elems=elems)
+
+    for (i, base_name) in enumerate(info['base_names']):
+        nv = verts[i].shape[0]
+        for key in keys(fields):
+            path = base_name + f'.{key}.ens'
+            val = get_values_from_ens(path, nv, fields[key][1])
+
+    return results
+
+def get_all_results(casedir):
+    info = get_case_info(casedir)
+    if len(info) == 1:
+        return [info["error"],] # Case failed
     
     verts, elems = get_vertices_from_geo(info["geo"], return_elements=True)
     N_verts = verts.shape[0]
@@ -157,6 +235,7 @@ def extract_data(data_dir, out_dir, error_file):
     if not os.path.isdir(out_dir):
         os.mkdir(out_dir)
     cases = os.listdir(data_dir)
+    cases = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(datadir, f))]
     print(f"Loading displacement results from: {data_dir} into {out_dir}")
 
     num_success = 0
@@ -164,16 +243,15 @@ def extract_data(data_dir, out_dir, error_file):
 
     with open(error_file,"a") as err:
         for case in tqdm(cases):
-            casefile = os.path.join(data_dir, case)
-            if os.path.isdir(casefile):
-                results = get_all_results(casefile)
-                if len(results) == 1:
-                    num_failure += 1
-                    err.write(f'{case}\n')
-                else:
-                    num_success += 1
-                    output_path = os.path.join(out_dir, case + '.npz')
-                    np.savez(output_path, **results)
+            casedir = os.path.join(data_dir, case)
+            results = get_all_results(casedir)
+            if len(results) == 1:
+                num_failure += 1
+                err.write(f'{case}\n')
+            else:
+                num_success += 1
+                output_path = os.path.join(out_dir, case + '.npz')
+                np.savez(output_path, **results)
 
     print(f"Successfully saved {num_success} / {num_success + num_failure} cases to NPZ format.")
     print(f"Failed simulation cases are logged to {error_file}")
