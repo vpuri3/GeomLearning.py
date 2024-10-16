@@ -59,7 +59,7 @@ def makegraph(data):
     # get edges
     elems = elems - 1 # fix indexing
 
-    connectivity = [
+    connectivity = [                    # hexa8 elements
         (0, 1), (1, 2), (2, 3), (3, 4), # cube base
         (4, 5), (5, 6), (6, 7), (7, 4), # cube top
         (0, 4), (1, 5), (2, 6), (3, 7), # vertical edges
@@ -74,8 +74,10 @@ def makegraph(data):
             edges.add(edge1)
             edges.add(edge2)
 
-    edge_index = torch.tensor(list(edges)) # [Nedges, 2]
-    edge_index = edge_index.T.contiguous()
+    edge_index = torch.tensor(list(edges))           # [Nedges, 2]
+    edge_index = edge_index.T.contiguous()           # [2, Nedges]
+    edge_index = pyg.utils.coalesce(edge_index)      # remove duplicate edges
+    edge_index = pyg.utils.to_undirected(edge_index) # guarantee bidirectionality
 
     # node attributes
     x = torch.cat([verts], dim=-1)

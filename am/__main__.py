@@ -64,11 +64,14 @@ def train_MGN(device, outdir, resdir, train=True):
     # model.eval()
     # model.load_state_dict(torch.load(modelfile, weights_only=True))
 
-    for i in tqdm(range(5, 20)):
-        graph = dataset[i]
-        print(graph.edge_index.shape[1])
-        fig = am.visualize_mpl(graph, make_edge=False)
-        fig.savefig(os.path.join(resdir, f'data{str(i).zfill(2)}'), dpi=300)
+    # for i in tqdm(range(20)):
+    #     graph = dataset[i]
+    #     # fig = am.visualize_mpl(graph.x, graph.y, graph.edge_index)
+    #     # fig.savefig(os.path.join(resdir, f'data{str(i).zfill(2)}'), dpi=300)
+    #
+    #     mesh = am.mesh_pyv(graph.x, graph.elems)
+    #     mesh.point_data['target'] = graph.y.numpy(force=True)
+    #     mesh.save(os.path.join(resdir, f'data{str(i).zfill(2)}.vtk'))
 
     return
 

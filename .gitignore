@@ -165,6 +165,10 @@ cython_debug/
 *.pt
 *.pth
 
+# VTK
+*.vtu
+*.vtk
+
 # wandb
 wandb/
 
