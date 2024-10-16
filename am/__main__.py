@@ -75,18 +75,34 @@ def train_MGN(device, outdir, resdir, train=True):
 
     return
 
-def timeseries_data():
+def extract_timeseries_data():
     ext_dir = "/home/shared/netfabb_ti64_hires_out/extracted/SandBox/"
     out_dir = "/home/shared/netfabb_ti64_hires_out/tmp/"
-
-    # only look at one case for now
     errfile = os.path.join(out_dir, "error.txt")
-    casedir = os.path.join(ext_dir, "101635_11b839a3_5")
-    # casedir = os.path.join(ext_dir, "83419_82b6bccd_0")
-    # casedir = os.path.join(ext_dir, "77980_f6ed5970_4")
 
-    info = am.get_case_info(casedir)
-    print(info['base_names'][0])
+    # consider a single case
+    case_dir = os.path.join(ext_dir, "101635_11b839a3_5")
+    # case_dir = os.path.join(ext_dir, "83419_82b6bccd_0")
+    # case_dir = os.path.join(ext_dir, "77980_f6ed5970_4")
+
+    # info = am.get_case_info(case_dir)
+    # results = am.get_timeseries_results(case_dir)
+
+    am.extract_data(ext_dir, out_dir, errfile, timeseries=True)
+
+    return
+
+def view_timeseries_data():
+    import numpy as np
+    data_dir = "/home/shared/netfabb_ti64_hires_out/tmp/"
+
+    case_file = os.path.join(data_dir, "101635_11b839a3_5.pt")
+    # case_file = os.path.join(data_dir, "83419_82b6bccd_0.npz")
+    # case_file = os.path.join(data_dir, "77980_f6ed5970_4.npz")
+
+    case = torch.load(case_file, weights_only=False)
+    for key in case:
+        print(key, len(case[key]))
 
     return
 
@@ -112,15 +128,16 @@ if __name__ == "__main__":
         os.mkdir(resdir)
 
     #===============#
-    # train
+    # Final time data
     #===============#
+    # am.extract(DATADIR_RAW, DATADIR_OUT)
     # train_MGN(device, outdir, resdir, train=False)
 
     #===============#
-    # extract data from zip files
+    # Timeseries data
     #===============#
-    # am.extract(DATADIR_RAW, DATADIR_OUT)
-    timeseries_data()
+    # extract_timeseries_data()
+    view_timeseries_data()
 
     pass
 #

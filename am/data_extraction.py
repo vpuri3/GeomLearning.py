@@ -1,4 +1,5 @@
 #
+import torch
 import numpy as np
 from tqdm import tqdm
 
@@ -6,7 +7,7 @@ import os
 import struct
 import zipfile
 import shutil
-
+import collections
 
 __all__ = [
     "extract",
@@ -87,14 +88,14 @@ def read_geo_binary(path):
     return data
 
 
-def read_ens_binary(path, num_nodes, num_values):
+def read_ens_binary(path, num_nodes, dim):
     with open(path, 'rb') as f:
         description = read80(f)
         assert(read80(f) == 'part')
         assert(read_ints(f, 1) == 1)
         assert(read80(f) == 'coordinates')
-        arr = read_floats(f, num_nodes * num_values)
-    data = arr.reshape(num_values, num_nodes).T
+        arr = read_floats(f, num_nodes * dim)
+    data = arr.reshape(dim, num_nodes).T
     return dict(description=description, data=data)
 
 def get_vertices_from_geo(filename, return_elements=False):
@@ -105,14 +106,15 @@ def get_vertices_from_geo(filename, return_elements=False):
     else:
         return data["nodes"], data["elems"]
 
-def get_values_from_ens(filename, N, nv):
-    data = read_ens_binary(filename, N, nv)
+def get_values_from_ens(filename, num_nodes, dim):
+    data = read_ens_binary(filename, num_nodes, dim)
     return data["data"]
 
 #=================================#
 # grab results
 #=================================#
 
+__all__.append('extract_data')
 __all__.append('get_case_info')
 __all__.append('get_timeseries_results')
 
@@ -186,33 +188,7 @@ def get_case_info(casedir):
         geo_files=geo_files, base_names=base_names,
     )
 
-def get_timeseries_results(casedir):
-    info = get_case_info(casedir)
-    if len(info) == 1:
-        return [info["error"],]
-
-    verts = []
-    elems = []
-    for geo_file in info['geo_files']:
-        v, e = get_vertices_from_geo(geo_file, return_elements=True)
-        verts.append(v) # [Nv, 3]
-        elems.append(e) # [Ne, 8]
-
-    # output fields and their dimensions
-    fields = dict(dis=("disp", 3), svm=("von_mises_stress", 1), tmp=("temp", 1))
-
-    # dictionary to hold results
-    results = dict(verts=verts, elems=elems)
-
-    for (i, base_name) in enumerate(info['base_names']):
-        nv = verts[i].shape[0]
-        for key in keys(fields):
-            path = base_name + f'.{key}.ens'
-            val = get_values_from_ens(path, nv, fields[key][1])
-
-    return results
-
-def get_all_results(casedir):
+def get_finaltime_results(casedir):
     info = get_case_info(casedir)
     if len(info) == 1:
         return [info["error"],] # Case failed
@@ -231,12 +207,43 @@ def get_all_results(casedir):
 
     return results
 
-def extract_data(data_dir, out_dir, error_file):
+def get_timeseries_results(casedir):
+    info = get_case_info(casedir)
+    if len(info) == 1:
+        return [info["error"],]
+
+    results = collections.defaultdict(list) # initializes every item to []
+    fields  = dict(dis=("disp", 3), svm=("von_mises_stress", 1), tmp=("temp", 1))
+
+    for geo_file in info['geo_files']:
+        v, e = get_vertices_from_geo(geo_file, return_elements=True)
+        v = v.astype(np.float32)
+        e = e.astype(np.int32)
+        results['verts'].append(v) # [Nv, 3]
+        results['elems'].append(e) # [Ne, 8]
+
+    for (i, base_name) in enumerate(info['base_names']):
+        nv = results['verts'][i].shape[0]
+        for key in fields:
+            path = base_name + f'.{key}.ens'
+            field, dim = fields[key]
+            val = get_values_from_ens(path, nv, dim)
+            val = val.astype(np.float32)
+            results[field].append(val)
+
+    return results
+
+def extract_data(data_dir, out_dir, error_file, timeseries=None):
     if not os.path.isdir(out_dir):
         os.mkdir(out_dir)
     cases = os.listdir(data_dir)
-    cases = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(datadir, f))]
+    cases = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
     print(f"Loading displacement results from: {data_dir} into {out_dir}")
+
+    if timeseries:
+        result_func = get_timeseries_results
+    else: # default to final-time
+        result_func = get_finaltime_results
 
     num_success = 0
     num_failure = 0
@@ -244,17 +251,23 @@ def extract_data(data_dir, out_dir, error_file):
     with open(error_file,"a") as err:
         for case in tqdm(cases):
             casedir = os.path.join(data_dir, case)
-            results = get_all_results(casedir)
+            results = result_func(casedir)
             if len(results) == 1:
                 num_failure += 1
                 err.write(f'{case}\n')
             else:
                 num_success += 1
-                output_path = os.path.join(out_dir, case + '.npz')
-                np.savez(output_path, **results)
+                if timeseries:
+                    out_path = os.path.join(out_dir, case + '.pt')
+                    torch.save(results, out_path)
+                else:
+                    out_path = os.path.join(out_dir, case + '.npz')
+                    np.savez(out_path, **results)
 
     print(f"Successfully saved {num_success} / {num_success + num_failure} cases to NPZ format.")
     print(f"Failed simulation cases are logged to {error_file}")
+
+    return
 
 #=================================#
 # assemble data
@@ -263,7 +276,7 @@ def unzip(zip_path, extract_dir):
     with zipfile.ZipFile(zip_path, "r") as zip:
         zip.extractall(extract_dir)
 
-def extract(source_dir, target_dir):
+def extract(source_dir, target_dir, timeseries=None):
     if not os.path.isdir(target_dir):
         os.mkdir(target_dir)
 
@@ -280,7 +293,7 @@ def extract(source_dir, target_dir):
         data_dir = os.path.join(extract_dir, "SandBox")
         out_dir  = os.path.join(target_dir, filename[:-4])
         err_file = os.path.join(out_dir, "error.txt")
-        extract_data(data_dir, out_dir, err_file)
+        extract_data(data_dir, out_dir, err_file, timeseries=timeseries)
 
         # clean up
         print(f"Cleaning up extracted file: {extract_dir}")
