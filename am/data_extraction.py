@@ -285,9 +285,8 @@ def extract_from_zip(source_zip, target_dir, timeseries=None):
 
     # get data
     data_dir = os.path.join(extract_dir, "SandBox")
-    out_dir  = os.path.join(target_dir, filename[:-4])
-    err_file = os.path.join(out_dir, "error.txt")
-    extract_from_dir(data_dir, out_dir, err_file, timeseries=timeseries)
+    err_file = os.path.join(target_dir, "error.txt")
+    extract_from_dir(data_dir, target_dir, err_file, timeseries=timeseries)
 
     # clean up
     print(f"Cleaning up extracted file: {extract_dir}")

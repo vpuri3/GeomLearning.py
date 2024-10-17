@@ -14,7 +14,8 @@ import am
 import mlutils
 
 DATADIR_RAW = "/home/shared/netfabb_ti64_hires_raw/"
-DATADIR_OUT = "/home/shared/netfabb_ti64_hires_out/"
+DATADIR_TIMESERIES = "/home/shared/netfabb_ti64_hires_timeseries/"
+DATADIR_FINALTIME  = "/home/shared/netfabb_ti64_hires_finaltime/"
 
 def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
     if lrs is None:
@@ -33,24 +34,27 @@ def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
 
     return model
 
-def train_MGN(device, outdir, resdir, train=True):
+def train_finaltime(device, outdir, resdir, train=True):
     outname = os.path.join(outdir, "gnn")
     resname = os.path.join(resdir, "gnn")
 
     modelfile  = outname + ".pth"
     imagefile1 = resname + ".png"
 
+    vis_dir = os.path.join(resdir, 'vis_finaltime')
+    os.makedirs(vis_dir, exist_ok=True)
+
     #=================#
     # DATA: only consider first 100 cases
     #=================#
-    DATADIR = os.path.join(DATADIR_OUT, r"data_0-100")
-    dataset = am.GraphDataset(DATADIR) # force_reload=True
+    DATADIR = os.path.join(DATADIR_FINALTIME, r"data_0-100")
+    dataset = am.GraphDataset(DATADIR)
 
     #=================#
     # MODEL
     #=================#
-    # ci, ce, co, w, num_layers = 3, 3, 1, 64, 4
-    # model = mlutils.MeshGraphNet(ci, ce, co, w, num_layers)
+    ci, ce, co, w, num_layers = 3, 3, 1, 64, 4
+    model = mlutils.MeshGraphNet(ci, ce, co, w, num_layers)
 
     #=================#
     # TRAIN
@@ -63,21 +67,21 @@ def train_MGN(device, outdir, resdir, train=True):
     #=================#
     # VISUALIZE
     #=================#
-    # model.eval()
-    # model.load_state_dict(torch.load(modelfile, weights_only=True))
+    model.eval()
+    model.load_state_dict(torch.load(modelfile, weights_only=True))
 
-    # for i in tqdm(range(20)):
-    #     graph = dataset[i]
-    #     # fig = am.visualize_mpl(graph.x, graph.y, graph.edge_index)
-    #     # fig.savefig(os.path.join(resdir, f'data{str(i).zfill(2)}'), dpi=300)
-    #
-    #     mesh = am.mesh_pyv(graph.x, graph.elems)
-    #     mesh.point_data['target'] = graph.y.numpy(force=True)
-    #     mesh.save(os.path.join(resdir, f'data{str(i).zfill(2)}.vtk'))
+    for i in tqdm(range(20)):
+        graph = dataset[i]
+        fig = am.visualize_mpl(graph.x, graph.y, graph.edge_index)
+        fig.savefig(os.path.join(vis_dir, f'data{str(i).zfill(2)}'), dpi=300)
+    
+        mesh = am.mesh_pyv(graph.x, graph.elems)
+        mesh.point_data['target'] = graph.y.numpy(force=True)
+        mesh.save(os.path.join(vis_dir, f'data{str(i).zfill(2)}.vtu'))
 
     return
 
-def extract_timeseries_data():
+def test_timeseries_data_extraction():
     ext_dir = "/home/shared/netfabb_ti64_hires_out/extracted/SandBox/"
     out_dir = "/home/shared/netfabb_ti64_hires_out/tmp/"
     errfile = os.path.join(out_dir, "error.txt")
@@ -95,15 +99,16 @@ def extract_timeseries_data():
     return
 
 def view_timeseries_data(resdir):
-    data_dir = "/home/shared/netfabb_ti64_hires_out/tmp/"
+    DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
+    case_files = [f for f in os.listdir(DATADIR) if f.endswith(".pt")]
+    vis_dir = os.path.join(resdir, 'vis_timeseries')
 
-    # case_file = os.path.join(data_dir, "101635_11b839a3_5.pt")
-    # case_file = os.path.join(data_dir, "77980_f6ed5970_4.pt")
-    case_file = os.path.join(data_dir, "21232_dae006f4_0.pt")
-
-    out_dir = os.path.join(resdir, 'timeseries')
-    dataset = am.timeseries_dataset(case_file)
-    visualize_timeseries_pyv(dataset, out_dir)
+    for i in tqdm(range(20)):
+        case_file = case_files[i]
+        case_path = os.path.join(DATADIR, case_file)
+        case_data = am.timeseries_dataset(case_path)
+        out_dir   = os.path.join(vis_dir, f'case{str(i).zfill(2)}')
+        visualize_timeseries_pyv(case_data, out_dir)
 
     return
 
@@ -120,18 +125,7 @@ def visualize_timeseries_pyv(dataset, out_dir):
         mesh.save(os.path.join(out_dir, f'data{str(i).zfill(2)}.vtu'))
 
     pvd_file = os.path.join(out_dir, 'time_series.pvd')
-    write_pvd(pvd_file, N, 'data')
-    return
-
-def write_pvd(pvd_file, N, vtu_name):
-    with open(pvd_file, "w") as f:
-        f.write('<?xml version="1.0"?>\n')
-        f.write('<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n')
-        f.write('  <Collection>\n')
-        for i in range(N):
-            f.write(f'    <DataSet timestep="{i}" group="" part="0" file="{vtu_name}{str(i).zfill(2)}.vtu"/>\n')
-        f.write('  </Collection>\n')
-        f.write('</VTKFile>\n')
+    am.write_pvd(pvd_file, N, 'data')
 
     return
 
@@ -159,13 +153,13 @@ if __name__ == "__main__":
     #===============#
     # Final time data
     #===============#
-    # am.extract_zips(DATADIR_RAW, DATADIR_OUT)
-    # train_MGN(device, outdir, resdir, train=False)
+    # am.extract_zips(DATADIR_RAW, DATADIR_FINALTIME)
+    # train_finaltime(device, outdir, resdir, train=False)
 
     #===============#
     # Timeseries data
     #===============#
-    # extract_timeseries_data()
+    # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True)
     view_timeseries_data(resdir)
 
     pass

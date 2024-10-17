@@ -4,12 +4,14 @@ import numpy as np
 import torch_geometric as pyg
 
 __all__ = [
+    'mesh_pyv',
+    'write_pvd',
     'visualize_mpl',
     'visualize_o3d',
     'visualize_tri',
-    'mesh_pyv',
 ]
 
+#======================================================================#
 def tri_faces(elems):
     # break up 6 faces of an hexa8 element into 12 triangles
     tri_idx = np.array([[0,0,0,0,0,0,6,6,6,6,6,6],
@@ -35,6 +37,7 @@ def quad_faces(elems):
 
     return quad_faces
 
+#======================================================================#
 def mesh_pyv(pos: torch.Tensor, elems: torch.Tensor):
     import pyvista as pv
 
@@ -54,6 +57,19 @@ def mesh_pyv(pos: torch.Tensor, elems: torch.Tensor):
 
     return mesh
 
+def write_pvd(pvd_file, N, vtu_name):
+    with open(pvd_file, "w") as f:
+        f.write('<?xml version="1.0"?>\n')
+        f.write('<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n')
+        f.write('  <Collection>\n')
+        for i in range(N):
+            f.write(f'    <DataSet timestep="{i}" group="" part="0" file="{vtu_name}{str(i).zfill(2)}.vtu"/>\n')
+        f.write('  </Collection>\n')
+        f.write('</VTKFile>\n')
+
+    return
+
+#======================================================================#
 def visualize_mpl(
     pos: torch.Tensor, val: torch.Tensor, edge_index: torch.Tensor,
     make_edge=True, max_edges=100_000, cmap='jet'
@@ -89,6 +105,7 @@ def visualize_mpl(
 
     return fig
 
+#======================================================================#
 def visualize_o3d(
     pos: torch.Tensor, val: torch.Tensor, elems: torch.Tensor,
     imagefile: str,
@@ -124,6 +141,7 @@ def visualize_o3d(
 
     return
 
+#======================================================================#
 def visualize_tri(
     pos: torch.Tensor, val: torch.Tensor, elems: torch.Tensor,
     imagefile: str, cmap='jet'
@@ -152,4 +170,5 @@ def visualize_tri(
     )
 
     return fig
-
+#======================================================================#
+#
