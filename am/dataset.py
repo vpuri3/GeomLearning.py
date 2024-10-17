@@ -119,7 +119,6 @@ def timeseries_dataset(case_file: str):
     nsteps = len(case['verts'])
 
     dataset = []
-
     for i in range(nsteps):
         step = dict(verts=case['verts'][i], elems=case['elems'][i],
                     temp =case['temp' ][i], disp =case['disp' ][i],
