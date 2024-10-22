@@ -116,8 +116,6 @@ def get_values_from_ens(filename, num_nodes, dim):
 # grab results
 #=================================#
 
-__all__.append('get_case_info')
-
 def get_case_info(casedir):
 
     basename = get_basefile(casedir) + "_"

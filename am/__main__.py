@@ -103,29 +103,33 @@ def test_timeseries_extraction():
     return
 
 #======================================================================#
-def merge_timeseries(resdir):
+def merge_timeseries(resdir, final_mesh=False):
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
     case_files = [f for f in os.listdir(DATADIR) if f.endswith(".pt")]
-    vis_dir = os.path.join(resdir, 'merge_timeseries')
+    if final_mesh:
+        vis_dir = os.path.join(resdir, 'merge_timeseries_finalmesh')
+    else:
+        vis_dir = os.path.join(resdir, 'merge_timeseries_finemesh')
 
-    # only look at i=2
-    # for icase in range(2, 3):
-    for icase in tqdm(range(20)):
+    for icase in range(2, 3):
+    # for icase in tqdm(range(20)):
         case_file = case_files[icase]
         case_path = os.path.join(DATADIR, case_file)
         case_data = am.timeseries_dataset(case_path)
         out_dir   = os.path.join(vis_dir, f'case{str(icase).zfill(2)}')
-        merge_timeseries_pyv(case_data, out_dir, icase)
+
+        if final_mesh:
+            mesh = am.mesh_pyv(dataset[-1])
+        else:
+            V, E = am.make_finest_mesh(case_data, out_dir, icase)
+            mesh = am.mesh_pyv(V, E)
+
+        mesh.save('res/am/fine.vtk')
+        # merge_timeseries_pyv(case_data, mesh, out_dir, icase)
 
     return
 
-def make_finest_mesh(dataset, outdir, icase, tol=1e-6):
-
-    # figure out how to put two together
-
-    return
-
-def merge_timeseries_pyv(dataset, out_dir, icase, tol=1e-6):
+def merge_timeseries_pyv(dataset, mesh_, out_dir, icase, tol=1e-6):
     N = len(dataset)
     if os.path.exists(out_dir):
         shutil.rmtree(out_dir)
@@ -134,19 +138,16 @@ def merge_timeseries_pyv(dataset, out_dir, icase, tol=1e-6):
     # layer heights
     zmax = am.get_zmax_list(dataset)
 
-    # final graph
-    graph_ = dataset[-1]
-    mesh_  = am.mesh_pyv(graph_.x, graph_.elems)
-    x_     = graph_.x.numpy(force=True)
+    # graph to output on
+    x_ = mesh_.points
 
     for i in range(N):
         mesh = mesh_.copy()
-        _x = dataset[i].x.numpy(force=True)
+        _x = dataset[i].pos.numpy(force=True)
         _u = dataset[i].y.numpy(force=True)
 
         idx = np.argwhere(x_[:,2] < zmax[i] + tol).reshape(-1)
-
-        u_ = np.zeros((x_.shape[0], _u.shape[1]), dtype=np.float32)
+        u_  = np.zeros((x_.shape[0], _u.shape[1]), dtype=np.float32)
         u_[idx] = am.interpolate_idw(_x, _u, x_[idx])
 
         mesh.point_data['target'] = u_
