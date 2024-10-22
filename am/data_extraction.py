@@ -116,6 +116,8 @@ def get_values_from_ens(filename, num_nodes, dim):
 # grab results
 #=================================#
 
+__all__.append('get_case_info')
+
 def get_case_info(casedir):
 
     basename = get_basefile(casedir) + "_"
@@ -187,11 +189,11 @@ def get_case_info(casedir):
     )
 
 def get_finaltime_results(casedir):
-    info = get_case_info(casedir)
-    if len(info) == 1:
-        return [info["error"],] # Case failed
+    case_info = get_case_info(casedir)
+    if len(case_info) == 1:
+        return [case_info["error"],] # Case failed
     
-    verts, elems = get_vertices_from_geo(info["geo"], return_elements=True)
+    verts, elems = get_vertices_from_geo(case_info["geo"], return_elements=True)
     N_verts = verts.shape[0]
 
     result_types = dict(dis="disp", ept="strain", rcd="recoater_status", rct="recoater_clearance_percent", sd1="max_dir", sd2="mid_dir", sd3="min_dir",
@@ -200,27 +202,27 @@ def get_finaltime_results(casedir):
 
     results = dict(verts=verts, elems=elems)
     for key in result_types:
-        result = get_values_from_ens(info['basefilename'] + key + ".ens",N_verts, result_nums[key])
+        result = get_values_from_ens(case_info['basefilename'] + key + ".ens",N_verts, result_nums[key])
         results[result_types[key]] = result.astype(np.float32)
 
     return results
 
 def get_timeseries_results(casedir):
-    info = get_case_info(casedir)
-    if len(info) == 1:
-        return [info["error"],]
+    case_info = get_case_info(casedir)
+    if len(case_info) == 1:
+        return [case_info["error"],]
 
     results = collections.defaultdict(list) # initializes every item to []
     fields  = dict(dis=("disp", 3), svm=("von_mises_stress", 1), tmp=("temp", 1))
 
-    for geo_file in info['geo_files']:
+    for geo_file in case_info['geo_files']:
         v, e = get_vertices_from_geo(geo_file, return_elements=True)
         v = v.astype(np.float32)
         e = e.astype(np.int32)
         results['verts'].append(v) # [Nv, 3]
         results['elems'].append(e) # [Ne, 8]
 
-    for (i, base_name) in enumerate(info['base_names']):
+    for (i, base_name) in enumerate(case_info['base_names']):
         nv = results['verts'][i].shape[0]
         for key in fields:
             path = base_name + f'.{key}.ens'

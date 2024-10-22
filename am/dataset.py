@@ -82,7 +82,8 @@ def makegraph(data):
 
     # node attributes
     x = torch.cat([verts], dim=-1)
-    y = torch.cat([vmstr], dim=-1)
+    # y = torch.cat([vmstr], dim=-1)
+    y = torch.cat([temp ], dim=-1)
 
     # edge attributes
     edge_dx = verts[edge_index[0], 0] - verts[edge_index[1], 0]
@@ -106,10 +107,13 @@ def makegraph(data):
     # y = mlutils.normalize(y, ybar, ystd)
     # edge_attr = mlutils.normalize(edge_attr, ebar, estd)
 
-    return pyg.data.Data(
+
+    data = pyg.data.Data(
         x=x, y=y, edge_index=edge_index, edge_attr=edge_attr,
         pos=verts, elems=elems, **metadata,
     )
+
+    return data
 #
 
 def timeseries_dataset(case_file: str):

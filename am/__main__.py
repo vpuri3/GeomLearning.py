@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import torch_geometric as pyg
 from tqdm import tqdm
+import pyvista as pv
 
 # builtin
 import os
@@ -80,39 +81,98 @@ def train_finaltime(device, outdir, resdir, train=True):
         mesh.save(os.path.join(vis_dir, f'data{str(i).zfill(2)}.vtu'))
 
     return
+#======================================================================#
 
-def test_timeseries_data_extraction():
+def test_timeseries_extraction():
     ext_dir = "/home/shared/netfabb_ti64_hires_out/extracted/SandBox/"
     out_dir = "/home/shared/netfabb_ti64_hires_out/tmp/"
     errfile = os.path.join(out_dir, "error.txt")
 
     # consider a single case
-    case_dir = os.path.join(ext_dir, "101635_11b839a3_5")
+    case_dir = os.path.join(ext_dir, "33084_344fec27_2")
+    # case_dir = os.path.join(ext_dir, "101635_11b839a3_5")
     # case_dir = os.path.join(ext_dir, "83419_82b6bccd_0")
     # case_dir = os.path.join(ext_dir, "77980_f6ed5970_4")
 
-    # info = am.get_case_info(case_dir)
+    info = am.get_case_info(case_dir)
+    print(info)
     # results = am.get_timeseries_results(case_dir)
 
     am.extract_from_dir(ext_dir, out_dir, errfile, timeseries=True)
 
     return
 
-def view_timeseries_data(resdir):
+#======================================================================#
+def merge_timeseries(resdir):
+    DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
+    case_files = [f for f in os.listdir(DATADIR) if f.endswith(".pt")]
+    vis_dir = os.path.join(resdir, 'merge_timeseries')
+
+    # only look at i=2
+    # for icase in range(2, 3):
+    for icase in tqdm(range(20)):
+        case_file = case_files[icase]
+        case_path = os.path.join(DATADIR, case_file)
+        case_data = am.timeseries_dataset(case_path)
+        out_dir   = os.path.join(vis_dir, f'case{str(icase).zfill(2)}')
+        merge_timeseries_pyv(case_data, out_dir, icase)
+
+    return
+
+def make_finest_mesh(dataset, outdir, icase, tol=1e-6):
+
+    # figure out how to put two together
+
+    return
+
+def merge_timeseries_pyv(dataset, out_dir, icase, tol=1e-6):
+    N = len(dataset)
+    if os.path.exists(out_dir):
+        shutil.rmtree(out_dir)
+    os.makedirs(out_dir, exist_ok=True)
+
+    # layer heights
+    zmax = am.get_zmax_list(dataset)
+
+    # final graph
+    graph_ = dataset[-1]
+    mesh_  = am.mesh_pyv(graph_.x, graph_.elems)
+    x_     = graph_.x.numpy(force=True)
+
+    for i in range(N):
+        mesh = mesh_.copy()
+        _x = dataset[i].x.numpy(force=True)
+        _u = dataset[i].y.numpy(force=True)
+
+        idx = np.argwhere(x_[:,2] < zmax[i] + tol).reshape(-1)
+
+        u_ = np.zeros((x_.shape[0], _u.shape[1]), dtype=np.float32)
+        u_[idx] = am.interpolate_idw(_x, _u, x_[idx])
+
+        mesh.point_data['target'] = u_
+        mesh.save(os.path.join(out_dir, f'data{str(i).zfill(2)}.vtu'))
+
+    pvd_file = os.path.join(out_dir, f'merged{str(icase).zfill(2)}.pvd')
+    am.write_pvd(pvd_file, N, 'data')
+
+    return
+
+#======================================================================#
+def view_timeseries(resdir):
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
     case_files = [f for f in os.listdir(DATADIR) if f.endswith(".pt")]
     vis_dir = os.path.join(resdir, 'vis_timeseries')
 
-    for i in tqdm(range(20)):
-        case_file = case_files[i]
+    for icase in tqdm(range(20)):
+        case_file = case_files[icase]
         case_path = os.path.join(DATADIR, case_file)
         case_data = am.timeseries_dataset(case_path)
-        out_dir   = os.path.join(vis_dir, f'case{str(i).zfill(2)}')
-        visualize_timeseries_pyv(case_data, out_dir)
+        out_dir   = os.path.join(vis_dir, f'case{str(icase).zfill(2)}')
+        visualize_timeseries_pyv(case_data, out_dir, icase)
 
     return
 
-def visualize_timeseries_pyv(dataset, out_dir):
+def visualize_timeseries_pyv(dataset, out_dir, icase):
     N = len(dataset)
     if os.path.exists(out_dir):
         shutil.rmtree(out_dir)
@@ -123,12 +183,21 @@ def visualize_timeseries_pyv(dataset, out_dir):
         mesh = am.mesh_pyv(graph.x, graph.elems)
         mesh.point_data['target'] = graph.y.numpy(force=True)
         mesh.save(os.path.join(out_dir, f'data{str(i).zfill(2)}.vtu'))
-
-    pvd_file = os.path.join(out_dir, 'time_series.pvd')
+    pvd_file = os.path.join(out_dir, f'series{str(icase).zfill(2)}.pvd')
     am.write_pvd(pvd_file, N, 'data')
+
+    # series = pv.MultiBlock()
+    # for i in range(N):
+    #     graph = dataset[i]
+    #     mesh = am.mesh_pyv(graph.x, graph.elems)
+    #     mesh.point_data['target'] = graph.y.numpy(force=True)
+    #     series.append(mesh)
+    # out_file = os.path.join(out_dir, 'case.vtm')
+    # series.save(out_file)
 
     return
 
+#======================================================================#
 if __name__ == "__main__":
 
     mlutils.set_seed(123)
@@ -159,8 +228,10 @@ if __name__ == "__main__":
     #===============#
     # Timeseries data
     #===============#
+    # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True)
-    view_timeseries_data(resdir)
+    # view_timeseries(resdir)
+    merge_timeseries(resdir)
 
     pass
 #

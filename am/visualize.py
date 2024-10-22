@@ -12,32 +12,6 @@ __all__ = [
 ]
 
 #======================================================================#
-def tri_faces(elems):
-    # break up 6 faces of an hexa8 element into 12 triangles
-    tri_idx = np.array([[0,0,0,0,0,0,6,6,6,6,6,6],
-                        [2,3,7,4,1,5,2,3,1,5,4,7],
-                        [1,2,3,7,5,4,3,7,2,1,5,4]], dtype=int)
-
-    tri_faces = np.zeros([12*elems.shape[0],3], dtype=int)
-    for i, elem in enumerate(elems):
-        tri_faces[i*12:(i+1)*12,:] = elem[tri_idx].T
-
-    return tri_faces
-
-def quad_faces(elems):
-    # break out the 6 faces of an hexa8 element
-    quad_idx = np.array([[0,4,0,1,2,3,],
-                         [1,5,1,2,3,0,],
-                         [2,6,5,6,7,4,],
-                         [3,7,4,5,6,7,]], dtype=int)
-
-    quad_faces = np.zeros([6*elems.shape[0],4], dtype=int)
-    for i, elem in enumerate(elems):
-        quad_faces[i*12:(i+1)*12,:] = elem[quad_idx].T
-
-    return quad_faces
-
-#======================================================================#
 def mesh_pyv(pos: torch.Tensor, elems: torch.Tensor):
     import pyvista as pv
 
@@ -68,6 +42,32 @@ def write_pvd(pvd_file, N, vtu_name):
         f.write('</VTKFile>\n')
 
     return
+
+#======================================================================#
+def tri_faces(elems):
+    # break up 6 faces of an hexa8 element into 12 triangles
+    tri_idx = np.array([[0,0,0,0,0,0,6,6,6,6,6,6],
+                        [2,3,7,4,1,5,2,3,1,5,4,7],
+                        [1,2,3,7,5,4,3,7,2,1,5,4]], dtype=int)
+
+    tri_faces = np.zeros([12*elems.shape[0],3], dtype=int)
+    for i, elem in enumerate(elems):
+        tri_faces[i*12:(i+1)*12,:] = elem[tri_idx].T
+
+    return tri_faces
+
+def quad_faces(elems):
+    # break out the 6 faces of an hexa8 element
+    quad_idx = np.array([[0,4,0,1,2,3,],
+                         [1,5,1,2,3,0,],
+                         [2,6,5,6,7,4,],
+                         [3,7,4,5,6,7,]], dtype=int)
+
+    quad_faces = np.zeros([6*elems.shape[0],4], dtype=int)
+    for i, elem in enumerate(elems):
+        quad_faces[i*12:(i+1)*12,:] = elem[quad_idx].T
+
+    return quad_faces
 
 #======================================================================#
 def visualize_mpl(
