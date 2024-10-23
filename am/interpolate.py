@@ -35,8 +35,8 @@ def is_contained(min1, max1, min2, max2):
     """ checks if element 1 is contained in element 2 """
     return torch.all(min1 >= min2, dim=-1) * torch.all(max1 <= max2, dim=-1)
 
-def rm_overlapping_elems(verts, elems):
-    mins, maxs = bounding_box(verts, elems)
+def rm_overlapping_elems(V, E):
+    mins, maxs = bounding_box(V, E)
 
     # O(N^2) check
     contained = is_contained(
@@ -48,33 +48,36 @@ def rm_overlapping_elems(verts, elems):
     ij = torch.argwhere(contained)
     idx_rm = torch.unique(ij[:,1])
 
-    idx_keep = [i for i in range(elems.shape[0]) if i not in idx_rm]
-    elems_refined = elems[idx_keep]
+    idx_keep = [i for i in range(E.shape[0]) if i not in idx_rm]
+    elems_refined = E[idx_keep]
 
     return elems_refined
 
 #======================================================================#
-def combine_meshes(verts1, elems1, verts2, elems2):
-    verts = torch.cat([verts1, verts2], dim=0)
-    verts, idx = torch.unique(verts, dim=0, return_inverse=True)
+def combine_meshes(V1, E1, V2, E2, rm_overlap=True):
+    """
+    does not account for overlapping elemenets
+    """
+    V = torch.cat([V1, V2], dim=0)
+    V, idx = torch.unique(V, dim=0, return_inverse=True)
 
-    e1 = idx[:len(verts1)][elems1]
-    e2 = idx[len(verts1):][elems2]
+    e1 = idx[:len(V1)][E1]
+    e2 = idx[len(V1):][E2]
 
-    elems = torch.cat([e1, e2], dim=0)
-    elems = elems.unique(dim=0)
+    E = torch.cat([e1, e2], dim=0)
+    E = E.unique(dim=0)
 
     # rm redundant elements
-    elems_sort = elems.sort(dim=1)[0]
-    idx_unique = torch.unique(elems_sort, dim=0, return_inverse=True)[1]
-    idx_unique = torch.unique(idx_unique, sorted=False)
+    e_sorted = E.sort(dim=1)[0]
+    idx_uniq = torch.unique(e_sorted, dim=0, return_inverse=True)[1]
+    idx_uniq = torch.unique(idx_uniq, sorted=False)
 
-    elems = elems[idx_unique]
+    E = E[idx_uniq]
 
-    # rm overlapping elements
-    elems = rm_overlapping_elems(verts, elems)
+    if rm_overlap:
+        E = rm_overlapping_elems(V, E)
 
-    return verts, elems
+    return V, E
 
 def make_finest_mesh(dataset, outdir, icase, tol=1e-6):
     N = len(dataset)
@@ -83,41 +86,16 @@ def make_finest_mesh(dataset, outdir, icase, tol=1e-6):
     V = dataset[0].pos
     E = dataset[0].elems
 
+    # combine all meshes
     for i in range(1,N):
         verts = dataset[i].pos
         elems = dataset[i].elems
-        V, E = combine_meshes(V, E, verts, elems)
+        V, E = combine_meshes(V, E, verts, elems, rm_overlap=False)
+
+    # rm overlapping elements (O(E^2))
+    E = rm_overlapping_elems(V, E)
 
     return V, E
-
-#======================================================================#
-# def make_finest_mesh(dataset, outdir, icase, tol=1e-6, workers=-1):
-#     N = len(dataset)
-#     V = dataset[-1].pos.numpy(force=True)
-#     E = dataset[-1].elems.numpy(force=True)
-#
-#     tree = scipy.spatial.KDTree(V)
-#
-#     for i in range(N-1):
-#         verts = dataset[i].pos
-#         elems = dataset[i].elems
-#
-#         # find novel vertices
-#         dist, idx_near = tree.query(verts, k=1, workers=workers)
-#         idx_new = np.argwhere(dist > tol).reshape(-1)
-#         if len(idx_new) > 0:
-#             continue
-#         verts = verts[idx_new]
-#
-#         # remove overlapping elements form E (use idx_near)
-#
-#         # print(len(inew))
-#         # print(vert_idx[inew].shape)
-#         # print(verts[vert_idx[inew]].shape)
-#         # V, E = combine_meshes(V, E, verts, elems)
-#     #
-#
-#     return V, E
 
 #======================================================================#
 #

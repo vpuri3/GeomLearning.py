@@ -103,29 +103,25 @@ def test_timeseries_extraction():
     return
 
 #======================================================================#
-def merge_timeseries(resdir, final_mesh=False):
+def merge_timeseries(resdir, fine_mesh=True):
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
     case_files = [f for f in os.listdir(DATADIR) if f.endswith(".pt")]
-    if final_mesh:
-        vis_dir = os.path.join(resdir, 'merge_timeseries_finalmesh')
-    else:
-        vis_dir = os.path.join(resdir, 'merge_timeseries_finemesh')
+    vis_dir = os.path.join(resdir, 'merge_timeseries')
 
-    for icase in range(2, 3):
-    # for icase in tqdm(range(20)):
+    # for icase in range(2, 3):
+    for icase in tqdm(range(20)):
         case_file = case_files[icase]
         case_path = os.path.join(DATADIR, case_file)
         case_data = am.timeseries_dataset(case_path)
         out_dir   = os.path.join(vis_dir, f'case{str(icase).zfill(2)}')
 
-        if final_mesh:
-            mesh = am.mesh_pyv(dataset[-1])
-        else:
+        if fine_mesh:
             V, E = am.make_finest_mesh(case_data, out_dir, icase)
             mesh = am.mesh_pyv(V, E)
+        else: # final mesh
+            mesh = am.mesh_pyv(dataset[-1])
 
-        mesh.save('res/am/fine.vtk')
-        # merge_timeseries_pyv(case_data, mesh, out_dir, icase)
+        merge_timeseries_pyv(case_data, mesh, out_dir, icase)
 
     return
 
