@@ -5,6 +5,7 @@ import torch_geometric as pyg
 
 import numpy as np
 
+import os
 import random
 
 __all__ = [
@@ -19,12 +20,28 @@ __all__ = [
     "autoregressive_rollout",
 ]
 
+#=======================================================================#
 def set_seed(seed = 0):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     return
 
+def set_nthreads(threads=None):
+    if threads is not None:
+        threads = os.cpu_count()
+
+    torch.set_num_threads(threads)
+
+    os.environ["OMP_NUM_THREADS"]        = str(threads)
+    os.environ["OPENBLAS_NUM_THREADS"]   = str(threads)
+    os.environ["MKL_NUM_THREADS"]        = str(threads)
+    os.environ["VECLIB_MAXIMUM_THREADS"] = str(threads)
+    os.environ["NUMEXPR_NUM_THREADS"]    = str(threads)
+
+    return
+
+#=======================================================================#
 def select_device(device=None, verbose=False):
     if device is None:
         device = (
@@ -38,6 +55,7 @@ def select_device(device=None, verbose=False):
 
     return device
 
+#=======================================================================#
 def num_parameters(model : nn.Module):
     return sum(p.numel() for p in model.parameters())
 
