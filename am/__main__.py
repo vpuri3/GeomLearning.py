@@ -18,6 +18,7 @@ DATADIR_RAW = "/home/shared/netfabb_ti64_hires_raw/"
 DATADIR_TIMESERIES = "/home/shared/netfabb_ti64_hires_timeseries/"
 DATADIR_FINALTIME  = "/home/shared/netfabb_ti64_hires_finaltime/"
 
+#======================================================================#
 def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
     if lrs is None:
         lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 5e-6]
@@ -48,13 +49,29 @@ def train_finaltime(device, outdir, resdir, train=True):
     #=================#
     # DATA: only consider first 100 cases
     #=================#
+    # make features/ labels
+    # pos: want to rescale to (-1, 1), not normalize to zero mean, unit var
+    # temp: want T --> (T - 293K) / (Tmax - 293)
+    def transform_fn(graph):
+        md = graph.metadata
+        pos_norm  = mlutils.normalize(graph.pos , md['pos_bar' ], md['pos_std' ])
+        disp_norm = mlutils.normalize(graph.disp, md['disp_bar'], md['disp_std'])
+
+        edge_norm = graph.edge_dxyz / md['pos_std']
+
+        graph.x = torch.cat([pos_norm ], dim=-1)
+        graph.y = torch.cat([disp_norm], dim=-1)
+        graph.edge_attr = edge_norm
+
+        return graph
+
     DATADIR = os.path.join(DATADIR_FINALTIME, r"data_0-100")
-    dataset = am.GraphDataset(DATADIR)
+    dataset = am.GraphDataset(DATADIR, transform=transform_fn)
 
     #=================#
     # MODEL
     #=================#
-    ci, ce, co, w, num_layers = 3, 3, 1, 64, 4
+    ci, ce, co, w, num_layers = 3, 3, 3, 64, 4
     model = mlutils.MeshGraphNet(ci, ce, co, w, num_layers)
 
     #=================#
@@ -71,14 +88,19 @@ def train_finaltime(device, outdir, resdir, train=True):
     model.eval()
     model.load_state_dict(torch.load(modelfile, weights_only=True))
 
-    for i in tqdm(range(20)):
+    import matplotlib.pyplot as plt
+
+    for i in range(0,5):
         graph = dataset[i]
-        fig = am.visualize_mpl(graph.x, graph.y, graph.edge_index)
+        fig = am.visualize_mpl(graph, 'temp')
         fig.savefig(os.path.join(vis_dir, f'data{str(i).zfill(2)}'), dpi=300)
-    
-        mesh = am.mesh_pyv(graph.x, graph.elems)
-        mesh.point_data['target'] = graph.y.numpy(force=True)
-        mesh.save(os.path.join(vis_dir, f'data{str(i).zfill(2)}.vtu'))
+
+        # fig = am.verify_connectivity(graph)
+        # plt.show(block=True)
+
+        # mesh = am.mesh_pyv(graph.pos, graph.elems)
+        # mesh.point_data['target'] = graph.temp.numpy(force=True)
+        # mesh.save(os.path.join(vis_dir, f'data{str(i).zfill(2)}.vtu'))
 
     return
 #======================================================================#
@@ -140,7 +162,7 @@ def merge_timeseries_pyv(dataset, mesh_, out_dir, icase, tol=1e-6):
     for i in range(N):
         mesh = mesh_.copy()
         _x = dataset[i].pos.numpy(force=True)
-        _u = dataset[i].y.numpy(force=True)
+        _u = dataset[i].temp.numpy(force=True)
 
         idx = np.argwhere(x_[:,2] < zmax[i] + tol).reshape(-1)
         u_  = np.zeros((x_.shape[0], _u.shape[1]), dtype=np.float32)
@@ -177,20 +199,11 @@ def visualize_timeseries_pyv(dataset, out_dir, icase):
 
     for i in range(N):
         graph = dataset[i]
-        mesh = am.mesh_pyv(graph.x, graph.elems)
-        mesh.point_data['target'] = graph.y.numpy(force=True)
+        mesh = am.mesh_pyv(graph.pos, graph.elems)
+        mesh.point_data['target'] = graph.temp.numpy(force=True)
         mesh.save(os.path.join(out_dir, f'data{str(i).zfill(2)}.vtu'))
     pvd_file = os.path.join(out_dir, f'series{str(icase).zfill(2)}.pvd')
     am.write_pvd(pvd_file, N, 'data')
-
-    # series = pv.MultiBlock()
-    # for i in range(N):
-    #     graph = dataset[i]
-    #     mesh = am.mesh_pyv(graph.x, graph.elems)
-    #     mesh.point_data['target'] = graph.y.numpy(force=True)
-    #     series.append(mesh)
-    # out_file = os.path.join(out_dir, 'case.vtm')
-    # series.save(out_file)
 
     return
 
@@ -220,7 +233,7 @@ if __name__ == "__main__":
     # Final time data
     #===============#
     # am.extract_zips(DATADIR_RAW, DATADIR_FINALTIME)
-    # train_finaltime(device, outdir, resdir, train=False)
+    train_finaltime(device, outdir, resdir, train=True)
 
     #===============#
     # Timeseries data
@@ -228,7 +241,7 @@ if __name__ == "__main__":
     # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True)
     # view_timeseries(resdir)
-    merge_timeseries(resdir)
+    # merge_timeseries(resdir)
 
     pass
 #

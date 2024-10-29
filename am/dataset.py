@@ -51,26 +51,27 @@ class GraphDataset(pyg.data.Dataset):
 
 def makegraph(data):
 
+    # fields
     elems = torch.tensor(data['elems'], dtype=torch.int)     # [Ne, 8]
     verts = torch.tensor(data['verts'], dtype=torch.float)   # [Nv, 3]
     temp  = torch.tensor(data['temp'] , dtype = torch.float) # [Nv, 1]
     disp  = torch.tensor(data['disp'] , dtype = torch.float) # [Nv, 3]
     vmstr = torch.tensor(data['von_mises_stress'], dtype = torch.float) # [Nv, 1]
 
-    # get edges
-    elems = elems - 1 # fix indexing
+    # edges
+    elems = elems - 1 # zero indexing
 
     connectivity = [                    # hexa8 elements
-        (0, 1), (1, 2), (2, 3), (3, 4), # cube base
+        (0, 1), (1, 2), (2, 3), (3, 0), # cube base
         (4, 5), (5, 6), (6, 7), (7, 4), # cube top
         (0, 4), (1, 5), (2, 6), (3, 7), # vertical edges
     ]
 
     edges = set()
-    for voxel in elems:
+    for elem in elems:
         for (i, j) in connectivity:
-            edge1 = (voxel[i].item(), voxel[j].item())
-            edge2 = (voxel[j].item(), voxel[i].item())
+            edge1 = (elem[i].item(), elem[j].item())
+            edge2 = (elem[j].item(), elem[i].item())
 
             edges.add(edge1)
             edges.add(edge2)
@@ -80,40 +81,61 @@ def makegraph(data):
     edge_index = pyg.utils.coalesce(edge_index)      # remove duplicate edges
     edge_index = pyg.utils.to_undirected(edge_index) # guarantee bidirectionality
 
-    # node attributes
-    x = torch.cat([verts], dim=-1)
-    # y = torch.cat([vmstr], dim=-1)
-    y = torch.cat([temp ], dim=-1)
+    # edge features
+    dx = verts[edge_index[0], 0] - verts[edge_index[1], 0]
+    dy = verts[edge_index[0], 1] - verts[edge_index[1], 1]
+    dz = verts[edge_index[0], 2] - verts[edge_index[1], 2]
 
-    # edge attributes
-    edge_dx = verts[edge_index[0], 0] - verts[edge_index[1], 0]
-    edge_dy = verts[edge_index[0], 1] - verts[edge_index[1], 1]
-    edge_dz = verts[edge_index[0], 2] - verts[edge_index[1], 2]
+    edge_dxyz = torch.stack([dx, dy, dz], dim=-1) # [Nedge, 3]
 
-    edge_attr = torch.stack([edge_dx, edge_dy, edge_dz], dim=-1) # [Nedge, 3]
-
-    # normalize
-    xbar, xstd = mlutils.mean_std(x, -1)
-    ybar, ystd = mlutils.mean_std(y, -1)
-    ebar, estd = mlutils.mean_std(edge_attr, -1)
+    # normalization
+    verts_bar, verts_std = mlutils.mean_std(verts, -1)
+    disp_bar , disp_std  = mlutils.mean_std(disp , -1)
+    temp_bar , temp_std  = mlutils.mean_std(temp , -1)
+    vmstr_bar, vmstr_std = mlutils.mean_std(vmstr, -1)
 
     metadata = {
-        "xbar" : xbar, "xstd" : xstd,
-        "ybar" : ybar, "ystd" : ystd,
-        "ebar" : ebar, "estd" : estd,
+        "pos_bar"   : verts_bar, "pos_std"   : verts_std,
+        "disp_bar"  : disp_bar , "disp_std"  : disp_std ,
+        "temp_bar"  : temp_bar , "temp_std"  : temp_std ,
+        "vmstr_bar" : vmstr_bar, "vmstr_std" : vmstr_std,
     }
 
+    # make graph
+    graph = pyg.data.Data(
+        metadata=metadata,
+        edge_index=edge_index, elems=elems,           # connectivity
+        temp=temp, disp=disp, vmstr=vmstr, pos=verts, # nodal fields
+        edge_dxyz=edge_dxyz,                          # edge  fields
+    )
+
+    return graph
+
+    # # node attributes
+    # x = torch.cat([verts], dim=-1)
+    # y = torch.cat([temp ], dim=-1)
+    #
+    # # normalize
+    # xbar, xstd = mlutils.mean_std(x, -1)
+    # ybar, ystd = mlutils.mean_std(y, -1)
+    # ebar, estd = mlutils.mean_std(edge_attr, -1)
+    #
+    # metadata = {
+    #     "xbar" : xbar, "xstd" : xstd,
+    #     "ybar" : ybar, "ystd" : ystd,
+    #     "ebar" : ebar, "estd" : estd,
+    # }
+    #
     # x = mlutils.normalize(x, xbar, xstd)
     # y = mlutils.normalize(y, ybar, ystd)
     # edge_attr = mlutils.normalize(edge_attr, ebar, estd)
-
-
-    data = pyg.data.Data(
-        x=x, y=y, edge_index=edge_index, edge_attr=edge_attr,
-        pos=verts, elems=elems, **metadata,
-    )
-
-    return data
+    #
+    # data = pyg.data.Data(
+    #     temp=temp, disp=disp, vmstr=vmstr, pos=verts,
+    #     edge_index=edge_index, elems=elems,
+    # )
+    #
+    # return data
 #
 
 def timeseries_dataset(case_file: str):

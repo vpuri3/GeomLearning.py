@@ -7,10 +7,13 @@ __all__ = [
     'mesh_pyv',
     'write_pvd',
     'visualize_mpl',
+    'verify_connectivity',
     'visualize_o3d',
     'visualize_tri',
 ]
 
+#======================================================================#
+# PyVista
 #======================================================================#
 def mesh_pyv(pos: torch.Tensor, elems: torch.Tensor):
     import pyvista as pv
@@ -44,8 +47,95 @@ def write_pvd(pvd_file, N, vtu_name):
     return
 
 #======================================================================#
+# Matplotlib
+#======================================================================#
+def visualize_mpl(graph: pyg.data.Data, val: str,
+    make_edge=True, max_edges=100_000, cmap='jet',
+):
+    import matplotlib.pyplot as plt
+
+    pos = graph.pos.numpy(force=True)
+    val = getattr(graph, val).numpy(force=True)
+    edges = graph.edge_index.sort(dim=0).values.unique(dim=1).numpy(force=True).T
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.grid(False)
+
+    # colors
+    cmap = plt.get_cmap(cmap)
+    lb, ub = min(val), max(val)
+    if (ub - lb) < 1e-6:
+        cvals = val * 0 + 1
+    else:
+        cvals = (val - lb) / (ub - lb)
+    colors = cmap(cvals.reshape(-1)) # [Nv, 4]
+
+    ax.scatter(pos[:,0], pos[:,1], pos[:,2], c=colors, s=2)
+    if make_edge:
+        for (i, edge) in enumerate(edges):
+            if i >= max_edges:
+                print(f"Plotting {max_edges} / {edges.shape[0]} edges.")
+                break
+            start, end = edge
+            ax.plot([pos[start][0], pos[end][0]],
+                    [pos[start][1], pos[end][1]],
+                    [pos[start][2], pos[end][2]],
+                    c='gray', linewidth=0.5)
+
+    return fig
+
+def verify_connectivity(graph: pyg.data.Data, elem_idx=1):
+    import matplotlib.pyplot as plt
+
+    pos   = graph.pos.numpy(force=True)
+    elems = graph.elems.numpy(force=True)
+    edges = graph.edge_index.sort(dim=0).values.unique(dim=1).numpy(force=True).T
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.grid(False)
+
+    # only plot one element
+    v = elems[elem_idx]
+    mask  = np.isin(edges, v).all(axis=1)
+    edges = edges[mask]
+
+    # remake edges for verification
+    # connectivity = [                    # hexa8 elements
+    #     (0, 1), (1, 2), (2, 3), (3, 0), # cube base
+    #     (4, 5), (5, 6), (6, 7), (7, 4), # cube top
+    #     (0, 4), (1, 5), (2, 6), (3, 7), # vertical edges
+    # ]
+    #
+    # elem = graph.elems[elem_idx]
+    # edges = set()
+    # for (i, j) in connectivity:
+    #     edge = (elem[i].item(), elem[j].item())
+    #     edges.add(edge)
+
+    ax.scatter(pos[v,0], pos[v,1], pos[v,2], c='red', s=20)
+    for edge in edges:
+        start, end = edge
+        ax.plot([pos[start][0], pos[end][0]],
+            [pos[start][1], pos[end][1]],
+            [pos[start][2], pos[end][2]],
+            c='black', linewidth=1.0)
+
+    print(f'Element {elem_idx} has {len(edges)} edges.')
+    return fig
+
+#======================================================================#
 def tri_faces(elems):
-    # break up 6 faces of an hexa8 element into 12 triangles
+    '''
+    break up 6 faces of an hexa8 element into 12 triangles
+    '''
     tri_idx = np.array([[0,0,0,0,0,0,6,6,6,6,6,6],
                         [2,3,7,4,1,5,2,3,1,5,4,7],
                         [1,2,3,7,5,4,3,7,2,1,5,4]], dtype=int)
@@ -57,7 +147,9 @@ def tri_faces(elems):
     return tri_faces
 
 def quad_faces(elems):
-    # break out the 6 faces of an hexa8 element
+    '''
+    break out the 6 faces of an hexa8 element
+    '''
     quad_idx = np.array([[0,4,0,1,2,3,],
                          [1,5,1,2,3,0,],
                          [2,6,5,6,7,4,],
@@ -70,51 +162,14 @@ def quad_faces(elems):
     return quad_faces
 
 #======================================================================#
-def visualize_mpl(
-    pos: torch.Tensor, val: torch.Tensor, edge_index: torch.Tensor,
-    make_edge=True, max_edges=100_000, cmap='jet'
-):
-    import matplotlib.pyplot as plt
-
-    pos = pos.numpy(force=True)
-    val = val.numpy(force=True)
-    edx = edge_index.sort(dim=0).values.unique(dim=1).numpy(force=True).T
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-
-    cmap = plt.get_cmap(cmap)
-    lb, ub = min(val), max(val)
-    cvals = (val - lb) / (ub - lb)
-    colors = cmap(cvals.reshape(-1)) # [Nv, 4]
-
-    ax.scatter(pos[:,0], pos[:,1], pos[:,2], c=colors, s=2)
-    if make_edge:
-        for (i, edge) in enumerate(edx):
-            if i >= max_edges:
-                print(f"Plotting {max_edges} / {edx.shape[0]} edges.")
-                break
-            start, end = edge
-            ax.plot([pos[start][0], pos[end][0]],
-                    [pos[start][1], pos[end][1]],
-                    [pos[start][2], pos[end][2]],
-                    c='gray', linewidth=0.5)
-
-    return fig
-
+# Open3D
 #======================================================================#
-def visualize_o3d(
-    pos: torch.Tensor, val: torch.Tensor, elems: torch.Tensor,
-    imagefile: str,
-):
+def visualize_o3d(graph: pyg.data.Data, val: str, imagefile: str):
     import open3d as o3d
 
-    pos = pos.numpy(force=True)
-    val = val.numpy(force=True)
-    elm = elems.numpy(force=True)
+    pos = graph.pos.numpy(force=True)
+    val = getattr(graph, val).numpy(force=True)
+    elm = graph.elems.numpy(force=True)
 
     # MESH
     tris = tri_faces(elems)
@@ -142,17 +197,15 @@ def visualize_o3d(
     return
 
 #======================================================================#
-def visualize_tri(
-    pos: torch.Tensor, val: torch.Tensor, elems: torch.Tensor,
-    imagefile: str, cmap='jet'
-):
+# TriMesh
+#======================================================================#
+def visualize_tri(graph: pyg.data.Data, val: str, imagefile: str, cmap='jet'):
     import trimesh
     import matplotlib.pyplot as plt
 
-    elems = elems.numpy(force=True)
+    elems = graph.elems.numpy(force=True)
     faces = tri_faces(elems)
-
-    graph = pyg.data.Data(pos=pos, y=val, face=torch.tensor(faces))
+    graph.face = tri_faces(elems)
     mesh  = pyg.utils.to_trimesh(graph)
 
     cmap = plt.get_cmap(cmap)

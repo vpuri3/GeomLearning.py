@@ -27,7 +27,7 @@ def set_seed(seed = 0):
     torch.manual_seed(seed)
     return
 
-def set_nthreads(threads=None):
+def set_num_threads(threads=None):
     if threads is not None:
         threads = os.cpu_count()
 
@@ -65,21 +65,16 @@ def mean_std(x: torch.tensor, channel_dim = None):
         channel_dim = x.ndim-1
     del dims[channel_dim]
 
-    xbar = x.mean(dims, keepdim=True)
-    xstd = x.std(dims, keepdim=True)
+    x_bar = x.mean(dims, keepdim=True)
+    x_std = x.std( dims, keepdim=True)
 
-    # # fix broadcasting
-    # for _ in range(x.ndim-channel_dim-1):
-    #     xbar = xbar.unsqueeze(-1)
-    #     xstd = xstd.unsqueeze(-1)
+    return x_bar, x_std
 
-    return xbar, xstd
+def normalize(x: torch.Tensor, x_bar: torch.Tensor, x_std: torch.Tensor):
+    return (x - x_bar) / x_std
 
-def normalize(x: torch.Tensor, xbar: torch.Tensor, xstd: torch.Tensor):
-    return (x - xbar) / xstd
-
-def unnormalize(xnorm: torch.Tensor, xbar: torch.Tensor, xstd: torch.Tensor):
-    return xnorm * xstd + xbar
+def unnormalize(x_norm: torch.Tensor, x_bar: torch.Tensor, x_std: torch.Tensor):
+    return x_norm * x_std + x_bar
 
 #=======================================================================#
 def eval_model(
