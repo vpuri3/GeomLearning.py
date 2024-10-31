@@ -10,7 +10,7 @@ __all__ = [
 def get_zmax_list(dataset):
     zmax = []
     for graph in dataset:
-        zm = graph.x[:,2].max().item()
+        zm = graph.pos[:,2].max().item()
         zmax.append(zm)
     return zmax
 

@@ -4,6 +4,7 @@ import numpy as np
 from tqdm import tqdm
 
 import os
+import json
 import struct
 import zipfile
 import shutil
@@ -231,38 +232,48 @@ def get_timeseries_results(casedir):
 
     return results
 
-def extract_from_dir(data_dir, out_dir, error_file, timeseries=None):
+def extract_from_dir(data_dir, out_dir, timeseries=None):
     os.makedirs(out_dir, exist_ok=True)
 
     cases = os.listdir(data_dir)
     cases = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
     print(f"Loading displacement results from: {data_dir} into {out_dir}")
 
+    error_file = os.path.join(out_dir, 'error.txt')
+
     if timeseries:
         result_func = get_timeseries_results
-    else: # default to final-time
+        series_file = os.path.join(out_dir, 'series.json')
+        series_dict = {}
+    else:
         result_func = get_finaltime_results
 
     num_success = 0
     num_failure = 0
 
-    with open(error_file,"a") as err:
-        for case in tqdm(cases):
-            casedir = os.path.join(data_dir, case)
-            results = result_func(casedir)
-            if len(results) == 1:
-                num_failure += 1
+    for case in tqdm(cases):
+        casedir = os.path.join(data_dir, case)
+        results = result_func(casedir)
+        if len(results) == 1:
+            num_failure += 1
+            with open(error_file, 'a') as err:
                 err.write(f'{case}\n')
+        else:
+            num_success += 1
+            if timeseries:
+                out_path = os.path.join(out_dir, case + '.pt')
+                torch.save(results, out_path)
+                N = len(results['verts'])
+                series_dict[case] = N
             else:
-                num_success += 1
-                if timeseries:
-                    out_path = os.path.join(out_dir, case + '.pt')
-                    torch.save(results, out_path)
-                else:
-                    out_path = os.path.join(out_dir, case + '.npz')
-                    np.savez(out_path, **results)
+                out_path = os.path.join(out_dir, case + '.npz')
+                np.savez(out_path, **results)
 
-    print(f"Successfully saved {num_success} / {num_success + num_failure} cases to NPZ format.")
+    print(f"Successfully saved {num_success} / {num_success + num_failure} cases to NPZ/PT format.")
+    if timeseries:
+        with open(series_file, 'w') as file:
+            json.dump(series_dict, file)
+        print(f"Saved number of frames per case to {series_file}")
     print(f"Failed simulation cases are logged to {error_file}")
 
     return
@@ -285,8 +296,7 @@ def extract_from_zip(source_zip, target_dir, timeseries=None):
 
     # get data
     data_dir = os.path.join(extract_dir, "SandBox")
-    err_file = os.path.join(target_dir, "error.txt")
-    extract_from_dir(data_dir, target_dir, err_file, timeseries=timeseries)
+    extract_from_dir(data_dir, target_dir, timeseries=timeseries)
 
     # clean up
     print(f"Cleaning up extracted file: {extract_dir}")

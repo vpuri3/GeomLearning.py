@@ -1,5 +1,6 @@
 #
 import torch
+import torch_geometric as pyg
 import numpy as np
 import scipy
 
@@ -13,8 +14,9 @@ __all__ = [
 ]
 
 #======================================================================#
-def interpolate_idw(x_src, u_src, x_dst, k=4, pow=2, tol=1e-6, workers=-1):
-    tree = scipy.spatial.KDTree(x_src)
+def interpolate_idw(x_src, u_src, x_dst, k=4, pow=2, tol=1e-6, workers=-1, tree=None):
+    if tree is None:
+        tree = scipy.spatial.KDTree(x_src)
     dist, idx = tree.query(x_dst, k=k, workers=workers)
 
     weight  = 1 / ((dist + tol) ** pow)
@@ -79,7 +81,7 @@ def combine_meshes(V1, E1, V2, E2, rm_overlap=True):
 
     return V, E
 
-def make_finest_mesh(dataset, outdir, icase, tol=1e-6):
+def make_finest_mesh(dataset, tol=1e-6):
     N = len(dataset)
     zmax = get_zmax_list(dataset)
 

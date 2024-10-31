@@ -3,18 +3,71 @@ import torch
 import numpy as np
 import torch_geometric as pyg
 
+import os
+import shutil
+
 __all__ = [
+    # PyVista
+    'visualize_pyv',
+    'visualize_timeseries_pyv',
     'mesh_pyv',
     'write_pvd',
+    # Matplotlib
     'visualize_mpl',
     'verify_connectivity',
+    # Open3D
     'visualize_o3d',
+    # TriMesh
     'visualize_tri',
 ]
 
 #======================================================================#
 # PyVista
 #======================================================================#
+def visualize_pyv(graph):
+    mesh = mesh_pyv(graph.pos, graph.elems)
+    mesh.point_data['disp'] = graph.disp.numpy(force=True)
+    mesh.point_data['temp'] = graph.temp.numpy(force=True)
+    mesh.point_data['vmstr'] = graph.vmstr.numpy(force=True)
+    if graph.x is not None:
+        mesh.point_data['source'] = graph.x.numpy(force=True)
+    if graph.y is not None:
+        mesh.point_data['target'] = graph.y.numpy(force=True)
+
+    return mesh
+
+def visualize_timeseries_pyv(dataset, out_dir, icase, merge=None, name=None):
+    N = len(dataset)
+    if os.path.exists(out_dir):
+        shutil.rmtree(out_dir)
+    os.makedirs(out_dir, exist_ok=True)
+
+    for i in range(N):
+        graph = dataset[i]
+        mesh = mesh_pyv(graph.pos, graph.elems)
+        if graph.x is not None:
+            mesh.point_data['source'] = graph.x.numpy(force=True)
+        if graph.y is not None:
+            mesh.point_data['target'] = graph.y.numpy(force=True)
+        if merge:
+            istep = graph.metadata['time_step']
+            mesh.point_data['disp'] = graph.disp[istep].numpy(force=True)
+            mesh.point_data['temp'] = graph.temp[istep].numpy(force=True)
+            mesh.point_data['vmstr'] = graph.vmstr[istep].numpy(force=True)
+        else:
+            mesh.point_data['disp'] = graph.disp.numpy(force=True)
+            mesh.point_data['temp'] = graph.temp.numpy(force=True)
+            mesh.point_data['vmstr'] = graph.vmstr.numpy(force=True)
+
+        mesh.save(os.path.join(out_dir, f'data{str(i).zfill(2)}.vtu'))
+
+    if name is None:
+        name = 'merged' if merge else 'series'
+    pvd_file = os.path.join(out_dir, f'{name}{str(icase).zfill(2)}.pvd')
+    write_pvd(pvd_file, N, 'data')
+
+    return
+
 def mesh_pyv(pos: torch.Tensor, elems: torch.Tensor):
     import pyvista as pv
 
