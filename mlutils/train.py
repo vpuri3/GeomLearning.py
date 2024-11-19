@@ -2,17 +2,21 @@
 # 3rd party
 import torch
 from torch import nn, optim
+from torch import distributed as dist
 import torch_geometric as pyg
 
 from tqdm import tqdm
 
 # builtin
+import os
 import math
 import time
 import collections
 
 # local
-from mlutils.utils import num_parameters, select_device
+from mlutils.utils import (
+    num_parameters, select_device, is_torchrun, 
+)
 
 __all__ = [
     'Trainer',
@@ -25,7 +29,7 @@ class Trainer:
         _data,
         data_=None,
 
-        gnn=False,
+        GNN=False,
         device=None,
 
         collate_fn=None,
@@ -50,10 +54,27 @@ class Trainer:
         stats_every=1, # stats every k epochs
     ):
 
-        # TODO: early stopping
-        device = select_device(device, verbose=verbose)
+        ###
+        # DEVICE
+        ###
 
+        self.DISTRIBUTED = is_torchrun()
+        self.LOCAL_RANK = int(os.environ['LOCAL_RANK']) if self.DISTRIBUTED else 0
+        if self.DISTRIBUTED:
+            assert dist.is_initialized()
+            self.DDP = dist.get_world_size() > 1
+            self.device = self.LOCAL_RANK
+        else:
+            self.DDP = False
+            self.device = select_device(device, verbose=True)
+
+        ###
         # DATA
+        ###
+
+        if _data is None:
+            raise ValueError('_data passed to Trainer cannot be None.')
+
         if _batch_size is None:
             _batch_size = 32
         if __batch_size is None:
@@ -62,13 +83,21 @@ class Trainer:
             if batch_size_ is None:
                 batch_size_ = len(data_)
 
+        ###
         # MODEL
-        if verbose:
-            print(f"number of parameters: {num_parameters(model)}")
-            print(f"Moving model to: {device}")
+        ###
+
+        if verbose and (self.LOCAL_RANK == 0):
+            print(f"Moving model with {num_parameters(model)} parameters to device {device}")
         model.to(device)
 
+        if self.DDP:
+            model = nn.parallel.DistributedDataParallel(model, device_ids=[device])
+
+        ###
         # OPTIMIZER
+        ###
+
         param = model.parameters()
 
         if lr is None:
@@ -100,7 +129,7 @@ class Trainer:
             raise NotImplementedError()
 
         config = {
-            "gnn" : gnn,
+            "GNN" : GNN,
             "device" : device,
 
             "data_size" : len(_data),
@@ -118,7 +147,7 @@ class Trainer:
             "lossfun" : str(lossfun),
         }
 
-        if verbose and print_config:
+        if verbose and print_config and (self.LOCAL_RANK == 0):
             print(model)
             print(f"Trainer config:")
             for (k, v) in config.items():
@@ -127,8 +156,7 @@ class Trainer:
         # ASSIGN TO SELF
 
         # MISC
-        self.gnn = gnn
-        self.device = device
+        self.GNN = GNN
 
         # DATA
         self._data = _data
@@ -176,22 +204,28 @@ class Trainer:
         for callback in self.callbacks[event]:
             callback(self)
 
-    def save(self, save_path: str):
-        data = {
-            "epoch": self.epoch,
-            "model": self.model.state_dict(), # move to cpu first?
-            # "opt": self.opt
-        }
-        torch.save(data, save_path)
+    def save(self, save_path: str): # call only if device==0
+        if self.LOCAL_RANK != 0:
+            return
+
+        snapshot = dict()
+        snapshot['epoch'] = self.epoch
+        if self.DDP:
+            snapshot['model_state'] = self.model.module.state_dict()
+        else:
+            snapshot['model_state'] = self.model.state_dict()
+        snapshot['opt'] = self.opt
+        torch.save(snapshot, save_path)
+
         return
 
     def load(self, load_path: str):
         print(f"Loading {load_path}")
-        data = torch.load(load_path)
+        snapshot = torch.load(load_path)
 
-        self.epoch = data["epoch"]
-        self.model.load_state_dict(data["model"])
-        self.model.to(self.device)
+        self.epoch = snapshot['epoch']
+        self.model.load_state_dict(snapshot['model_state'])
+        self.opt = snapshot['opt']
 
     def make_dataloader(self):
         # TODO: loader pin_memory=True, pin_memory_device=device
@@ -207,31 +241,43 @@ class Trainer:
         #     num_workers=config.num_workers,
         # )
 
-        if self.gnn:
+        if self.GNN:
             DL = pyg.loader.DataLoader
         else:
             DL = torch.utils.data.DataLoader
 
-        if self._data is not None:
-            self._loader  = DL(self._data, batch_size=self._batch_size, shuffle=True, collate_fn=self.collate_fn)
-            self.__loader = DL(self._data, batch_size=self.__batch_size, shuffle=False, collate_fn=self.collate_fn)
+        if self.DDP:
+            DS = torch.utils.data.distributed.DistributedSampler
+            _shuffle, __shuffle = False, False
+            _sampler, __sampler = DS(self._data), DS(self._data, shuffle=False)
         else:
-            self._loader  = None
-            self.__loader = None
+            _shuffle, __shuffle = True, False
+            _sampler, __sampler = None, None
+
+        _args  = dict(shuffle= _shuffle, sampler= _sampler)
+        __args = dict(shuffle=__shuffle, sampler=__sampler)
+
+        self._loader  = DL(self._data, batch_size=self._batch_size , collate_fn=self.collate_fn, **_args,)
+        self.__loader = DL(self._data, batch_size=self.__batch_size, collate_fn=self.collate_fn, **__args,)
 
         if self.data_ is not None:
-            self.loader_ = DL(self.data_, batch_size=self.batch_size_ , shuffle=False, collate_fn=self.collate_fn)
+            sampler_ = DS(self.data_, shuffle=False) if self.DDP else None
+            self.loader_ = DL(self.data_, batch_size=self.batch_size_ , shuffle=False, collate_fn=self.collate_fn, sampler=sampler_)
         else:
             self.loader_ = None
 
-        if self.verbose and self.print_config:
+        ###
+        # Printing
+        ###
+
+        if self.verbose and self.print_config and self.LOCAL_RANK == 0:
             print(f"Number of training samples: {len(self._data)}")
             if self.data_ is not None:
                 print(f"Number of test samples: {len(self.data_)}")
             else:
                 print(f"No test data provided")
 
-            if self.gnn:
+            if self.GNN:
                 for batch in self._loader:
                     print(batch)
                     break
@@ -265,7 +311,7 @@ class Trainer:
     def train_epoch(self):
         self.model.train()
 
-        print_batch = self.verbose and (len(self._loader) > 1) and self.print_batch
+        print_batch = self.verbose and (self.LOCAL_RANK == 0) and (len(self._loader) > 1) and self.print_batch
 
         if print_batch:
             batch_iterator = tqdm(
@@ -295,7 +341,7 @@ class Trainer:
         return
 
     def batch_loss(self, batch):
-        if self.gnn:
+        if self.GNN:
             batch = batch.to(self.device)
             yh = self.model(batch)
             loss = self.lossfun(yh, batch.y)
@@ -340,7 +386,7 @@ class Trainer:
             loss_, stats_ = _loss, _stats
 
         # printing
-        if self.print_epoch and self.verbose:
+        if self.print_epoch and self.verbose and (self.LOCAL_RANK == 0):
             msg = f"[Epoch {self.epoch} / {self.nepochs}]: "
             if self.loader_ is not None:
                 msg += f"TRAIN LOSS: {_loss:.6e} | TEST LOSS: {_loss:.6e}"

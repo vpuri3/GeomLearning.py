@@ -1,6 +1,7 @@
 #
 import torch
 from torch import nn
+import torch.distributed as dist
 import torch_geometric as pyg
 
 import numpy as np
@@ -10,11 +11,21 @@ import random
 
 __all__ = [
     "set_seed",
+
+    'set_num_threads',
     "select_device",
+
+    'is_torchrun',
+    'dist_backend',
+    'dist_setup',
+    'dist_finalize',
+
     "num_parameters",
+
     "mean_std",
     "normalize",
     "unnormalize",
+
     "eval_model",
     "eval_gnn",
     "autoregressive_rollout",
@@ -27,6 +38,7 @@ def set_seed(seed = 0):
     torch.manual_seed(seed)
     return
 
+#=======================================================================#
 def set_num_threads(threads=None):
     if threads is not None:
         threads = os.cpu_count()
@@ -41,7 +53,6 @@ def set_num_threads(threads=None):
 
     return
 
-#=======================================================================#
 def select_device(device=None, verbose=False):
     if device is None:
         device = (
@@ -54,6 +65,48 @@ def select_device(device=None, verbose=False):
         print(f"using device {device}")
 
     return device
+
+#=======================================================================#
+def dist_backend():
+    if dist.is_nccl_available():
+        return 'nccl'
+    elif dist.is_gloo_available():
+        return 'gloo'
+    elif dist.is_mpi_available():
+        return 'mpi'
+    else:
+        raise RuntimeError("No suitable backend found!")
+
+def is_torchrun():
+    required_env_vars = ['LOCAL_RANK', 'RANK', 'WORLD_SIZE', 'MASTER_ADDR', 'MASTER_PORT']
+    return all(var in os.environ for var in required_env_vars)
+
+def dist_setup(rank=None, world_size=None):
+    backend = dist_backend()
+    if backend != 'nccl':
+        print(f'using {backend} backend for torch.distributed.')
+
+    if is_torchrun():
+        assert rank is None
+        assert world_size is None
+
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        dist.init_process_group(backend=backend)
+
+    else:
+        assert rank is not None
+        assert world_size is not None
+
+        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_PORT"] = "29500"
+        torch.cuda.set_device(rank)
+        dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+
+    return
+
+def dist_finalize():
+    dist.destroy_process_group()
+    return
 
 #=======================================================================#
 def num_parameters(model : nn.Module):

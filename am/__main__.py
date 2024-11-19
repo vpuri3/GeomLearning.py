@@ -40,6 +40,9 @@ def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
 
 #======================================================================#
 def train_timeseries(device, outdir, resdir, train=True):
+    DISTRIBUTED = mlutils.is_torchrun()
+    LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
+
     outname = os.path.join(outdir, "gnn")
     resname = os.path.join(resdir, "gnn")
 
@@ -57,62 +60,87 @@ def train_timeseries(device, outdir, resdir, train=True):
     dataset = am.TimeseriesDataset(DATADIR, merge=True)
     case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
 
+    # just one case for now
     case_num = 2
     case_name = case_names[case_num]
     idx_case  = dataset.case_range(case_name)
     case_data = dataset[idx_case]
 
-    for graph in case_data:
-        print(graph)
-        break
-
-    def makedata(graph):
+    def transform_fn(graph):
+        N  = graph.pos.size(0)
         md = graph.metadata
-        time_step = md['time_step']
-        pos_norm  = mlutils.normalize(graph.pos , md['pos_bar' ], md['pos_std' ])
-        disp_norm = mlutils.normalize(graph.disp, md['disp_bar'], md['disp_std'])
+        istep  = md['time_step']
+        nsteps = md['time_steps']
+        if istep + 1 == nsteps:
+            return None
 
-        edge_norm = graph.edge_dxyz / md['pos_std']
+        # pos (X, Y, Z \in [-1, 1])
+        pos_min, pos_max = md['extrema']
+        pos_shift = (pos_max + pos_min) / 2
+        pos_scale = (pos_max - pos_min) / 2
+        pos_norm  = mlutils.normalize(graph.pos , pos_shift, pos_scale)
 
-        graph.x = torch.cat([pos_norm ], dim=-1)
-        graph.y = torch.cat([disp_norm], dim=-1)
-        graph.edge_attr = edge_norm
+        # edge
+        edge_norm = graph.edge_dxyz / pos_scale
 
-        return graph
+        # target
+        disp_norm = mlutils.normalize(graph.disp[istep], md['disp'][0].view(3), md['disp'][1].view(3))
 
-    assert False
+        # time-step
+        t = torch.full((N, 1), istep / nsteps)
+
+        x = torch.cat([pos_norm, t], dim=-1)
+        y = torch.cat([disp_norm], dim=-1)
+        edge_attr = edge_norm
+
+        return pyg.data.Data(
+            x=x, y=y, edge_attr=edge_attr, edge_index=graph.edge_index,
+        )
+
+    dataset = []
+    for data in case_data:
+        graph = transform_fn(data)
+        if graph is not None:
+            dataset.append(graph)
+
+    # for graph in dataset:
+    #     print(graph)
+    #     break
+    # assert False
 
     #=================#
     # MODEL
     #=================#
-    ci, ce, co, w, num_layers = 3, 3, 3, 256, 4
+    ci, ce, co, w, num_layers = 4, 3, 3, 256, 4
     model = mlutils.MeshGraphNet(ci, ce, co, w, num_layers)
 
     #=================#
     # TRAIN
     #=================#
     if train:
-        kw = dict(device=device, E=200, gnn=True, _batch_size=1,)
+        kw = dict(device=device, E=10, GNN=True, _batch_size=1)
         train_loop(model, dataset, **kw)
-        torch.save(model.to("cpu").state_dict(), modelfile)
+        if LOCAL_RANK==0:
+            torch.save(model.to("cpu").state_dict(), modelfile)
 
     #=================#
-    # VISUALIZE
+    # ANALYSIS
     #=================#
-    model.eval()
-    model.load_state_dict(torch.load(modelfile, weights_only=True))
+    if LOCAL_RANK == 0:
+        model.eval()
+        model.load_state_dict(torch.load(modelfile, weights_only=True))
+        # for i in range(0,5):
+        #     # graph = dataset[i]
+        #     # fig = am.visualize_mpl(graph, 'temp')
+        #     # fig.savefig(os.path.join(vis_dir, f'data{str(i).zfill(2)}'), dpi=300)
+        #
+        #     # fig = am.verify_connectivity(graph)
+        #     # plt.show(block=True)
+        #
+        #     # mesh = am.mesh_pyv(graph.pos, graph.elems)
+        #     # mesh.point_data['target'] = graph.temp.numpy(force=True)
+        #     # mesh.save(os.path.join(vis_dir, f'data{str(i).zfill(2)}.vtu'))
 
-    # for i in range(0,5):
-    #     # graph = dataset[i]
-    #     # fig = am.visualize_mpl(graph, 'temp')
-    #     # fig.savefig(os.path.join(vis_dir, f'data{str(i).zfill(2)}'), dpi=300)
-    #
-    #     # fig = am.verify_connectivity(graph)
-    #     # plt.show(block=True)
-    #
-    #     # mesh = am.mesh_pyv(graph.pos, graph.elems)
-    #     # mesh.point_data['target'] = graph.temp.numpy(force=True)
-    #     # mesh.save(os.path.join(vis_dir, f'data{str(i).zfill(2)}.vtu'))
 
     return
 
@@ -135,16 +163,15 @@ def train_finaltime(device, outdir, resdir, train=True):
     # temp: want T --> (T - 293K) / (Tmax - 293)
     def transform_fn(graph):
         md = graph.metadata
-        pos_norm  = mlutils.normalize(graph.pos , md['pos_bar' ], md['pos_std' ])
-        disp_norm = mlutils.normalize(graph.disp, md['disp_bar'], md['disp_std'])
+        pos_norm  = mlutils.normalize(graph.pos , md['pos' ][0], md['pos' ][1])
+        disp_norm = mlutils.normalize(graph.disp, md['disp'][0], md['disp'][1])
+        edge_norm = graph.edge_dxyz / md['pos'][1]
 
-        edge_norm = graph.edge_dxyz / md['pos_std']
+        x = torch.cat([pos_norm ], dim=-1)
+        y = torch.cat([disp_norm], dim=-1)
+        edge_attr = edge_norm
 
-        graph.x = torch.cat([pos_norm ], dim=-1)
-        graph.y = torch.cat([disp_norm], dim=-1)
-        graph.edge_attr = edge_norm
-
-        return graph
+        return pyg.data.Data(x=x, y=y, edge_attr=edge_attr)
 
     DATADIR = os.path.join(DATADIR_FINALTIME, r"data_0-100")
     dataset = am.FinaltimeDataset(DATADIR, transform=transform_fn)
@@ -159,7 +186,7 @@ def train_finaltime(device, outdir, resdir, train=True):
     # TRAIN
     #=================#
     if train:
-        kw = dict(device=device, E=200, gnn=True, _batch_size=1,)
+        kw = dict(device=device, E=200, GNN=True, _batch_size=1,)
         train_loop(model, dataset, **kw)
         torch.save(model.to("cpu").state_dict(), modelfile)
 
@@ -229,23 +256,30 @@ def test_timeseries_extraction():
 if __name__ == "__main__":
 
     mlutils.set_seed(123)
-    parser = argparse.ArgumentParser(description = 'Sandbox')
+    parser = argparse.ArgumentParser(description = 'AM')
     parser.add_argument('--gpu_device', default=0, help='GPU device', type=int)
     args = parser.parse_args()
 
-    device = mlutils.select_device()
-    if device == "cuda":
-        device += f":{args.gpu_device}"
+    DISTRIBUTED = mlutils.is_torchrun()
+    LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
 
-    print(f"using device {device}")
+    if DISTRIBUTED:
+        mlutils.dist_setup()
+        device = LOCAL_RANK
+    else:
+        device = mlutils.select_device()
+        if device == "cuda":
+            device += f":{args.gpu_device}"
+        print(f"using device {device}")
 
     outdir = "./out/am/"
     resdir = "./res/am/"
 
-    if not os.path.exists(outdir):
-        os.mkdir(outdir)
-    if not os.path.exists(resdir):
-        os.mkdir(resdir)
+    if LOCAL_RANK == 0:
+        if not os.path.exists(outdir):
+            os.mkdir(outdir)
+        if not os.path.exists(resdir):
+            os.mkdir(resdir)
 
     #===============#
     # Final time data
@@ -260,6 +294,10 @@ if __name__ == "__main__":
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True)
     # vis_timeseries(resdir, merge=True)
     train_timeseries(device, outdir, resdir, train=True)
+
+    #===============#
+    if DISTRIBUTED:
+        mlutils.dist_finalize()
 
     pass
 #

@@ -8,7 +8,6 @@ import json
 from typing import Union
 
 import mlutils
-
 from .utils import get_zmax_list
 from .interpolate import interpolate_idw, make_finest_mesh
 
@@ -27,8 +26,16 @@ class TimeseriesDataset(pyg.data.Dataset):
         pre_filter=None, force_reload=False,
         merge=None,
     ):
+        """
+        Create dataset of time-series
+
+        Arguments:
+        - `merge`: return fields on graph made by merging all the timeseries
+        meshes.
+        """
         self.merge = merge
         self.case_files = [c for c in os.listdir(root) if c.endswith('.pt')]
+        # self.filter = None
 
         with open(os.path.join(root, 'series.json')) as file:
             time_step_dict = json.load(file)
@@ -105,6 +112,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         graph.metadata['time_step'] = time_step
 
         return graph
+#
 
 #======================================================================#
 class FinaltimeDataset(pyg.data.Dataset):
@@ -196,6 +204,8 @@ def makegraph(data, case_name=None, time_steps=None):
     disp_bar , disp_std  = mlutils.mean_std(disp , -1)
     temp_bar , temp_std  = mlutils.mean_std(temp , -1)
     vmstr_bar, vmstr_std = mlutils.mean_std(vmstr, -1)
+    # extrema
+    verts_min, verts_max = verts.aminmax(dim=0, keepdim=True)
 
     if disp.ndim == 3: # merged timeseries
         time_steps = disp.shape[0]
@@ -204,11 +214,13 @@ def makegraph(data, case_name=None, time_steps=None):
         # case identifier
         "case_name"  : case_name,
         "time_steps" : time_steps,
-        # mean, std
-        'pos'   : (verts_bar, verts_std),
-        'disp'  : (disp_bar , disp_std ),
-        'temp'  : (temp_bar , temp_std ),
-        'vmstr' : (vmstr_bar, vmstr_std),
+        # mean, std deviation
+        'pos'     : (verts_bar, verts_std),
+        'disp'    : (disp_bar , disp_std ),
+        'temp'    : (temp_bar , temp_std ),
+        'vmstr'   : (vmstr_bar, vmstr_std),
+        # extrema
+        'extrema' : (verts_min, verts_max),
     }
 
     # make graph
@@ -239,9 +251,7 @@ def timeseries_dataset(case_file: str):
 
     return dataset
 
-#======================================================================#
 def merge_timeseries(dataset, case_name=None, tol=1e-6):
-
     # output graph
     V, E  = make_finest_mesh(dataset)
     V, E  = V.numpy(force=True), E.numpy(force=True)
