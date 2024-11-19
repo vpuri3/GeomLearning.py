@@ -118,7 +118,7 @@ def train_timeseries(device, outdir, resdir, train=True):
     # TRAIN
     #=================#
     if train:
-        kw = dict(device=device, E=10, GNN=True, _batch_size=1)
+        kw = dict(device=device, GNN=True, E=200, _batch_size=1, stats_every=10)
         train_loop(model, dataset, **kw)
         if LOCAL_RANK==0:
             torch.save(model.to("cpu").state_dict(), modelfile)

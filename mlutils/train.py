@@ -189,9 +189,6 @@ class Trainer:
 
         # iteration
         self.epoch = 0
-        self.start_time = 0.0
-        self.epoch_time = 0.0
-        self.epoch_dt   = 0.0
 
     # https://github.com/karpathy/minGPT/
     def add_callback(self, event: str, callback):
@@ -290,7 +287,6 @@ class Trainer:
 
     def train(self):
         self.make_dataloader()
-        self.start_time = time.time()
 
         self.statistics()
 
@@ -298,9 +294,11 @@ class Trainer:
             self.epoch += 1
             # self.trigger_callbacks("epoch_start")
 
-            self.epoch_time = time.time() - self.start_time
+            # update DDP sampler
+            if self.DDP:
+                self._loader.sampler.set_epoch(self.epoch)
+
             self.train_epoch()
-            self.epoch_dt = time.time() - self.epoch_time - self.start_time
 
             # self.trigger_callbacks("epoch_end")
             if (self.epoch % self.stats_every) == 0:
@@ -335,7 +333,7 @@ class Trainer:
             if print_batch:
                 batch_iterator.set_description(
                     f"LR: {self.schedule.get_last_lr()[0]:.2e} " +
-                    f"LOSS: {loss.item():.8e}"
+                    f"LOSS: {loss.item():.8e}" # loss on that GPU
                 )
         #
         return
@@ -354,28 +352,33 @@ class Trainer:
         #
         return loss
 
+    def batch_size(self, batch):
+        if self.GNN:
+            return batch.y.size(0)
+        else:
+            return batch[1].size(0)
+
     @torch.no_grad()
     def evaluate(self, loader):
         self.model.eval()
 
-        stats = None
-        avg_loss = 0
-
-        # if statsfun is not None:
-        #     pass
-
+        N, L = 0, 0.0
         for batch in loader:
-            loss = self.batch_loss(batch)
-            avg_loss += loss.item()
+            n = self.batch_size(batch)
+            l = self.batch_loss(batch).item()
+            N += n
+            L += l * n
 
-            # if statsfun:
-            #     pass
-        #
+        if self.DDP:
+            L = torch.tensor(L, device=self.device)
+            N = torch.tensor(N, device=self.device)
+            dist.all_reduce(L, dist.ReduceOp.SUM)
+            dist.all_reduce(N, dist.ReduceOp.SUM)
+            loss = L.item() / N.item()
+        else:
+            loss = L / N
 
-        nbatches = len(loader)
-        loss = avg_loss / nbatches
-
-        return loss, stats
+        return loss, None
 
     def statistics(self):
         _loss, _stats = self.evaluate(self._loader)
@@ -399,6 +402,5 @@ class Trainer:
                     msg += f"STATS: {_stats}"
             print(msg)
 
-        # print(f"EPOCH START TIME: {self.epoch_time:.4f}s, DT: {self.epoch_dt:.4f}s")
         return (_loss, _stats), (loss_, stats_)
 #
