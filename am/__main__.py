@@ -44,20 +44,33 @@ from torch import nn
 class MaskedMGN(nn.Module):
     def __init__(self, ci, co, w, num_layers):
         super().__init__()
-        self.shape = shape
         self.gnn = mlutils.MeshGraphNet(ci, 2, co, w, num_layers)
 
     @torch.no_grad()
-    def compute_mask(self, x):
+    def compute_mask(self, data):
+        zmax   = data.metadata['zmax']
+        istep  = md['time_step']
+        nsteps = md['time_steps']
+        zm_curr, zm_next = zmax[istep], zmax[istep + 1]
+
         x0, z0, t0 = [x[:,c] for c in range(3)]
         t1 = t0 + self.shape.dt()
         M = self.shape.mask(x0, z0, t1)
         return M.unsqueeze(1)
 
+    def reduce_graph(self, data):
+        # kill the edges corresponding to fully masked nodes
+        x = data.x
+        edge_index = data.edge_index
+        edge_attr = data.edge_attr
+
+        return pyg.data.Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+
     def forward(self, data):
-        M = self.compute_mask(data.x)
+        mask = self.mask(data)
+        data = self.reduce_graph(data)
         x = self.gnn(data)
-        return x * M
+        return x * mask
 
 #======================================================================#
 def train_timeseries(device, outdir, resdir, train=True):
@@ -87,7 +100,7 @@ def train_timeseries(device, outdir, resdir, train=True):
     idx_case  = dataset.case_range(case_name)
     case_data = dataset[idx_case]
 
-    def transform_fn(graph):
+    def transform(graph):
         N  = graph.pos.size(0)
         md = graph.metadata
         istep  = md['time_step']
@@ -104,36 +117,34 @@ def train_timeseries(device, outdir, resdir, train=True):
         # edge
         edge_norm = graph.edge_dxyz / pos_scale
 
-        # time-step
-        dt = 1 / (nsteps - 1)
-        t  = torch.full((N, 1), istep / nsteps)
+        # time
+        t = torch.full((N, 1), graph.metadata['t_val'])
 
         # target filed
         disp_norm = mlutils.normalize(graph.disp, md['disp'][0], md['disp'][1])
         disp_z = disp_norm[:, :, 1:2]
 
         disp_z_in  = disp_z[istep]
-        disp_z_out = (disp_z[istep+1] - disp_z[istep]) / dt
+        disp_z_out = disp_z[istep+1]
+        # disp_z_out = (disp_z[istep+1] - disp_z[istep]) #/ dt
 
+        # fields
         x = torch.cat([pos_norm, t, disp_z_in,], dim=-1)
         y = torch.cat([disp_z_out,], dim=-1)
         edge_attr = edge_norm
 
-        # normalize y
-        ybar, ystd = mlutils.mean_std(y, -1)
-        y = mlutils.normalize(y, ybar, ystd)
+        # # normalize y
+        # ybar, ystd = mlutils.mean_std(y, -1)
+        # y = mlutils.normalize(y, ybar, ystd)
 
         return pyg.data.Data(
             x=x, y=y, edge_attr=edge_attr, edge_index=graph.edge_index,
-            # Mx, My
-            # mask at curr step (Mx)
-            # mask at next step (My)
+            metadata=graph.metadata,
         )
 
     dataset = []
     for data in case_data:
-        print(data.metadata['zmax'])
-        graph = transform_fn(data)
+        graph = transform(data)
         if graph is not None:
             dataset.append(graph)
 
@@ -142,7 +153,6 @@ def train_timeseries(device, outdir, resdir, train=True):
             print(graph)
             print(mlutils.mean_std(graph.y))
             break
-    assert False
 
     #=================#
     # MODEL
@@ -154,7 +164,9 @@ def train_timeseries(device, outdir, resdir, train=True):
     # TRAIN
     #=================#
     if train:
-        kw = dict(device=device, GNN=True, E=200, _batch_size=1, stats_every=10)
+        kw = dict(device=device, GNN=True, stats_every=10,
+            E=200, _batch_size=1, weight_decay=0e-5,
+        )
         train_loop(model, dataset, **kw)
         if LOCAL_RANK==0:
             torch.save(model.to("cpu").state_dict(), modelfile)
@@ -163,10 +175,13 @@ def train_timeseries(device, outdir, resdir, train=True):
     # ANALYSIS
     #=================#
     if LOCAL_RANK == 0:
-        model.eval()
-        model_state = torch.load(modelfile, weights_only=True, map_location='cpu')
-        model.load_state_dict(model_state)
-        model.to(device)
+        pass
+        # model.eval()
+        # model_state = torch.load(modelfile, weights_only=True, map_location=device)
+        # model.load_state_dict(model_state)
+        # with torch.no_grad():
+        #     pass
+
         # for i in range(0,5):
         #     # graph = dataset[i]
         #     # fig = am.visualize_mpl(graph, 'temp')

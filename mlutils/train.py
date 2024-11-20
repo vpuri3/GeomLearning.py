@@ -314,7 +314,7 @@ class Trainer:
         if print_batch:
             batch_iterator = tqdm(
                 self._loader,
-                bar_format='{n_fmt}/{total_fmt} {desc}{bar}[{rate_fmt}]',
+                bar_format='{desc}{n_fmt}/{total_fmt} {bar}[{rate_fmt}]',
             )
         else:
             batch_iterator = self._loader
@@ -332,8 +332,9 @@ class Trainer:
 
             if print_batch:
                 batch_iterator.set_description(
-                    f"LR: {self.schedule.get_last_lr()[0]:.2e} " +
-                    f"LOSS: {loss.item():.8e}" # loss on that GPU
+                    f"[Epoch {self.epoch} / {self.nepochs}] " +
+                    f"LR {self.schedule.get_last_lr()[0]:.2e} " +
+                    f"LOSS {loss.item():.8e}"
                 )
         #
         return
@@ -390,7 +391,7 @@ class Trainer:
 
         # printing
         if self.print_epoch and self.verbose and (self.LOCAL_RANK == 0):
-            msg = f"[Epoch {self.epoch} / {self.nepochs}]: "
+            msg = f"[Epoch {self.epoch} / {self.nepochs}] "
             if self.loader_ is not None:
                 msg += f"TRAIN LOSS: {_loss:.6e} | TEST LOSS: {_loss:.6e}"
             else:

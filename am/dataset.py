@@ -116,6 +116,8 @@ class TimeseriesDataset(pyg.data.Dataset):
 
         # WRITE ACTIVE TIME-STEP (zero indexed)
         graph.metadata['time_step'] = time_step
+        graph.metadata['dt_val'] = 1 / (graph.metadata['time_steps'] - 1)
+        graph.metadata['t_val']  = time_step * graph.metadata['dt_val']
 
         return graph
 #
