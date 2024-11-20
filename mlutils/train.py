@@ -103,7 +103,7 @@ class Trainer:
         if lr is None:
             lr = 1e-3
         if weight_decay is None:
-            weight_decay = 5e-4
+            weight_decay = 0.0
 
         if Opt == "Adam" or Opt is None:
             opt = optim.Adam(param, lr=lr)

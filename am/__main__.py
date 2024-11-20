@@ -23,20 +23,41 @@ DATADIR_FINALTIME  = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_finaltime')
 #======================================================================#
 def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
     if lrs is None:
-        lrs = [1e-3, 5e-4, 1e-4, 5e-5, 1e-5, 5e-6]
+        lrs = [5e-4, 1e-4, 5e-5, 1e-5]
     if nepochs is None:
-        nepochs = [.05*E, .25*E, .25*E, .25*E, .1*E, .1*E]
-        nepochs = [int(e) for e in nepochs]
-    assert len(lrs) == len(nepochs)
+        nepochs = [.25*E, .25*E, .25*E, 0.25*E]
 
+    nepochs = [int(e) for e in nepochs]
+    assert len(lrs) == len(nepochs)
     for i in range(len(lrs)):
         kwargs = dict(
-            **kw, lr=lrs[i], nepochs=nepochs[i], print_config=(i==0),
+            **kw, lr=lrs[i], nepochs=nepochs[i], print_config=False,#(i==0),
         )
         trainer = mlutils.Trainer(model, data, **kwargs)
         trainer.train()
 
     return model
+
+#======================================================================#
+from torch import nn
+
+class MaskedMGN(nn.Module):
+    def __init__(self, ci, co, w, num_layers):
+        super().__init__()
+        self.shape = shape
+        self.gnn = mlutils.MeshGraphNet(ci, 2, co, w, num_layers)
+
+    @torch.no_grad()
+    def compute_mask(self, x):
+        x0, z0, t0 = [x[:,c] for c in range(3)]
+        t1 = t0 + self.shape.dt()
+        M = self.shape.mask(x0, z0, t1)
+        return M.unsqueeze(1)
+
+    def forward(self, data):
+        M = self.compute_mask(data.x)
+        x = self.gnn(data)
+        return x * M
 
 #======================================================================#
 def train_timeseries(device, outdir, resdir, train=True):
@@ -83,35 +104,50 @@ def train_timeseries(device, outdir, resdir, train=True):
         # edge
         edge_norm = graph.edge_dxyz / pos_scale
 
-        # target
-        disp_norm = mlutils.normalize(graph.disp[istep], md['disp'][0].view(3), md['disp'][1].view(3))
-
         # time-step
-        t = torch.full((N, 1), istep / nsteps)
+        dt = 1 / (nsteps - 1)
+        t  = torch.full((N, 1), istep / nsteps)
 
-        x = torch.cat([pos_norm, t], dim=-1)
-        y = torch.cat([disp_norm], dim=-1)
+        # target filed
+        disp_norm = mlutils.normalize(graph.disp, md['disp'][0], md['disp'][1])
+        disp_z = disp_norm[:, :, 1:2]
+
+        disp_z_in  = disp_z[istep]
+        disp_z_out = (disp_z[istep+1] - disp_z[istep]) / dt
+
+        x = torch.cat([pos_norm, t, disp_z_in,], dim=-1)
+        y = torch.cat([disp_z_out,], dim=-1)
         edge_attr = edge_norm
+
+        # normalize y
+        ybar, ystd = mlutils.mean_std(y, -1)
+        y = mlutils.normalize(y, ybar, ystd)
 
         return pyg.data.Data(
             x=x, y=y, edge_attr=edge_attr, edge_index=graph.edge_index,
+            # Mx, My
+            # mask at curr step (Mx)
+            # mask at next step (My)
         )
 
     dataset = []
     for data in case_data:
+        print(data.metadata['zmax'])
         graph = transform_fn(data)
         if graph is not None:
             dataset.append(graph)
 
-    # for graph in dataset:
-    #     print(graph)
-    #     break
-    # assert False
+    if LOCAL_RANK==0:
+        for graph in dataset:
+            print(graph)
+            print(mlutils.mean_std(graph.y))
+            break
+    assert False
 
     #=================#
     # MODEL
     #=================#
-    ci, ce, co, w, num_layers = 4, 3, 3, 256, 4
+    ci, ce, co, w, num_layers = 5, 3, 1, 256, 8
     model = mlutils.MeshGraphNet(ci, ce, co, w, num_layers)
 
     #=================#
@@ -128,7 +164,9 @@ def train_timeseries(device, outdir, resdir, train=True):
     #=================#
     if LOCAL_RANK == 0:
         model.eval()
-        model.load_state_dict(torch.load(modelfile, weights_only=True))
+        model_state = torch.load(modelfile, weights_only=True, map_location='cpu')
+        model.load_state_dict(model_state)
+        model.to(device)
         # for i in range(0,5):
         #     # graph = dataset[i]
         #     # fig = am.visualize_mpl(graph, 'temp')

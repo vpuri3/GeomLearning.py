@@ -1,5 +1,6 @@
 import torch
 import torch_geometric as pyg
+import torch.multiprocessing as mp
 import numpy as np
 from tqdm import tqdm
 
@@ -24,7 +25,7 @@ class TimeseriesDataset(pyg.data.Dataset):
     def __init__(
         self, root, transform=None, pre_transform=None,
         pre_filter=None, force_reload=False,
-        merge=None,
+        merge=None, num_workers = 8,
     ):
         """
         Create dataset of time-series
@@ -34,6 +35,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         meshes.
         """
         self.merge = merge
+        self.num_workers = num_workers
         self.case_files = [c for c in os.listdir(root) if c.endswith('.pt')]
         # self.filter = None
 
@@ -63,21 +65,25 @@ class TimeseriesDataset(pyg.data.Dataset):
         return os.path.join(self.root, proc_name)
 
     def process(self):
-        raw_paths  = self.raw_paths
-        proc_paths = self.processed_paths
-        for i in tqdm(range(len(self.case_files))):
-            case_file = self.case_files[i]
-            dataset = timeseries_dataset(self.raw_paths[i])
-            for graph in dataset:
-                # PRE-TRANSFORM
-                if self.pre_transform is not None:
-                    self.pre_transform(graph)
-                # PRE-FITER
-            if self.merge:
-                graph = merge_timeseries(dataset, case_file[:-3])
-                torch.save(graph, proc_paths[i])
-            else:
-                torch.save(dataset, proc_paths[i])
+        num_cases = len(self.case_files)
+        icases = range(num_cases)
+
+        with mp.Pool(self.num_workers) as pool:
+            list(tqdm(pool.imap_unordered(self.process_single, icases), total=num_cases))
+
+        # for icase in tqdm(range(num_cases)):
+        #     self.process_single(icase)
+
+        return
+
+    def process_single(self, icase):
+        case_file = self.case_files[icase]
+        dataset = timeseries_dataset(self.raw_paths[icase])
+        if self.merge:
+            graph = merge_timeseries(dataset, case_file[:-3])
+            torch.save(graph, self.processed_paths[icase])
+        else:
+            torch.save(dataset, self.processed_paths[icase])
         return
 
     def len(self):
@@ -142,14 +148,6 @@ class FinaltimeDataset(pyg.data.Dataset):
         for i in tqdm(range(len(self))):
             data = np.load(raw_paths[i])
             graph = makegraph(data, self.case_files[i][:-4], 1)
-            # PRE-TRANSFORM
-            if pre_transform is not None:
-                graph = self.pre_transform(graph)
-            # PRE-FILTER
-            if self.pre_filter is not None:
-                if not self.pre_filter(graph):
-                    continue
-            # SAVE
             torch.save(graph, proc_paths[i])
         return
 
@@ -162,6 +160,12 @@ class FinaltimeDataset(pyg.data.Dataset):
 
 #======================================================================#
 def makegraph(data, case_name=None, time_steps=None):
+    '''
+    Arguments:
+    - data: dict of np.arrays containing the relevant fields
+    - case_name: str case identifier
+    - time_steps: number of time-steps (overwritten for merged datasets)
+    '''
 
     # fields
     verts = torch.tensor(data['verts'], dtype=torch.float)   # [Nv, 3]
@@ -169,6 +173,11 @@ def makegraph(data, case_name=None, time_steps=None):
     temp  = torch.tensor(data['temp'] , dtype = torch.float) # [Nv, 1]
     disp  = torch.tensor(data['disp'] , dtype = torch.float) # [Nv, 3]
     vmstr = torch.tensor(data['von_mises_stress'], dtype = torch.float) # [Nv, 1]
+
+    if 'zmax' in data:
+        zmax = torch.tensor(data['zmax'])
+    else:
+        zmax = None
 
     # edges
     elems = elems - torch.min(elems)    # ensures zero indexing
@@ -213,6 +222,8 @@ def makegraph(data, case_name=None, time_steps=None):
     metadata = {
         # case identifier
         "case_name"  : case_name,
+        # time stepping
+        'zmax' : zmax,
         "time_steps" : time_steps,
         # mean, std deviation
         'pos'     : (verts_bar, verts_std),
@@ -258,7 +269,7 @@ def merge_timeseries(dataset, case_name=None, tol=1e-6):
     N, NV = len(dataset), V.shape[0]
 
     # layer heights
-    zmax = get_zmax_list(dataset)
+    zmax = np.array(get_zmax_list(dataset))
 
     temps = []
     disps = []
@@ -286,7 +297,8 @@ def merge_timeseries(dataset, case_name=None, tol=1e-6):
     disp  = np.stack(disps , axis=0)
     vmstr = np.stack(vmstrs, axis=0)
 
-    data = dict(verts=V, elems=E, temp=temp, disp=disp, von_mises_stress=vmstr)
+    data = dict(verts=V, elems=E, temp=temp, disp=disp, von_mises_stress=vmstr,
+                zmax=zmax)
     graph = makegraph(data, case_name)
 
     return graph
