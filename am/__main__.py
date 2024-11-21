@@ -42,29 +42,29 @@ def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
 from torch import nn
 
 class MaskedMGN(nn.Module):
-    def __init__(self, ci, ce, co, w, num_layers):
+    def __init__(self, ci, ce, co, w, num_layers, apply_mask=True):
         super().__init__()
+        self.apply_mask = apply_mask
         self.gnn = mlutils.MeshGraphNet(ci, ce, co, w, num_layers)
 
     def reduce_graph(self, data):
         return data
-
-        mask  = data.mask
-        imask = torch.where(mask > 1e-4)
-
-        # remove edges corresponding to nodes imask==False
-
-        x = data.x
-        edge_index = data.edge_index
-        edge_attr = data.edge_attr
+        # # remove edges corresponding to nodes imask==False
+        # mask  = data.mask
+        # imask = torch.where(mask > 1e-4)
+        # x = data.x
+        # edge_index = data.edge_index
+        # edge_attr = data.edge_attr
 
         return pyg.data.Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
     def forward(self, data, tol=1e-6):
-        mask = data.mask.view(-1, 1)
         graph = self.reduce_graph(data)
         x = self.gnn(graph)
-        x = x * mask
+
+        if self.apply_mask:
+            mask = data.mask.view(-1, 1)
+            x = x * mask
 
         last_step_mask = (data.t <= 1. - tol).view(-1, 1)
         x = x * last_step_mask
@@ -92,9 +92,10 @@ class MergedTimeseriesTransform:
             mask = torch.full((N,), True)
 
         # position
-        pos_min = torch.tensor([-1., -1.,  0.])
-        pos_max = torch.tensor([ 1.,  1.,  1.])
-        pos_shift, pos_scale = mlutils.shift_scale(graph.pos, pos_min, pos_max)
+        # dataset: x, y [-30, 30], z [-25, 60] ([-25, 0] build plate)
+
+        pos_shift = torch.tensor([ 0.,  1.,  0.])
+        pos_scale = torch.tensor([30., 30., 60.])
         pos_norm = mlutils.normalize(graph.pos , pos_shift, pos_scale)
 
         # edges
@@ -155,21 +156,17 @@ def train_timeseries(device, outdir, resdir, train=True):
     # DATA: only consider first 100 cases
     #=================#
 
-    DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
-    dataset = am.TimeseriesDataset(DATADIR, merge=True)
-    case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
     transform = MergedTimeseriesTransform()
+    DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
+    dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform)
+    case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
 
     # just one case for now
     case_num = 2
     case_name = case_names[case_num]
     idx_case  = dataset.case_range(case_name)
     case_data = dataset[idx_case]
-
-    dataset = []
-    for data in case_data:
-        graph = transform(data)
-        dataset.append(graph)
+    dataset = case_data
 
     #=================#
     # MODEL
@@ -198,10 +195,11 @@ def train_timeseries(device, outdir, resdir, train=True):
         model.to(device)
 
         ###
-        # Next Step - prediction
+        # Next Step prediction
         ###
 
-        auto_regressive = True
+        # auto_regressive = True
+        auto_regressive = False
 
         with torch.no_grad():
             eval_data = []
@@ -379,7 +377,7 @@ if __name__ == "__main__":
     # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True)
     # vis_timeseries(resdir, merge=True)
-    train_timeseries(device, outdir, resdir, train=False)
+    train_timeseries(device, outdir, resdir, train=True)
 
     #===============#
     if DISTRIBUTED:

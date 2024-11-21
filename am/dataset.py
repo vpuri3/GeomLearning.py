@@ -103,7 +103,8 @@ class TimeseriesDataset(pyg.data.Dataset):
         # get case and time step
         icase = torch.argwhere(idx < self.time_steps_cum)[0].item()
         nprev = 0 if icase == 0 else self.time_steps_cum[icase-1].item()
-        time_step = idx - nprev
+        time_step  = idx - nprev
+        time_steps = self.time_steps[icase]
 
         # GET PATH
         path = self.processed_paths[icase]
@@ -115,9 +116,18 @@ class TimeseriesDataset(pyg.data.Dataset):
             graph = torch.load(path, weights_only=False)[time_step]
 
         # WRITE ACTIVE TIME-STEP (zero indexed)
+        assert time_steps == graph.metadata['time_steps'] > 0
+
+        if time_steps == 1:
+            dt = 0.
+            t  = 1.
+        else:
+            dt = 1 / (time_steps - 1)
+            t  = time_step * dt
+
+        graph.metadata['t_val']     = t
+        graph.metadata['dt_val']    = dt
         graph.metadata['time_step'] = time_step
-        graph.metadata['dt_val'] = 1 / (graph.metadata['time_steps'] - 1)
-        graph.metadata['t_val']  = time_step * graph.metadata['dt_val']
 
         return graph
 #
