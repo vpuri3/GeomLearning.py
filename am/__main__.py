@@ -47,6 +47,8 @@ class MaskedMGN(nn.Module):
         self.gnn = mlutils.MeshGraphNet(ci, ce, co, w, num_layers)
 
     def reduce_graph(self, data):
+        return data
+
         mask  = data.mask
         imask = torch.where(mask > 1e-4)
 
@@ -58,10 +60,23 @@ class MaskedMGN(nn.Module):
 
         return pyg.data.Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
-    def forward(self, data):
+    def last_step(self, data):
+        istep  = data.metadata['time_step']
+        nsteps = data.metadata['time_steps']
+
+        return (istep + 1) == nsteps
+
+    def forward(self, data, tol=1e-6):
         mask = data.mask.view(-1, 1)
-        x = self.gnn(data)
+        graph = self.reduce_graph(data)
+        x = self.gnn(graph)
         x = x * mask
+
+        last_step_mask = (data.t <= 1. - tol).view(-1, 1)
+        x = x * last_step_mask
+        # if self.last_step(data):
+        #     x = x * 0
+
         return x
 
 #======================================================================#
@@ -74,13 +89,15 @@ class MergedTimeseriesTransform:
         md = graph.metadata
         istep  = md['time_step']
         nsteps = md['time_steps']
-        if istep + 1 == nsteps:
-            return None
+        last_step = (istep + 1) == nsteps
 
         # mask
-        zmax = md['zmax'][istep+1]
-        mask = graph.pos[:,2] <= (zmax + tol)
-        # mask  = torch.sigmoid(50 * (graph.pos[:,2] - (zmax-tol))) # blend
+        if not last_step:
+            zmax = md['zmax'][istep+1]
+            mask = graph.pos[:,2] <= (zmax + tol)
+        else:
+            zmax = md['zmax'][-1]
+            mask = torch.full((N,), True)
 
         # position
         pos_min = torch.tensor([-1., -1.,  0.])
@@ -92,22 +109,27 @@ class MergedTimeseriesTransform:
         edge_norm = graph.edge_dxyz / pos_scale
 
         # time
-        t = torch.full((N, 1), graph.metadata['t_val'])
+        t  = torch.full((N, 1), graph.metadata['t_val'])
+        dt = torch.full((N, 1), graph.metadata['dt_val'])
 
         # target fields
-        disp_norm = graph.disp
+        if not last_step:
+            disp_norm = graph.disp
 
-        # disp_min = torch.tensor([-1., -1., -1.])
-        # disp_max = torch.tensor([ 1.,  1.,  1.])
-        # disp_shift, disp_scale = mlutils.shift_scale(graph.disp, disp_min, disp_max)
-        # disp_norm = mlutils.normalize(graph.disp, disp_shift, disp_scale)
-        # disp_norm = mlutils.normalize(graph.disp, md['disp'][0], md['disp'][1])
+            # disp_min = torch.tensor([-1., -1., -1.])
+            # disp_max = torch.tensor([ 1.,  1.,  1.])
+            # disp_shift, disp_scale = mlutils.shift_scale(graph.disp, disp_min, disp_max)
+            # disp_norm = mlutils.normalize(graph.disp, disp_shift, disp_scale)
 
-        disp_z = disp_norm[:, :, 2].unsqueeze(-1)
+            disp_z = disp_norm[:, :, 2].unsqueeze(-1)
 
-        disp_z_in  = disp_z[istep]
-        disp_z_out = disp_z[istep+1]
-        disp_z_out = (disp_z[istep+1] - disp_z[istep]) #/ md['dt_val']
+            disp_z_in  = disp_z[istep]
+            disp_z_out = disp_z[istep+1]
+            disp_z_out = (disp_z[istep+1] - disp_z[istep]) #/ md['dt_val']
+
+        else:
+            disp_z_in  = torch.zeros((N, 1))
+            disp_z_out = torch.zeros((N, 1))
 
         # fields
         x = torch.cat([pos_norm, t, disp_z_in,], dim=-1)
@@ -117,6 +139,7 @@ class MergedTimeseriesTransform:
         # assign to graph
         graph.x = x
         graph.y = y
+        graph.t = t
         graph.mask = mask
         graph.edge_attr = edge_attr
 
@@ -154,8 +177,9 @@ def train_timeseries(device, outdir, resdir, train=True):
     dataset = []
     for data in case_data:
         graph = transform(data)
-        if graph is not None:
-            dataset.append(graph)
+        dataset.append(graph)
+        # if graph is not None:
+        #     dataset.append(graph)
 
     #=================#
     # MODEL
@@ -184,24 +208,35 @@ def train_timeseries(device, outdir, resdir, train=True):
         model.to(device)
 
         ###
-        # Next Step
+        # Next Step - prediction
         ###
+
+        auto_regressive = False
+
         with torch.no_grad():
             eval_data = []
-
             for data in case_data:
-                graph = transform(data)
-                if graph is not None:
-                    graph = graph.to(device)
-                else:
-                    continue
-                i = data.metadata['time_step']
-                data.y = model(graph) + data.disp[i, :, 2].unsqueeze(-1)
-                data.e = data.y - data.disp[i+1, :, 2].unsqueeze(-1)
+                data = transform(data)
+                data.e = torch.zeros_like(data.y)
+                eval_data.append(transform(data))
+        
+            K = 1
+            for k in range(K, len(eval_data)):
+                data  = eval_data[k].to(device)
+                _data = eval_data[k-1].to(device)
+                assert data.metadata['time_step'] == k
+
+                if auto_regressive:
+                    _data = _data.clone()
+                    _data.x = 0
+
+                data.y = model(_data) + data.disp[k-1, :, 2].unsqueeze(-1)
+                data.e = data.y - data.disp[k, :, 2].unsqueeze(-1)
 
                 l1 = nn.L1Loss()( data.e, 0 * data.e).item()
                 l2 = nn.MSELoss()(data.e, 0 * data.e).item()
-                print(l1, l2)
+                r2 = mlutils.r2(data.y, data.disp[k,:,2])
+                print(l1, l2, r2)
 
                 eval_data.append(data.to('cpu'))
 
@@ -356,7 +391,7 @@ if __name__ == "__main__":
     # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True)
     # vis_timeseries(resdir, merge=True)
-    train_timeseries(device, outdir, resdir, train=False)
+    train_timeseries(device, outdir, resdir, train=True)
 
     #===============#
     if DISTRIBUTED:

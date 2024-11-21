@@ -45,6 +45,7 @@ def visualize_timeseries_pyv(dataset, out_dir, icase, merge=None, name=None):
     for i in range(N):
         graph = dataset[i]
         mesh = mesh_pyv(graph.pos, graph.elems)
+        # wrap in try/catch blocks
         if graph.x is not None:
             mesh.point_data['source'] = graph.x.numpy(force=True)
         if graph.y is not None:

@@ -27,6 +27,8 @@ __all__ = [
     "normalize",
     "unnormalize",
 
+    "r2",
+
     "eval_model",
     "eval_gnn",
     "autoregressive_rollout",
@@ -145,6 +147,18 @@ def normalize(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
 
 def unnormalize(x_norm: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
     return x_norm * scale + shift
+
+#=======================================================================#
+
+def r2(y_true, y_pred):
+    y_true = y_true.flatten()
+    y_pred = y_pred.flatten()
+    
+    y_mean = torch.mean(y_true)
+    ss_res = torch.sum((y_true - y_pred) ** 2)
+    ss_tot = torch.sum((y_true - y_mean) ** 2)
+    r2 = 1 - ss_res / ss_tot
+    return r2.item()
 
 #=======================================================================#
 def eval_model(
