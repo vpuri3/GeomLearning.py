@@ -74,8 +74,6 @@ class MaskedMGN(nn.Module):
 
         last_step_mask = (data.t <= 1. - tol).view(-1, 1)
         x = x * last_step_mask
-        # if self.last_step(data):
-        #     x = x * 0
 
         return x
 
@@ -132,7 +130,7 @@ class MergedTimeseriesTransform:
             disp_z_out = torch.zeros((N, 1))
 
         # fields
-        x = torch.cat([pos_norm, t, disp_z_in,], dim=-1)
+        x = torch.cat([pos_norm, t, dt, disp_z_in,], dim=-1)
         y = torch.cat([disp_z_out,], dim=-1)
         edge_attr = edge_norm
 
@@ -184,7 +182,7 @@ def train_timeseries(device, outdir, resdir, train=True):
     #=================#
     # MODEL
     #=================#
-    ci, ce, co, w, num_layers = 5, 3, 1, 256, 5
+    ci, ce, co, w, num_layers = 6, 3, 1, 256, 5
     model = MaskedMGN(ci, ce, co, w, num_layers)
 
     #=================#
@@ -236,9 +234,7 @@ def train_timeseries(device, outdir, resdir, train=True):
                 l1 = nn.L1Loss()( data.e, 0 * data.e).item()
                 l2 = nn.MSELoss()(data.e, 0 * data.e).item()
                 r2 = mlutils.r2(data.y, data.disp[k,:,2])
-                print(l1, l2, r2)
-
-                eval_data.append(data.to('cpu'))
+                print(f'Step {k}: {l1, l2, r2}')
 
         out_dir = os.path.join(resdir, f'case{case_num}')
         am.visualize_timeseries_pyv(eval_data, out_dir, case_num, merge=True)
@@ -391,7 +387,7 @@ if __name__ == "__main__":
     # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True)
     # vis_timeseries(resdir, merge=True)
-    train_timeseries(device, outdir, resdir, train=True)
+    train_timeseries(device, outdir, resdir, train=False)
 
     #===============#
     if DISTRIBUTED:
