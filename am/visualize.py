@@ -49,6 +49,8 @@ def visualize_timeseries_pyv(dataset, out_dir, icase, merge=None, name=None):
             mesh.point_data['source'] = graph.x.numpy(force=True)
         if graph.y is not None:
             mesh.point_data['target'] = graph.y.numpy(force=True)
+        if graph.e is not None:
+            mesh.point_data['error'] = graph.e.numpy(force=True)
         if merge:
             istep = graph.metadata['time_step']
             mesh.point_data['disp'] = graph.disp[istep].numpy(force=True)

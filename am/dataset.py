@@ -276,6 +276,7 @@ def merge_timeseries(dataset, case_name=None, tol=1e-6):
     temps = []
     disps = []
     vmstrs = []
+
     for i in range(N):
         _pos   = dataset[i].pos.numpy(force=True)
         _temp  = dataset[i].temp.numpy(force=True)

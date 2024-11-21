@@ -292,15 +292,11 @@ class Trainer:
 
         while self.epoch < self.nepochs:
             self.epoch += 1
+
             # self.trigger_callbacks("epoch_start")
-
-            # update DDP sampler
-            if self.DDP:
-                self._loader.sampler.set_epoch(self.epoch)
-
             self.train_epoch()
-
             # self.trigger_callbacks("epoch_end")
+
             if (self.epoch % self.stats_every) == 0:
                 self.statistics()
 
@@ -308,6 +304,9 @@ class Trainer:
 
     def train_epoch(self):
         self.model.train()
+
+        if self.DDP:
+            self._loader.sampler.set_epoch(self.epoch)
 
         print_batch = self.verbose and (self.LOCAL_RANK == 0) and (len(self._loader) > 1) and self.print_batch
 

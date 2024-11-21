@@ -23,6 +23,7 @@ __all__ = [
     "num_parameters",
 
     "mean_std",
+    "shift_scale",
     "normalize",
     "unnormalize",
 
@@ -112,22 +113,38 @@ def dist_finalize():
 def num_parameters(model : nn.Module):
     return sum(p.numel() for p in model.parameters())
 
-def mean_std(x: torch.tensor, channel_dim = None):
+def mean_std(x: torch.tensor, channel_dim=-1):
     dims = list(range(x.ndim))
-    if channel_dim is None:
-        channel_dim = x.ndim-1
     del dims[channel_dim]
+    keepdim = (channel_dim != -1) and (channel_dim != x.ndim-1)
 
-    x_bar = x.mean(dims, keepdim=True)
-    x_std = x.std( dims, keepdim=True)
+    x_bar = x.mean(dims, keepdim=keepdim)
+    x_std = x.std( dims, keepdim=keepdim)
 
     return x_bar, x_std
 
-def normalize(x: torch.Tensor, x_bar: torch.Tensor, x_std: torch.Tensor):
-    return (x - x_bar) / x_std
+def shift_scale(x: torch.tensor, min, max, channel_dim=-1, keepdim=False):
+    """
+    y = (x - x_min) * (max - min) / (x_max - x_min) + min
+    """
+    dims = list(range(x.ndim))
+    del dims[channel_dim]
+    keepdim = (channel_dim != -1) and (channel_dim != x.ndim-1)
 
-def unnormalize(x_norm: torch.Tensor, x_bar: torch.Tensor, x_std: torch.Tensor):
-    return x_norm * x_std + x_bar
+    x_min = x_max = x
+    for dim in reversed(dims):
+        x_min = x_min.min(dim=dim, keepdim=keepdim).values
+        x_max = x_max.max(dim=dim, keepdim=keepdim).values
+
+    scale = (x_max - x_min) / (max - min)
+    shift = x_min - min * scale
+    return shift, scale
+
+def normalize(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
+    return (x - shift) / scale
+
+def unnormalize(x_norm: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
+    return x_norm * scale + shift
 
 #=======================================================================#
 def eval_model(
