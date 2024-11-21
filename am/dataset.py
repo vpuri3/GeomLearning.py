@@ -25,7 +25,7 @@ class TimeseriesDataset(pyg.data.Dataset):
     def __init__(
         self, root, transform=None, pre_transform=None,
         pre_filter=None, force_reload=False,
-        merge=None, num_workers = 8,
+        merge=None, num_workers=None,
     ):
         """
         Create dataset of time-series
@@ -34,8 +34,12 @@ class TimeseriesDataset(pyg.data.Dataset):
         - `merge`: return fields on graph made by merging all the timeseries
         meshes.
         """
+        if num_workers is None:
+            self.num_workers = mp.cpu_count() // 2
+        else:
+            self.num_workers = num_workers
+
         self.merge = merge
-        self.num_workers = num_workers
         self.case_files = [c for c in os.listdir(root) if c.endswith('.pt')]
         # self.filter = None
 
@@ -68,11 +72,11 @@ class TimeseriesDataset(pyg.data.Dataset):
         num_cases = len(self.case_files)
         icases = range(num_cases)
 
-        with mp.Pool(self.num_workers) as pool:
-            list(tqdm(pool.imap_unordered(self.process_single, icases), total=num_cases))
-
         # for icase in tqdm(range(num_cases)):
         #     self.process_single(icase)
+
+        with mp.Pool(self.num_workers) as pool:
+            list(tqdm(pool.imap_unordered(self.process_single, icases), total=num_cases))
 
         return
 

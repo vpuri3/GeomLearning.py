@@ -35,7 +35,7 @@ class Trainer:
         collate_fn=None,
         _batch_size=None,
         batch_size_=None,
-        __batch_size=None,
+        _batch_size_=None,
 
         lr=None,
         weight_decay=None,
@@ -77,8 +77,8 @@ class Trainer:
 
         if _batch_size is None:
             _batch_size = 32
-        if __batch_size is None:
-            __batch_size = len(_data)
+        if _batch_size_ is None:
+            _batch_size_ = len(_data)
         if data_ is not None:
             if batch_size_ is None:
                 batch_size_ = len(data_)
@@ -164,7 +164,7 @@ class Trainer:
         self.collate_fn = collate_fn
         self._batch_size = _batch_size
         self.batch_size_ = batch_size_
-        self.__batch_size = __batch_size
+        self._batch_size_ = _batch_size_
 
         # MODEL
         self.model = model
@@ -225,19 +225,6 @@ class Trainer:
         self.opt = snapshot['opt']
 
     def make_dataloader(self):
-        # TODO: loader pin_memory=True, pin_memory_device=device
-        # would then remove batch.to(device) calls in training loop
-        # TODO: loader sampler (replacement = True)
-
-        # _loader = DL(
-        #     self.train_dataset,
-        #     sampler=torch.utils.data.RandomSampler(self.train_dataset, replacement=True, num_samples=int(1e10)),
-        #     shuffle=False,
-        #     pin_memory=True,
-        #     batch_size=config.batch_size,
-        #     num_workers=config.num_workers,
-        # )
-
         if self.GNN:
             DL = pyg.loader.DataLoader
         else:
@@ -245,28 +232,27 @@ class Trainer:
 
         if self.DDP:
             DS = torch.utils.data.distributed.DistributedSampler
-            _shuffle, __shuffle = False, False
-            _sampler, __sampler = DS(self._data), DS(self._data, shuffle=False)
+            _shuffle, __shuffle, shuffle_ = False, False, False
+            _sampler, __sampler, sampler_ = DS(self._data), DS(self._data, shuffle=False), DS(self.data_, shuffle=False)
         else:
-            _shuffle, __shuffle = True, False
-            _sampler, __sampler = None, None
+            _shuffle, __shuffle, shuffle_ = True, False, False
+            _sampler, __sampler, sampler_ = None, None , None
 
         _args  = dict(shuffle= _shuffle, sampler= _sampler)
         __args = dict(shuffle=__shuffle, sampler=__sampler)
+        args_  = dict(shuffle=shuffle_ , sampler=sampler_ )
 
         self._loader  = DL(self._data, batch_size=self._batch_size , collate_fn=self.collate_fn, **_args,)
-        self.__loader = DL(self._data, batch_size=self.__batch_size, collate_fn=self.collate_fn, **__args,)
+        self._loader_ = DL(self._data, batch_size=self._batch_size_, collate_fn=self.collate_fn, **__args,)
 
         if self.data_ is not None:
-            sampler_ = DS(self.data_, shuffle=False) if self.DDP else None
-            self.loader_ = DL(self.data_, batch_size=self.batch_size_ , shuffle=False, collate_fn=self.collate_fn, sampler=sampler_)
+            self.loader_ = DL(self.data_, batch_size=self.batch_size_, collate_fn=self.collate_fn, **args_)
         else:
             self.loader_ = None
 
         ###
         # Printing
         ###
-
         if self.verbose and self.print_config and self.LOCAL_RANK == 0:
             print(f"Number of training samples: {len(self._data)}")
             if self.data_ is not None:
@@ -278,6 +264,9 @@ class Trainer:
                 for batch in self._loader:
                     print(batch)
                     break
+                for batch in self.loader_:
+                    print(batch)
+                    break
             else:
                 for (x, y) in self._loader:
                     print(f"Shape of x: {x.shape} {x.dtype}")
@@ -287,7 +276,6 @@ class Trainer:
 
     def train(self):
         self.make_dataloader()
-
         self.statistics()
 
         while self.epoch < self.nepochs:
@@ -381,7 +369,7 @@ class Trainer:
         return loss, None
 
     def statistics(self):
-        _loss, _stats = self.evaluate(self._loader)
+        _loss, _stats = self.evaluate(self._loader_)
 
         if self.loader_ is not None:
             loss_, stats_ = self.evaluate(self.loader_)

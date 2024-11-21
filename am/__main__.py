@@ -21,7 +21,7 @@ DATADIR_TIMESERIES = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_timeseries')
 DATADIR_FINALTIME  = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_finaltime')
 
 #======================================================================#
-def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
+def train_loop(model, _data, data_=None, E=100, lrs=None, nepochs=None, **kw):
     if lrs is None:
         lrs = [5e-4, 1e-4, 5e-5, 1e-5]
     if nepochs is None:
@@ -33,7 +33,7 @@ def train_loop(model, data, E=100, lrs=None, nepochs=None, **kw):
         kwargs = dict(
             **kw, lr=lrs[i], nepochs=nepochs[i], print_config=False,#(i==0),
         )
-        trainer = mlutils.Trainer(model, data, **kwargs)
+        trainer = mlutils.Trainer(model, _data, data_, **kwargs)
         trainer.train()
 
     return model
@@ -94,7 +94,7 @@ class MergedTimeseriesTransform:
         # position
         # dataset: x, y [-30, 30], z [-25, 60] ([-25, 0] build plate)
 
-        pos_shift = torch.tensor([ 0.,  1.,  0.])
+        pos_shift = torch.tensor([ 0.,  0.,  0.])
         pos_scale = torch.tensor([30., 30., 60.])
         pos_norm = mlutils.normalize(graph.pos , pos_shift, pos_scale)
 
@@ -145,9 +145,7 @@ def train_timeseries(device, outdir, resdir, train=True):
 
     outname = os.path.join(outdir, "gnn")
     resname = os.path.join(resdir, "gnn")
-
     modelfile  = outname + ".pth"
-    imagefile1 = resname + ".png"
 
     vis_dir = os.path.join(resdir, 'gnn_timeseries')
     os.makedirs(vis_dir, exist_ok=True)
@@ -166,22 +164,29 @@ def train_timeseries(device, outdir, resdir, train=True):
     case_name = case_names[case_num]
     idx_case  = dataset.case_range(case_name)
     case_data = dataset[idx_case]
-    dataset = case_data
+    # dataset = case_data
+
+    _data, data_ = torch.utils.data.random_split(dataset, [0.8, 0.2])
 
     #=================#
     # MODEL
     #=================#
-    ci, ce, co, w, num_layers = 6, 3, 1, 256, 5
+    ci, ce, co, w, num_layers = 6, 3, 1, 64, 5
+    # ci, ce, co, w, num_layers = 6, 3, 1, 256, 5
     model = MaskedMGN(ci, ce, co, w, num_layers)
 
     #=================#
     # TRAIN
     #=================#
     if train:
-        kw = dict(device=device, GNN=True, stats_every=10,
-            E=200, _batch_size=1, weight_decay=0e-5,
+        kw = dict(
+            device=device, GNN=True, stats_every=10,
+            _batch_size=1, batch_size_=1, _batch_size_=1,
+            E=200, weight_decay=0e-5
         )
-        train_loop(model, dataset, **kw)
+        
+        # train_loop(model, dataset, **kw)
+        train_loop(model, _data, data_, **kw)
         if LOCAL_RANK==0:
             torch.save(model.to("cpu").state_dict(), modelfile)
 
@@ -235,9 +240,7 @@ def train_timeseries(device, outdir, resdir, train=True):
 def train_finaltime(device, outdir, resdir, train=True):
     outname = os.path.join(outdir, "gnn")
     resname = os.path.join(resdir, "gnn")
-
     modelfile  = outname + ".pth"
-    imagefile1 = resname + ".png"
 
     vis_dir = os.path.join(resdir, 'gnn_finaltime')
     os.makedirs(vis_dir, exist_ok=True)

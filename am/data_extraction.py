@@ -3,12 +3,16 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
+import torch.multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor
+
 import os
 import json
 import struct
 import zipfile
 import shutil
 import collections
+import itertools
 
 __all__ = [
     'extract_zips',
@@ -232,45 +236,66 @@ def get_timeseries_results(casedir):
 
     return results
 
-def extract_from_dir(data_dir, out_dir, timeseries=None):
+#=================================#
+# Process results and put them in the right spot
+#=================================#
+
+class Processor:
+    def __init__(self, data_dir, out_dir, timeseries):
+        self.data_dir = data_dir
+        self.out_dir = out_dir
+        self.timeseries = timeseries
+        if self.timeseries:
+            self.result_func = get_timeseries_results
+        else:
+            self.result_func = get_finaltime_results
+        return
+
+    def __call__(self, case):
+        casedir = os.path.join(self.data_dir, case)
+        results = self.result_func(casedir)
+        if len(results) == 1:
+            return False, [case], dict() # succ/fail, fail-case, series_dict
+        else:
+            if self.timeseries:
+                out_path = os.path.join(self.out_dir, case + '.pt')
+                torch.save(results, out_path)
+                N = len(results['verts'])
+                return True, [], {case : N}
+            else:
+                out_path = os.path.join(self.out_dir, case + '.npz')
+                np.savez(out_path, **results)
+                return True, [], dict()
+
+def extract_from_dir(data_dir, out_dir, timeseries=None, num_workers=None):
     os.makedirs(out_dir, exist_ok=True)
+
+    if num_workers is None:
+        num_workers = mp.cpu_count() // 2
 
     cases = os.listdir(data_dir)
     cases = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
     print(f"Loading displacement results from: {data_dir} into {out_dir}")
 
+    processor = Processor(data_dir, out_dir, timeseries)
+
+    with mp.Pool(num_workers) as pool:
+        outlist = list(tqdm(pool.imap_unordered(processor, cases), total=len(cases)))
+
+    num_success = sum([out[0] for out in outlist])
+    error_list = [o for out in outlist for o in out[1]]
+    series_dict = {k:v for out in outlist for (k, v) in out[2].items()}
+
+    num_failure = len(cases) - num_success
+
     error_file = os.path.join(out_dir, 'error.txt')
-
-    if timeseries:
-        result_func = get_timeseries_results
-        series_file = os.path.join(out_dir, 'series.json')
-        series_dict = {}
-    else:
-        result_func = get_finaltime_results
-
-    num_success = 0
-    num_failure = 0
-
-    for case in tqdm(cases):
-        casedir = os.path.join(data_dir, case)
-        results = result_func(casedir)
-        if len(results) == 1:
-            num_failure += 1
-            with open(error_file, 'a') as err:
-                err.write(f'{case}\n')
-        else:
-            num_success += 1
-            if timeseries:
-                out_path = os.path.join(out_dir, case + '.pt')
-                torch.save(results, out_path)
-                N = len(results['verts'])
-                series_dict[case] = N
-            else:
-                out_path = os.path.join(out_dir, case + '.npz')
-                np.savez(out_path, **results)
+    with open(error_file, 'w') as file:
+        for case in error_list:
+            file.write(f'{case}\n')
 
     print(f"Successfully saved {num_success} / {num_success + num_failure} cases to NPZ/PT format.")
     if timeseries:
+        series_file = os.path.join(out_dir, 'series.json')
         with open(series_file, 'w') as file:
             json.dump(series_dict, file)
         print(f"Saved number of frames per case to {series_file}")
@@ -279,13 +304,16 @@ def extract_from_dir(data_dir, out_dir, timeseries=None):
     return
 
 #=================================#
-# assemble data
+# unzipping
 #=================================#
 def unzip(zip_path, extract_dir):
-    with zipfile.ZipFile(zip_path, "r") as zip:
-        zip.extractall(extract_dir)
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall(extract_dir)
 
-def extract_from_zip(source_zip, target_dir, timeseries=None):
+#=================================#
+# assemble data
+#=================================#
+def extract_from_zip(source_zip, target_dir, timeseries=None, num_workers=None):
     os.makedirs(target_dir, exist_ok=True)
 
     # extract to temporary directory
@@ -296,7 +324,7 @@ def extract_from_zip(source_zip, target_dir, timeseries=None):
 
     # get data
     data_dir = os.path.join(extract_dir, "SandBox")
-    extract_from_dir(data_dir, target_dir, timeseries=timeseries)
+    extract_from_dir(data_dir, target_dir, timeseries=timeseries, num_workers=num_workers)
 
     # clean up
     print(f"Cleaning up extracted file: {extract_dir}")
@@ -304,7 +332,7 @@ def extract_from_zip(source_zip, target_dir, timeseries=None):
 
     return
 
-def extract_zips(source_dir, target_dir, timeseries=None):
+def extract_zips(source_dir, target_dir, timeseries=None, num_workers=None):
     os.makedirs(target_dir, exist_ok=True)
     zip_names = [f for f in os.listdir(source_dir) if f.endswith('.zip')]
 
@@ -312,8 +340,10 @@ def extract_zips(source_dir, target_dir, timeseries=None):
         zip_file = os.path.join(source_dir, zip_name)
         out_dir  = os.path.join(target_dir, zip_name[:-4])
 
+        if os.path.exists(out_dir):
+            shutil.rmtree(out_dir)
         os.makedirs(out_dir)
-        extract_from_zip(zip_file, out_dir, timeseries=timeseries)
+        extract_from_zip(zip_file, out_dir, timeseries=timeseries,  num_workers=num_workers)
 
     return
 #=================================#
