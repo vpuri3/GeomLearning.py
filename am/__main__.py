@@ -60,12 +60,6 @@ class MaskedMGN(nn.Module):
 
         return pyg.data.Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
-    def last_step(self, data):
-        istep  = data.metadata['time_step']
-        nsteps = data.metadata['time_steps']
-
-        return (istep + 1) == nsteps
-
     def forward(self, data, tol=1e-6):
         mask = data.mask.view(-1, 1)
         graph = self.reduce_graph(data)
@@ -176,8 +170,6 @@ def train_timeseries(device, outdir, resdir, train=True):
     for data in case_data:
         graph = transform(data)
         dataset.append(graph)
-        # if graph is not None:
-        #     dataset.append(graph)
 
     #=================#
     # MODEL
@@ -209,7 +201,7 @@ def train_timeseries(device, outdir, resdir, train=True):
         # Next Step - prediction
         ###
 
-        auto_regressive = False
+        auto_regressive = True
 
         with torch.no_grad():
             eval_data = []
@@ -217,7 +209,7 @@ def train_timeseries(device, outdir, resdir, train=True):
                 data = transform(data)
                 data.e = torch.zeros_like(data.y)
                 eval_data.append(transform(data))
-        
+
             K = 1
             for k in range(K, len(eval_data)):
                 data  = eval_data[k].to(device)
@@ -226,7 +218,7 @@ def train_timeseries(device, outdir, resdir, train=True):
 
                 if auto_regressive:
                     _data = _data.clone()
-                    _data.x = 0
+                    _data.x[:, -1] = _data.y[:, -1]
 
                 data.y = model(_data) + data.disp[k-1, :, 2].unsqueeze(-1)
                 data.e = data.y - data.disp[k, :, 2].unsqueeze(-1)
