@@ -380,7 +380,7 @@ class Trainer:
         if self.print_epoch and self.verbose and (self.LOCAL_RANK == 0):
             msg = f"[Epoch {self.epoch} / {self.nepochs}] "
             if self.loader_ is not None:
-                msg += f"TRAIN LOSS: {_loss:.6e} | TEST LOSS: {_loss:.6e}"
+                msg += f"TRAIN LOSS: {_loss:.6e} | TEST LOSS: {loss_:.6e}"
             else:
                 msg += f"LOSS: {_loss:.6e}"
             if _stats is not None:

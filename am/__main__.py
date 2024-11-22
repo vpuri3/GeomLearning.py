@@ -72,7 +72,7 @@ class MaskedMGN(nn.Module):
         return x
 
 #======================================================================#
-class MergedTimeseriesTransform:
+class MergedTimeseriesProcessor:
     def __init__(self):
         return
 
@@ -83,6 +83,13 @@ class MergedTimeseriesTransform:
         nsteps = md['time_steps']
         last_step = (istep + 1) == nsteps
 
+        # TODO:
+        #    dz = zmax[istep+1] - zmax[istep]
+        #
+        # use dz to decide the interface width such that
+        # interface fully encompasses one layer and ends at the next.
+        # input to GNN should not have sharp discontinuity
+
         # mask
         if not last_step:
             zmax = md['zmax'][istep+1]
@@ -91,8 +98,13 @@ class MergedTimeseriesTransform:
             zmax = md['zmax'][-1]
             mask = torch.full((N,), True)
 
+        # dataset:
+        # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate)
+        # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
+        # vmstr: [0, 5e3] Pascal (?)
+        # temp : Celcius [25, 300]
+
         # position
-        # dataset: x, y [-30, 30], z [-25, 60] ([-25, 0] build plate)
 
         pos_shift = torch.tensor([ 0.,  0.,  0.])
         pos_scale = torch.tensor([30., 30., 60.])
@@ -107,12 +119,8 @@ class MergedTimeseriesTransform:
 
         # target fields
         if not last_step:
-            disp_norm = graph.disp
-
-            # disp_min = torch.tensor([-1., -1., -1.])
-            # disp_max = torch.tensor([ 1.,  1.,  1.])
-            # disp_shift, disp_scale = mlutils.shift_scale(graph.disp, disp_min, disp_max)
-            # disp_norm = mlutils.normalize(graph.disp, disp_shift, disp_scale)
+            disp_norm  = graph.disp
+            vmstr_norm = graph.vmstr / 1000
 
             disp_z = disp_norm[:, :, 2].unsqueeze(-1)
 
@@ -120,13 +128,23 @@ class MergedTimeseriesTransform:
             disp_z_out = disp_z[istep+1]
             disp_z_out = (disp_z[istep+1] - disp_z[istep]) #/ md['dt_val']
 
+            vmstr_in  = vmstr_norm[istep]
+            vmstr_out = (vmstr_norm[istep+1] - vmstr_norm[istep])
+
         else:
             disp_z_in  = torch.zeros((N, 1))
             disp_z_out = torch.zeros((N, 1))
 
-        # fields
+            vmstr_in  = torch.zeros((N, 1))
+            vmstr_out = torch.zeros((N, 1))
+
+        # feature / label
         x = torch.cat([pos_norm, t, dt, disp_z_in,], dim=-1)
         y = torch.cat([disp_z_out,], dim=-1)
+
+        # x = torch.cat([pos_norm, t, dt, vmstr_in,], dim=-1)
+        # y = torch.cat([vmstr_out,], dim=-1)
+
         edge_attr = edge_norm
 
         # assign to graph
@@ -154,7 +172,7 @@ def train_timeseries(device, outdir, resdir, train=True):
     # DATA: only consider first 100 cases
     #=================#
 
-    transform = MergedTimeseriesTransform()
+    transform = MergedTimeseriesProcessor()
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
     dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform)
     case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
