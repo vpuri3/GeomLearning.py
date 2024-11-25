@@ -370,7 +370,10 @@ class Trainer:
             N = torch.tensor(N, device=self.device)
             dist.all_reduce(L, dist.ReduceOp.SUM)
             dist.all_reduce(N, dist.ReduceOp.SUM)
-            loss = L.item() / N.item()
+            L, N = L.item(), N.item()
+
+        if N == 0:
+            loss = float('nan')
         else:
             loss = L / N
 

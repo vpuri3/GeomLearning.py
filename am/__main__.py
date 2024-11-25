@@ -182,28 +182,14 @@ def train_timeseries(device, outdir, resdir, train=True):
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
     dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform, num_workers=12)
 
-    case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
-    # just one case for now
-    case_num = 2
-    case_name = case_names[case_num]
-    idx_case  = dataset.case_range(case_name)
-    case_data = dataset[idx_case]
-    # dataset = case_data
-
-    # THIS IS DOING THE WRONG THING
-    # _data, data_ = torch.utils.data.random_split(dataset, [0.8, 0.2])
-
-    # _data, data_ = am.split_timeseries_dataset(dataset, [0.8, 0.2])
-    _data, data_ = dataset, None
-
-    # ensure dataset is being split casewise
+    # _data, data_ = dataset, None
+    _data, data_ = am.split_timeseries_dataset(dataset, [0.8, 0.2]) # RIGHT
 
     #=================#
     # MODEL
     #=================#
 
     ci, ce, co, w, num_layers = 6, 3, 1, 64, 5
-    # ci, ce, co, w, num_layers = 6, 3, 1, 256, 5
     model = MaskedMGN(ci, ce, co, w, num_layers)
 
     #=================#
@@ -223,6 +209,14 @@ def train_timeseries(device, outdir, resdir, train=True):
     #=================#
     # ANALYSIS
     #=================#
+    case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
+    # just one case for now
+    case_num = 2
+    case_name = case_names[case_num]
+    idx_case  = dataset.case_range(case_name)
+    case_data = dataset[idx_case]
+    # _data = case_data
+
     if LOCAL_RANK == 0:
         model.eval()
         model_state = torch.load(modelfile, weights_only=True, map_location='cpu')

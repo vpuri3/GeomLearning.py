@@ -62,9 +62,7 @@ class TimeseriesDataset(pyg.data.Dataset):
     def processed_paths(self):
         proc_dir  = self.proc_dir()
         os.makedirs(proc_dir, exist_ok=True)
-        case_files = [f"case{str(i).zfill(5)}_{case_file}"
-            for (i, case_file) in enumerate(self.case_files)]
-        return [os.path.join(proc_dir, case) for case in case_files]
+        return [os.path.join(proc_dir, case_file) for case_file in self.case_files]
 
     def proc_dir(self):
         proc_name = 'processed_merged' if self.merge else 'processed'
@@ -137,9 +135,6 @@ class TimeseriesDataset(pyg.data.Dataset):
 
         return graph
 
-    def clone(self, ):
-        pass
-
 def split_timeseries_dataset(dataset, split):
 
     num_cases = len(dataset.case_files)
@@ -153,8 +148,8 @@ def split_timeseries_dataset(dataset, split):
         indices = list(subset_indices[i])
 
         subset.case_files = [subset.case_files[i] for i in indices]
-        subset.time_steps = [subset.time_steps[i] for i in indices]
-        subset.time_steps_cum = subset.time_steps_cum.cumsum(0)
+        subset.time_steps = torch.tensor([subset.time_steps[i] for i in indices])
+        subset.time_steps_cum = subset.time_steps.cumsum(0)
 
     return subsets
 
