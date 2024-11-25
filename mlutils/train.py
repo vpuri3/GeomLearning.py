@@ -232,8 +232,15 @@ class Trainer:
 
         if self.DDP:
             DS = torch.utils.data.distributed.DistributedSampler
-            _shuffle, __shuffle, shuffle_ = False, False, False
-            _sampler, __sampler, sampler_ = DS(self._data), DS(self._data, shuffle=False), DS(self.data_, shuffle=False)
+            _shuffle, __shuffle = False, False
+            _sampler, __sampler = DS(self._data), DS(self._data, shuffle=False)
+
+            if self.data_ is not None:
+                shuffle_ = False
+                sampler_ = DS(self.data_, shuffle=False)
+            else: # unused
+                shuffle_ = False
+                sampler_ = None
         else:
             _shuffle, __shuffle, shuffle_ = True, False, False
             _sampler, __sampler, sampler_ = None, None , None
@@ -253,7 +260,7 @@ class Trainer:
         ###
         # Printing
         ###
-        if self.verbose and self.print_config and self.LOCAL_RANK == 0:
+        if self.verbose and self.LOCAL_RANK == 0:
             print(f"Number of training samples: {len(self._data)}")
             if self.data_ is not None:
                 print(f"Number of test samples: {len(self.data_)}")
@@ -264,9 +271,10 @@ class Trainer:
                 for batch in self._loader:
                     print(batch)
                     break
-                for batch in self.loader_:
-                    print(batch)
-                    break
+                if self.data_ is not None:
+                    for batch in self.loader_:
+                        print(batch)
+                        break
             else:
                 for (x, y) in self._loader:
                     print(f"Shape of x: {x.shape} {x.dtype}")

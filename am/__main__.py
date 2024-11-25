@@ -14,8 +14,8 @@ import argparse
 import am
 import mlutils
 
-# DATADIR_BASE       = 'data/'
-DATADIR_BASE       = '/home/shared/'
+DATADIR_BASE       = 'data/'
+# DATADIR_BASE       = '/home/shared/'
 DATADIR_RAW        = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_raw')
 DATADIR_TIMESERIES = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_timeseries')
 DATADIR_FINALTIME  = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_finaltime')
@@ -147,12 +147,18 @@ class MergedTimeseriesProcessor:
 
         edge_attr = edge_norm
 
-        # assign to graph
-        graph.x = x
-        graph.y = y
-        graph.t = t
-        graph.mask = mask
-        graph.edge_attr = edge_attr
+        # # assign to graph
+        # graph.x = x
+        # graph.y = y
+        # graph.t = t
+        # graph.mask = mask
+        # graph.edge_attr = edge_attr
+
+        # create new graph
+        graph = pyg.data.Data(
+            x=x, y=y, t=t, mask=mask,
+            edge_attr=edge_attr, edge_index=graph.edge_index,
+        )
 
         return graph
 
@@ -174,9 +180,9 @@ def train_timeseries(device, outdir, resdir, train=True):
 
     transform = MergedTimeseriesProcessor()
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
-    dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform)
-    case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
+    dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform, num_workers=12)
 
+    case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
     # just one case for now
     case_num = 2
     case_name = case_names[case_num]
@@ -184,11 +190,18 @@ def train_timeseries(device, outdir, resdir, train=True):
     case_data = dataset[idx_case]
     # dataset = case_data
 
-    _data, data_ = torch.utils.data.random_split(dataset, [0.8, 0.2])
+    # THIS IS DOING THE WRONG THING
+    # _data, data_ = torch.utils.data.random_split(dataset, [0.8, 0.2])
+
+    # _data, data_ = am.split_timeseries_dataset(dataset, [0.8, 0.2])
+    _data, data_ = dataset, None
+
+    # ensure dataset is being split casewise
 
     #=================#
     # MODEL
     #=================#
+
     ci, ce, co, w, num_layers = 6, 3, 1, 64, 5
     # ci, ce, co, w, num_layers = 6, 3, 1, 256, 5
     model = MaskedMGN(ci, ce, co, w, num_layers)
@@ -199,11 +212,10 @@ def train_timeseries(device, outdir, resdir, train=True):
     if train:
         kw = dict(
             device=device, GNN=True, stats_every=10,
-            _batch_size=1, batch_size_=1, _batch_size_=1,
+            _batch_size=4, batch_size_=8, _batch_size_=8,
             E=200, weight_decay=0e-5
         )
         
-        # train_loop(model, dataset, **kw)
         train_loop(model, _data, data_, **kw)
         if LOCAL_RANK==0:
             torch.save(model.to("cpu").state_dict(), modelfile)
@@ -362,7 +374,6 @@ if __name__ == "__main__":
 
     mlutils.set_seed(123)
     parser = argparse.ArgumentParser(description = 'AM')
-    parser.add_argument('--gpu_device', default=0, help='GPU device', type=int)
     args = parser.parse_args()
 
     DISTRIBUTED = mlutils.is_torchrun()
@@ -373,9 +384,6 @@ if __name__ == "__main__":
         device = LOCAL_RANK
     else:
         device = mlutils.select_device()
-        if device == "cuda":
-            device += f":{args.gpu_device}"
-        print(f"using device {device}")
 
     outdir = "./out/am/"
     resdir = "./res/am/"
@@ -396,7 +404,7 @@ if __name__ == "__main__":
     # Timeseries data
     #===============#
     # test_timeseries_extraction()
-    # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True)
+    # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True, num_workers=12)
     # vis_timeseries(resdir, merge=True)
     train_timeseries(device, outdir, resdir, train=True)
 

@@ -306,9 +306,26 @@ def extract_from_dir(data_dir, out_dir, timeseries=None, num_workers=None):
 #=================================#
 # unzipping
 #=================================#
+
 def unzip(zip_path, extract_dir):
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
         zip_ref.extractall(extract_dir)
+
+from concurrent.futures import ThreadPoolExecutor
+
+def extract_file(zip_file, file_name, out_dir):
+    with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+        zip_ref.extract(file_name, out_dir)
+
+def unzip_parallel(zip_file, out_dir, num_workers=None):
+    if num_workers is None:
+        num_workers = mp.cpu_count() // 2
+
+    with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+        file_names = zip_ref.namelist()
+
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        executor.map(lambda file: extract_file(zip_file, file, out_dir), file_names)
 
 #=================================#
 # assemble data
@@ -321,6 +338,7 @@ def extract_from_zip(source_zip, target_dir, timeseries=None, num_workers=None):
     os.makedirs(extract_dir, exist_ok=True)
     print(f"Unzipping {source_zip}...")
     unzip(source_zip, extract_dir)
+    # unzip_parallel(source_zip, extract_dir, num_workers)
 
     # get data
     data_dir = os.path.join(extract_dir, "SandBox")

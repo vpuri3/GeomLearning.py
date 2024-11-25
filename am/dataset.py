@@ -5,6 +5,7 @@ import numpy as np
 from tqdm import tqdm
 
 import os
+import copy
 import json
 from typing import Union
 
@@ -15,6 +16,7 @@ from .interpolate import interpolate_idw, make_finest_mesh
 __all__ = [
     'FinaltimeDataset',
     'TimeseriesDataset',
+    'split_timeseries_dataset',
     'makegraph',
     'timeseries_dataset',
     'merge_timeseries',
@@ -134,7 +136,27 @@ class TimeseriesDataset(pyg.data.Dataset):
         graph.metadata['time_step'] = time_step
 
         return graph
-#
+
+    def clone(self, ):
+        pass
+
+def split_timeseries_dataset(dataset, split):
+
+    num_cases = len(dataset.case_files)
+    subset_indices = torch.utils.data.random_split(range(num_cases), split)
+
+    # deepcopy
+    subsets = [copy.deepcopy(dataset) for s in split]
+
+    for i in range(len(split)):
+        subset  = subsets[i]
+        indices = list(subset_indices[i])
+
+        subset.case_files = [subset.case_files[i] for i in indices]
+        subset.time_steps = [subset.time_steps[i] for i in indices]
+        subset.time_steps_cum = subset.time_steps_cum.cumsum(0)
+
+    return subsets
 
 #======================================================================#
 class FinaltimeDataset(pyg.data.Dataset):
