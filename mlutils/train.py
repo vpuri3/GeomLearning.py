@@ -54,6 +54,9 @@ class Trainer:
         stats_every=1, # stats every k epochs
     ):
 
+        # TODO
+        # - EARLY STOPPING with patience (5 epochs)
+
         ###
         # DEVICE
         ###

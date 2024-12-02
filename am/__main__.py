@@ -22,10 +22,15 @@ DATADIR_FINALTIME  = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_finaltime')
 
 #======================================================================#
 def train_loop(model, _data, data_=None, E=100, lrs=None, nepochs=None, **kw):
+    # if lrs is None:
+    #     lrs = [5e-4, 1e-4, 5e-5, 1e-5]
+    # if nepochs is None:
+    #     nepochs = [.25*E, .25*E, .25*E, 0.25*E]
+
     if lrs is None:
-        lrs = [5e-4, 1e-4, 5e-5, 1e-5]
+        lrs = [5e-4, 1e-4,]
     if nepochs is None:
-        nepochs = [.25*E, .25*E, .25*E, 0.25*E]
+        nepochs = [.5*E, .5*E,]
 
     nepochs = [int(e) for e in nepochs]
     assert len(lrs) == len(nepochs)
@@ -39,41 +44,25 @@ def train_loop(model, _data, data_=None, E=100, lrs=None, nepochs=None, **kw):
     return model
 
 #======================================================================#
-from torch import nn
-
-class MaskedMGN(nn.Module):
-    def __init__(self, ci, ce, co, w, num_layers, apply_mask=True):
-        super().__init__()
-        self.apply_mask = apply_mask
-        self.gnn = mlutils.MeshGraphNet(ci, ce, co, w, num_layers)
-
-    def reduce_graph(self, data):
-        return data
-        # # remove edges corresponding to nodes imask==False
-        # mask  = data.mask
-        # imask = torch.where(mask > 1e-4)
-        # x = data.x
-        # edge_index = data.edge_index
-        # edge_attr = data.edge_attr
-
-        return pyg.data.Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
-
-    def forward(self, data, tol=1e-6):
-        graph = self.reduce_graph(data)
-        x = self.gnn(graph)
-
-        if self.apply_mask:
-            mask = data.mask.view(-1, 1)
-            x = x * mask
-
-        last_step_mask = (data.t <= 1. - tol).view(-1, 1)
-        x = x * last_step_mask
-
-        return x
-
-#======================================================================#
 class MergedTimeseriesProcessor:
-    def __init__(self):
+    def __init__(self, disp=True, vmstr=True, temp=True):
+
+        self.disp  = disp
+        self.vmstr = vmstr
+        self.temp  = temp
+
+        # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate)
+        # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
+        # vmstr: [0, 5e3] Pascal (?)
+        # temp : Celcius [25, 300]
+        #
+        # time: [0, 1]
+
+        self.pos_scale = torch.tensor([30., 30., 60.])
+        self.disp_scale  = 1.
+        self.vmstr_scale = 1000.
+        self.temp_scale  = 500. # TODO: adjust?
+
         return
 
     def __call__(self, graph, tol=1e-4):
@@ -98,69 +87,122 @@ class MergedTimeseriesProcessor:
             zmax = md['zmax'][-1]
             mask = torch.full((N,), True)
 
-        # dataset:
-        # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate)
-        # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
-        # vmstr: [0, 5e3] Pascal (?)
-        # temp : Celcius [25, 300]
-
         # position
-
-        pos_shift = torch.tensor([ 0.,  0.,  0.])
-        pos_scale = torch.tensor([30., 30., 60.])
-        pos_norm = mlutils.normalize(graph.pos , pos_shift, pos_scale)
+        pos = graph.pos / self.pos_scale
 
         # edges
-        edge_norm = graph.edge_dxyz / pos_scale
+        edge_dxyz = graph.edge_dxyz / self.pos_scale
 
         # time
         t  = torch.full((N, 1), graph.metadata['t_val'])
         dt = torch.full((N, 1), graph.metadata['dt_val'])
 
+        # disp
+        disp  = graph.disp  / self.disp_scale
+        vmstr = graph.vmstr / self.vmstr_scale
+        temp  = graph.temp  / self.temp_scale
+
         # target fields
         if not last_step:
-            disp_norm  = graph.disp
-            vmstr_norm = graph.vmstr / 1000
+            disp_z   = disp[:, :, 2].unsqueeze(-1)
+            disp_in  = disp_z[istep]
+            disp_out = (disp_z[istep+1] - disp_z[istep]) #/ md['dt_val']
 
-            disp_z = disp_norm[:, :, 2].unsqueeze(-1)
-
-            disp_z_in  = disp_z[istep]
-            disp_z_out = disp_z[istep+1]
-            disp_z_out = (disp_z[istep+1] - disp_z[istep]) #/ md['dt_val']
-
-            vmstr_in  = vmstr_norm[istep]
-            vmstr_out = (vmstr_norm[istep+1] - vmstr_norm[istep])
+            vmstr_in  = vmstr[istep]
+            vmstr_out = (vmstr[istep+1] - vmstr[istep])
 
         else:
-            disp_z_in  = torch.zeros((N, 1))
-            disp_z_out = torch.zeros((N, 1))
+            disp_in  = torch.zeros((N, 1))
+            disp_out = torch.zeros((N, 1))
 
             vmstr_in  = torch.zeros((N, 1))
             vmstr_out = torch.zeros((N, 1))
 
-        # feature / label
-        x = torch.cat([pos_norm, t, dt, disp_z_in,], dim=-1)
-        y = torch.cat([disp_z_out,], dim=-1)
+            temp_in  = torch.zeros((N, 1))
+            temp_out = torch.zeros((N, 1))
 
-        # x = torch.cat([pos_norm, t, dt, vmstr_in,], dim=-1)
-        # y = torch.cat([vmstr_out,], dim=-1)
+        # features / labels
+        xs = [pos, t, dt,]
+        ys = []
 
-        edge_attr = edge_norm
+        if self.disp:
+            xs.append(disp_in)
+            ys.append(disp_out)
+        if self.vmstr:
+            xs.append(vmstr_in)
+            ys.append(vmstr_out)
+        if self.temp:
+            xs.append(temp_in)
+            ys.append(temp_out)
 
-        # # assign to graph
-        # graph.x = x
-        # graph.y = y
-        # graph.t = t
-        # graph.mask = mask
-        # graph.edge_attr = edge_attr
+        assert len(ys) > 0, f"At least one of disp, vmstr, temp must be True. Got {self.disp}, {self.vmstr}, {self.temp}."
 
-        # create new graph
-        graph = pyg.data.Data(
+        x = torch.cat(xs, dim=-1)
+        y = torch.cat(ys, dim=-1)
+
+        edge_attr = edge_dxyz
+
+        return pyg.data.Data(
             x=x, y=y, t=t, mask=mask,
             edge_attr=edge_attr, edge_index=graph.edge_index,
+            disp=graph.disp[istep], vmstr=graph.vmstr[istep], temp=graph.temp[istep],
         )
 
-        return graph
+#======================================================================#
+from torch import nn
+
+@torch.no_grad()
+def eval_case(model, case_data, fields, autoreg=True, K=1, verbose=True, device=None):
+
+    disp  = fields['disp']
+    vmstr = fields['vmstr']
+    temp  = fields['temp']
+
+    nfields = disp + vmstr + temp
+
+    # TODO
+
+    def makefields(data):
+        xs = []
+        if disp:
+            xs.append(data.disp[:, 2].view(-1,1))
+        if vmstr:
+            xs.append(data.vmstr.view(-1,1))
+        if temp:
+            xs.append(data.temp.view(-1,1))
+
+        return torch.cat(xs, dim=-1)
+
+    if device is None:
+        device = mlutils.select_device(device)
+
+    model.to(device)
+
+    eval_data = []
+    for data in case_data:
+        data = data.clone()
+        data.y = data.disp[:, 2].unsqueeze(-1)
+        data.e = torch.zeros_like(data.y)
+        eval_data.append(data)
+
+    for k in range(K, len(eval_data)):
+        _data = eval_data[k-1].to(device) # given (k-1)-th step
+        data  = eval_data[k  ].to(device) # predict k-th step
+
+        if autoreg:
+            _data = _data.clone()
+            _data.x[:, -1] = _data.y[:, -1]
+
+        data.y = model(_data) + _data.x[:, -1].unsqueeze(-1)
+        data.e = data.y - data.disp[:, 2].unsqueeze(-1)
+
+        if verbose:
+            l1 = nn.L1Loss()( data.e, 0 * data.e).item()
+            l2 = nn.MSELoss()(data.e, 0 * data.e).item()
+            r2 = mlutils.r2(data.y, data.disp[:,2])
+            print(f'Step {k}: {l1, l2, r2}')
+
+    return eval_data
 
 #======================================================================#
 def train_timeseries(device, outdir, resdir, train=True):
@@ -169,158 +211,133 @@ def train_timeseries(device, outdir, resdir, train=True):
 
     outname = os.path.join(outdir, "gnn")
     resname = os.path.join(resdir, "gnn")
-    modelfile  = outname + ".pth"
+    modelfile  = outname + ".pt"
 
     vis_dir = os.path.join(resdir, 'gnn_timeseries')
     os.makedirs(vis_dir, exist_ok=True)
 
     #=================#
-    # DATA: only consider first 100 cases
+    # DATA
     #=================#
 
-    transform = MergedTimeseriesProcessor()
+    # disp = True
+    # vmstr = False
+    # temp = False
+
+    disp = False
+    vmstr = True
+    temp = False
+
+    fields = dict(disp=disp, vmstr=vmstr, temp=temp)
+
+    transform = MergedTimeseriesProcessor(**fields)
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
     dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform, num_workers=12)
 
-    # _data, data_ = dataset, None
     _data, data_ = am.split_timeseries_dataset(dataset, [0.8, 0.2]) # RIGHT
 
     #=================#
     # MODEL
     #=================#
 
-    ci, ce, co, w, num_layers = 6, 3, 1, 64, 5
-    model = MaskedMGN(ci, ce, co, w, num_layers)
+    ci = 5 + disp + vmstr + temp
+    ce = 3
+    co = disp + vmstr + temp
+    width = 64
+    num_layers = 5
+
+    model = am.MaskedMGN(ci, ce, co, width, num_layers)
 
     #=================#
     # TRAIN
     #=================#
+
     if train:
         kw = dict(
-            device=device, GNN=True, stats_every=10,
-            _batch_size=4, batch_size_=8, _batch_size_=8,
-            E=200, weight_decay=0e-5
+            device=device, GNN=True, stats_every=5,
+            _batch_size=4, batch_size_=12, _batch_size_=12,
+            E=100, weight_decay=0e-5, Opt='AdamW',
         )
-        
+
         train_loop(model, _data, data_, **kw)
+
         if LOCAL_RANK==0:
             torch.save(model.to("cpu").state_dict(), modelfile)
 
     #=================#
     # ANALYSIS
     #=================#
-    case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
-    # just one case for now
-    case_num = 2
-    case_name = case_names[case_num]
-    idx_case  = dataset.case_range(case_name)
-    case_data = dataset[idx_case]
-    # _data = case_data
 
     if LOCAL_RANK == 0:
+
         model.eval()
         model_state = torch.load(modelfile, weights_only=True, map_location='cpu')
         model.load_state_dict(model_state)
         model.to(device)
 
         ###
+        # choose case
+        ###
+
+        C = 5
+        _cases = [_data[_data.case_range(c)] for c in range(C)]
+        cases_ = [data_[data_.case_range(c)] for c in range(C)]
+
+        case_data = _cases[0]
+        # case_data = cases_[2]
+
+        ###
         # Next Step prediction
         ###
 
-        # auto_regressive = True
-        auto_regressive = False
+        # eval_data = eval_case(model, case_data, fields, autoreg=False, device=device)
+        # eval_data = eval_case(model, case_data, fields, autoreg=True, K=5, device=device)
 
-        with torch.no_grad():
-            eval_data = []
-            for data in case_data:
-                data = transform(data)
-                data.e = torch.zeros_like(data.y)
-                eval_data.append(transform(data))
-
-            K = 1
-            for k in range(K, len(eval_data)):
-                data  = eval_data[k].to(device)
-                _data = eval_data[k-1].to(device)
-                assert data.metadata['time_step'] == k
-
-                if auto_regressive:
-                    _data = _data.clone()
-                    _data.x[:, -1] = _data.y[:, -1]
-
-                data.y = model(_data) + data.disp[k-1, :, 2].unsqueeze(-1)
-                data.e = data.y - data.disp[k, :, 2].unsqueeze(-1)
-
-                l1 = nn.L1Loss()( data.e, 0 * data.e).item()
-                l2 = nn.MSELoss()(data.e, 0 * data.e).item()
-                r2 = mlutils.r2(data.y, data.disp[k,:,2])
-                print(f'Step {k}: {l1, l2, r2}')
-
-        out_dir = os.path.join(resdir, f'case{case_num}')
-        am.visualize_timeseries_pyv(eval_data, out_dir, case_num, merge=True)
+        # out_dir = os.path.join(resdir, f'case{case_num}')
+        # am.visualize_timeseries_pyv(eval_data, out_dir, case_num, merge=True)
 
     return
 
 #======================================================================#
 def train_finaltime(device, outdir, resdir, train=True):
+    DISTRIBUTED = mlutils.is_torchrun()
+    LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
+
     outname = os.path.join(outdir, "gnn")
     resname = os.path.join(resdir, "gnn")
-    modelfile  = outname + ".pth"
+    modelfile  = outname + ".pt"
 
-    vis_dir = os.path.join(resdir, 'gnn_finaltime')
+    vis_dir = os.path.join(resdir, 'gnn_timeseries')
     os.makedirs(vis_dir, exist_ok=True)
 
     #=================#
-    # DATA: only consider first 100 cases
+    # DATA
     #=================#
-    def transform_fn(graph):
-        md = graph.metadata
-        pos_norm  = mlutils.normalize(graph.pos , md['pos' ][0], md['pos' ][1])
-        disp_norm = mlutils.normalize(graph.disp, md['disp'][0], md['disp'][1])
-        edge_norm = graph.edge_dxyz / md['pos'][1]
 
-        x = torch.cat([pos_norm ], dim=-1)
-        y = torch.cat([disp_norm], dim=-1)
-        edge_attr = edge_norm
+    disp = True
+    vmstr = False
 
-        return pyg.data.Data(x=x, y=y, edge_attr=edge_attr)
+    transform = 0 # MergedTimeseriesProcessor(disp, vmstr)
+    DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
+    dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform, num_workers=12)
 
-    DATADIR = os.path.join(DATADIR_FINALTIME, r"data_0-100")
-    dataset = am.FinaltimeDataset(DATADIR, transform=transform_fn)
+    _data, data_ = am.split_timeseries_dataset(dataset, [0.8, 0.2]) # RIGHT
 
     #=================#
     # MODEL
     #=================#
-    ci, ce, co, w, num_layers = 3, 3, 3, 64, 4
-    model = mlutils.MeshGraphNet(ci, ce, co, w, num_layers)
+
+    ci = 5 + disp + vmstr
+    ce = 3
+    co = disp + vmstr
+    width = 64
+    num_layers = 5
+
+    model = am.MaskedMGN(ci, ce, co, width, num_layers)
 
     #=================#
     # TRAIN
     #=================#
-    if train:
-        kw = dict(device=device, E=200, GNN=True, _batch_size=1,)
-        train_loop(model, dataset, **kw)
-        torch.save(model.to("cpu").state_dict(), modelfile)
-
-    #=================#
-    # VISUALIZE
-    #=================#
-    model.eval()
-    model.load_state_dict(torch.load(modelfile, weights_only=True))
-
-    import matplotlib.pyplot as plt
-
-    for i in range(0,5):
-        pass
-        # graph = dataset[i]
-        # fig = am.visualize_mpl(graph, 'temp')
-        # fig.savefig(os.path.join(vis_dir, f'data{str(i).zfill(2)}'), dpi=300)
-
-        # fig = am.verify_connectivity(graph)
-        # plt.show(block=True)
-
-        # mesh = am.mesh_pyv(graph.pos, graph.elems)
-        # mesh.point_data['target'] = graph.temp.numpy(force=True)
-        # mesh.save(os.path.join(vis_dir, f'data{str(i).zfill(2)}.vtu'))
 
     return
 
@@ -343,7 +360,6 @@ def vis_timeseries(resdir, merge=None):
     return
 
 #======================================================================#
-
 def test_timeseries_extraction():
     ext_dir = "/home/shared/netfabb_ti64_hires_out/extracted/SandBox/"
     out_dir = "/home/shared/netfabb_ti64_hires_out/tmp/"

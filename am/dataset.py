@@ -100,7 +100,9 @@ class TimeseriesDataset(pyg.data.Dataset):
             assert i1-i0 == self.time_steps[case]
             return range(i0, i1)
         else: # str
-            icase = self.case_files.index(case + '.pt')
+            if not case.endswith('.pt'):
+                case = case + '.pt'
+            icase = self.case_files.index(case)
             return self.case_range(icase)
 
     def get(self, idx):
@@ -141,14 +143,14 @@ def split_timeseries_dataset(dataset, split):
     subset_indices = torch.utils.data.random_split(range(num_cases), split)
 
     # deepcopy
-    subsets = [copy.deepcopy(dataset) for s in split]
+    subsets = [copy.deepcopy(dataset) for _ in split]
 
-    for i in range(len(split)):
-        subset  = subsets[i]
-        indices = list(subset_indices[i])
+    for s in range(len(split)):
+        subset  = subsets[s]
+        indices = list(subset_indices[s])
 
-        subset.case_files = [subset.case_files[i] for i in indices]
-        subset.time_steps = torch.tensor([subset.time_steps[i] for i in indices])
+        subset.case_files = [subset.case_files[index] for index in indices]
+        subset.time_steps = torch.tensor([subset.time_steps[index].item() for index in indices])
         subset.time_steps_cum = subset.time_steps.cumsum(0)
 
     return subsets
