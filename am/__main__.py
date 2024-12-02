@@ -152,36 +152,34 @@ class MergedTimeseriesProcessor:
 from torch import nn
 
 @torch.no_grad()
-def eval_case(model, case_data, fields, autoreg=True, K=1, verbose=True, device=None):
-
-    disp  = fields['disp']
-    vmstr = fields['vmstr']
-    temp  = fields['temp']
-
-    nfields = disp + vmstr + temp
-
-    # TODO
-
-    def makefields(data):
-        xs = []
-        if disp:
-            xs.append(data.disp[:, 2].view(-1,1))
-        if vmstr:
-            xs.append(data.vmstr.view(-1,1))
-        if temp:
-            xs.append(data.temp.view(-1,1))
-
-        return torch.cat(xs, dim=-1)
+def march_case(model, case_data, transform, autoreg=True, K=1, verbose=True, device=None):
 
     if device is None:
         device = mlutils.select_device(device)
 
     model.to(device)
 
+    scale = []
+    scale = [*scale, transform.disp_scale ] if transform.disp  else scale
+    scale = [*scale, transform.vmstr_scale] if transform.vmstr else scale
+    scale = [*scale, transform.temp_scale ] if transform.temp  else scale
+    scale = torch.tensor(scale)
+
+    nf = transform.disp + transform.vmstr + transform.temp 
+    assert nf == len(scale)
+
+    def makefields(data):
+        xs = []
+        xs = [*xs, data.disp[:,2].view(-1,1)] if transform.disp  else xs
+        xs = [*xs, data.vmstr.view(-1,1)    ] if transform.vmstr else xs
+        xs = [*xs, data.temp.view(-1,1)     ] if transform.temp  else xs
+
+        return torch.cat(xs, dim=-1) / scale.to(xs[0].device)
+
     eval_data = []
     for data in case_data:
         data = data.clone()
-        data.y = data.disp[:, 2].unsqueeze(-1)
+        data.y = makefields(data)
         data.e = torch.zeros_like(data.y)
         eval_data.append(data)
 
@@ -191,15 +189,17 @@ def eval_case(model, case_data, fields, autoreg=True, K=1, verbose=True, device=
 
         if autoreg:
             _data = _data.clone()
-            _data.x[:, -1] = _data.y[:, -1]
+            _data.x[:, -nf:] = _data.y[:, -nf:]
 
-        data.y = model(_data) + _data.x[:, -1].unsqueeze(-1)
-        data.e = data.y - data.disp[:, 2].unsqueeze(-1)
+        target = makefields(data)
+
+        data.y = model(_data) + _data.x[:, -nf:]
+        data.e = data.y - target
 
         if verbose:
             l1 = nn.L1Loss()( data.e, 0 * data.e).item()
             l2 = nn.MSELoss()(data.e, 0 * data.e).item()
-            r2 = mlutils.r2(data.y, data.disp[:,2])
+            r2 = mlutils.r2(data.y, target)
             print(f'Step {k}: {l1, l2, r2}')
 
     return eval_data
@@ -220,13 +220,15 @@ def train_timeseries(device, outdir, resdir, train=True):
     # DATA
     #=================#
 
-    # disp = True
-    # vmstr = False
-    # temp = False
-
-    disp = False
-    vmstr = True
+    disp = True
+    vmstr = False
     temp = False
+    modelfile = outname + "_disp" + ".pt"
+
+    # disp = False
+    # vmstr = True
+    # temp = False
+    # modelfile = outname + "_vmstr" + ".pt"
 
     fields = dict(disp=disp, vmstr=vmstr, temp=temp)
 
@@ -290,8 +292,8 @@ def train_timeseries(device, outdir, resdir, train=True):
         # Next Step prediction
         ###
 
-        # eval_data = eval_case(model, case_data, fields, autoreg=False, device=device)
-        # eval_data = eval_case(model, case_data, fields, autoreg=True, K=5, device=device)
+        # eval_data = march_case(model, case_data, transform, autoreg=False, device=device)
+        eval_data = march_case(model, case_data, transform, autoreg=True, K=5, device=device)
 
         # out_dir = os.path.join(resdir, f'case{case_num}')
         # am.visualize_timeseries_pyv(eval_data, out_dir, case_num, merge=True)
@@ -416,7 +418,7 @@ if __name__ == "__main__":
     # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True, num_workers=12)
     # vis_timeseries(resdir, merge=True)
-    train_timeseries(device, outdir, resdir, train=True)
+    train_timeseries(device, outdir, resdir, train=False)
 
     #===============#
     if DISTRIBUTED:
