@@ -48,7 +48,7 @@ def train_timeseries(cfg, device):
     LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
 
     case_dir = os.path.join(CASEDIR, cfg.name)
-    mode_file = os.path.join(case_dir, 'model.pt')
+    model_file = os.path.join(case_dir, 'model.pt')
 
     #=================#
     # DATA
@@ -60,11 +60,7 @@ def train_timeseries(cfg, device):
     dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform, num_workers=12)
     _data, data_ = am.split_timeseries_dataset(dataset, [0.8, 0.2])
 
-    for i in range(10):
-        print(len(dataset.case_range(i)))
-        pass
-
-    _data = dataset[dataset.case_range(0)]
+    _data = dataset[dataset.case_range(5)] # 3, 5, 6, 8, 9
     data_ = None
 
     #=================#
@@ -86,7 +82,8 @@ def train_timeseries(cfg, device):
     if cfg.train:
         kw = dict(
             Opt='AdamW', device=device, GNN=True, stats_every=5,
-            _batch_size=4, batch_size_=12, _batch_size_=12, # v100-32
+            _batch_size=1, batch_size_=4, _batch_size_=1, # v100-32
+            # _batch_size=4, batch_size_=12, _batch_size_=12, # v100-32
             # _batch_size=2, batch_size_=6, _batch_size_=6, # v100-16
             E=cfg.epochs, weight_decay=cfg.weight_decay,
         )
@@ -94,6 +91,7 @@ def train_timeseries(cfg, device):
         train_loop(model, _data, data_, **kw)
 
         if LOCAL_RANK==0:
+            print(f'Saving {model_file}')
             torch.save(model.to("cpu").state_dict(), model_file)
 
     #=================#
@@ -102,31 +100,28 @@ def train_timeseries(cfg, device):
 
     if LOCAL_RANK == 0:
 
-        model.eval()
+        print(f'Loading {model_file}')
         model_state = torch.load(model_file, weights_only=True, map_location='cpu')
+        model.eval()
         model.load_state_dict(model_state)
         model.to(device)
 
-        ###
-        # choose case
-        ###
+        # C = 1
+        # _cases = [_data[_data.case_range(c)] for c in range(C)]
+        # cases_ = [data_[data_.case_range(c)] for c in range(C)]
+        #
+        # for case in _cases:
+        #     pass
 
-        C = 1
-        _cases = [_data[_data.case_range(c)] for c in range(C)]
-        cases_ = [data_[data_.case_range(c)] for c in range(C)]
-
-        case_data = _cases[0]
+        # case_data = _cases[0]
         # case_data = cases_[2]
-
-        ###
-        # Next Step prediction
-        ###
+        case_data = _data
 
         eval_data = am.march_case(model, case_data, transform, autoreg=False, device=device)
         # eval_data = am.march_case(model, case_data, transform, autoreg=True, K=5, device=device)
 
-        out_dir = os.path.join(resdir, f'case{case_num}')
-        am.visualize_timeseries_pyv(eval_data, out_dir, case_num, merge=True)
+        out_dir = os.path.join(case_dir, f'case')
+        am.visualize_timeseries_pyv(eval_data, out_dir, merge=True)
 
     return
 

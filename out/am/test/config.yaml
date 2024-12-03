@@ -1,5 +1,5 @@
 disp: true
-epochs: 10
+epochs: 100
 name: test
 num_layers: 5
 seed: 123

@@ -175,9 +175,6 @@ cython_debug/
 # wandb
 wandb/
 
-# output directory
-out/
-
 # Datasets
 data/
 

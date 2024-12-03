@@ -40,7 +40,7 @@ def visualize_pyv(graph):
 
     return mesh
 
-def visualize_timeseries_pyv(dataset, out_dir, icase, merge=None, name=None):
+def visualize_timeseries_pyv(dataset, out_dir, icase=None, merge=None, name=None):
     N = len(dataset)
     if os.path.exists(out_dir):
         shutil.rmtree(out_dir)
@@ -72,7 +72,9 @@ def visualize_timeseries_pyv(dataset, out_dir, icase, merge=None, name=None):
 
     if name is None:
         name = 'merged' if merge else 'series'
-    pvd_file = os.path.join(out_dir, f'{name}{str(icase).zfill(2)}.pvd')
+    if icase is not None:
+        name = name + str(icase).zfill(2)
+    pvd_file = os.path.join(out_dir, f'{name}.pvd')
     write_pvd(pvd_file, N, 'data')
 
     return

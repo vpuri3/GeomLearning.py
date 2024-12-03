@@ -41,15 +41,14 @@ class MergedTimeseriesDataTransform:
 
         # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate)
         # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
-        # vmstr: [0, 5e3] Pascal (?)
-        # temp : Celcius [25, 300]
-        #
+        # vmstr: [0, ~5e3] Pascal (?)
+        # temp : Celcius [25, ~300]
         # time: [0, 1]
 
         self.pos_scale = torch.tensor([30., 30., 60.])
         self.disp_scale  = 1.
         self.vmstr_scale = 1000.
-        self.temp_scale  = 500. # TODO: adjust?
+        self.temp_scale  = 500.
 
         return
 
@@ -70,25 +69,23 @@ class MergedTimeseriesDataTransform:
         # mask
         if not last_step:
             zmax = md['zmax'][istep+1]
-            mask = graph.pos[:,2] <= (zmax + tol)
+            mask = graph.pos[:,2] <= (zmax + tol) # sharp interface
         else:
             zmax = md['zmax'][-1]
             mask = torch.full((N,), True)
 
         # position
-        pos = graph.pos / self.pos_scale
 
-        # edges
+        # disp
+        pos   = graph.pos   / self.pos_scale
+        disp  = graph.disp  / self.disp_scale
+        vmstr = graph.vmstr / self.vmstr_scale
+        temp  = graph.temp  / self.temp_scale
         edge_dxyz = graph.edge_dxyz / self.pos_scale
 
         # time
         t  = torch.full((N, 1), graph.metadata['t_val'])
         dt = torch.full((N, 1), graph.metadata['dt_val'])
-
-        # disp
-        disp  = graph.disp  / self.disp_scale
-        vmstr = graph.vmstr / self.vmstr_scale
-        temp  = graph.temp  / self.temp_scale
 
         # target fields
         if not last_step:
@@ -132,8 +129,8 @@ class MergedTimeseriesDataTransform:
 
         return pyg.data.Data(
             x=x, y=y, t=t, mask=mask,
-            edge_attr=edge_attr, edge_index=graph.edge_index,
-            disp=graph.disp[istep], vmstr=graph.vmstr[istep], temp=graph.temp[istep],
+            edge_attr=edge_attr, edge_index=graph.edge_index, elems=graph.elems,
+            disp=graph.disp[istep], vmstr=graph.vmstr[istep], temp=graph.temp[istep], pos=graph.pos,
         )
 
 #======================================================================#
