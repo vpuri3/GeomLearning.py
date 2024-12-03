@@ -1,14 +1,11 @@
 # 3rd party
 import torch
-import numpy as np
-import torch_geometric as pyg
-from tqdm import tqdm
-import pyvista as pv
 
-# builtin
 import os
+import yaml
 import shutil
-import argparse
+from jsonargparse import ArgumentParser, CLI
+from dataclasses import dataclass
 
 # local
 import am
@@ -19,6 +16,8 @@ DATADIR_BASE       = 'data/'
 DATADIR_RAW        = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_raw')
 DATADIR_TIMESERIES = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_timeseries')
 DATADIR_FINALTIME  = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_finaltime')
+
+CASEDIR = os.path.join('.', 'out', 'am')
 
 #======================================================================#
 def train_loop(model, _data, data_=None, E=100, lrs=None, nepochs=None, **kw):
@@ -44,209 +43,39 @@ def train_loop(model, _data, data_=None, E=100, lrs=None, nepochs=None, **kw):
     return model
 
 #======================================================================#
-class MergedTimeseriesProcessor:
-    def __init__(self, disp=True, vmstr=True, temp=True):
-
-        self.disp  = disp
-        self.vmstr = vmstr
-        self.temp  = temp
-
-        # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate)
-        # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
-        # vmstr: [0, 5e3] Pascal (?)
-        # temp : Celcius [25, 300]
-        #
-        # time: [0, 1]
-
-        self.pos_scale = torch.tensor([30., 30., 60.])
-        self.disp_scale  = 1.
-        self.vmstr_scale = 1000.
-        self.temp_scale  = 500. # TODO: adjust?
-
-        return
-
-    def __call__(self, graph, tol=1e-4):
-        N  = graph.pos.size(0)
-        md = graph.metadata
-        istep  = md['time_step']
-        nsteps = md['time_steps']
-        last_step = (istep + 1) == nsteps
-
-        # TODO:
-        #    dz = zmax[istep+1] - zmax[istep]
-        #
-        # use dz to decide the interface width such that
-        # interface fully encompasses one layer and ends at the next.
-        # input to GNN should not have sharp discontinuity
-
-        # mask
-        if not last_step:
-            zmax = md['zmax'][istep+1]
-            mask = graph.pos[:,2] <= (zmax + tol)
-        else:
-            zmax = md['zmax'][-1]
-            mask = torch.full((N,), True)
-
-        # position
-        pos = graph.pos / self.pos_scale
-
-        # edges
-        edge_dxyz = graph.edge_dxyz / self.pos_scale
-
-        # time
-        t  = torch.full((N, 1), graph.metadata['t_val'])
-        dt = torch.full((N, 1), graph.metadata['dt_val'])
-
-        # disp
-        disp  = graph.disp  / self.disp_scale
-        vmstr = graph.vmstr / self.vmstr_scale
-        temp  = graph.temp  / self.temp_scale
-
-        # target fields
-        if not last_step:
-            disp_z   = disp[:, :, 2].unsqueeze(-1)
-            disp_in  = disp_z[istep]
-            disp_out = (disp_z[istep+1] - disp_z[istep]) #/ md['dt_val']
-
-            vmstr_in  = vmstr[istep]
-            vmstr_out = (vmstr[istep+1] - vmstr[istep])
-
-        else:
-            disp_in  = torch.zeros((N, 1))
-            disp_out = torch.zeros((N, 1))
-
-            vmstr_in  = torch.zeros((N, 1))
-            vmstr_out = torch.zeros((N, 1))
-
-            temp_in  = torch.zeros((N, 1))
-            temp_out = torch.zeros((N, 1))
-
-        # features / labels
-        xs = [pos, t, dt,]
-        ys = []
-
-        if self.disp:
-            xs.append(disp_in)
-            ys.append(disp_out)
-        if self.vmstr:
-            xs.append(vmstr_in)
-            ys.append(vmstr_out)
-        if self.temp:
-            xs.append(temp_in)
-            ys.append(temp_out)
-
-        assert len(ys) > 0, f"At least one of disp, vmstr, temp must be True. Got {self.disp}, {self.vmstr}, {self.temp}."
-
-        x = torch.cat(xs, dim=-1)
-        y = torch.cat(ys, dim=-1)
-
-        edge_attr = edge_dxyz
-
-        return pyg.data.Data(
-            x=x, y=y, t=t, mask=mask,
-            edge_attr=edge_attr, edge_index=graph.edge_index,
-            disp=graph.disp[istep], vmstr=graph.vmstr[istep], temp=graph.temp[istep],
-        )
-
-#======================================================================#
-from torch import nn
-
-@torch.no_grad()
-def march_case(model, case_data, transform, autoreg=True, K=1, verbose=True, device=None):
-
-    if device is None:
-        device = mlutils.select_device(device)
-
-    model.to(device)
-
-    scale = []
-    scale = [*scale, transform.disp_scale ] if transform.disp  else scale
-    scale = [*scale, transform.vmstr_scale] if transform.vmstr else scale
-    scale = [*scale, transform.temp_scale ] if transform.temp  else scale
-    scale = torch.tensor(scale)
-
-    nf = transform.disp + transform.vmstr + transform.temp 
-    assert nf == len(scale)
-
-    def makefields(data):
-        xs = []
-        xs = [*xs, data.disp[:,2].view(-1,1)] if transform.disp  else xs
-        xs = [*xs, data.vmstr.view(-1,1)    ] if transform.vmstr else xs
-        xs = [*xs, data.temp.view(-1,1)     ] if transform.temp  else xs
-
-        return torch.cat(xs, dim=-1) / scale.to(xs[0].device)
-
-    eval_data = []
-    for data in case_data:
-        data = data.clone()
-        data.y = makefields(data)
-        data.e = torch.zeros_like(data.y)
-        eval_data.append(data)
-
-    for k in range(K, len(eval_data)):
-        _data = eval_data[k-1].to(device) # given (k-1)-th step
-        data  = eval_data[k  ].to(device) # predict k-th step
-
-        if autoreg:
-            _data = _data.clone()
-            _data.x[:, -nf:] = _data.y[:, -nf:]
-
-        target = makefields(data)
-
-        data.y = model(_data) + _data.x[:, -nf:]
-        data.e = data.y - target
-
-        if verbose:
-            l1 = nn.L1Loss()( data.e, 0 * data.e).item()
-            l2 = nn.MSELoss()(data.e, 0 * data.e).item()
-            r2 = mlutils.r2(data.y, target)
-            print(f'Step {k}: {l1, l2, r2}')
-
-    return eval_data
-
-#======================================================================#
-def train_timeseries(device, outdir, resdir, train=True):
+def train_timeseries(cfg, device):
     DISTRIBUTED = mlutils.is_torchrun()
     LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
 
-    outname = os.path.join(outdir, "gnn")
-    resname = os.path.join(resdir, "gnn")
-    modelfile  = outname + ".pt"
-
-    vis_dir = os.path.join(resdir, 'gnn_timeseries')
-    os.makedirs(vis_dir, exist_ok=True)
+    case_dir = os.path.join(CASEDIR, cfg.name)
+    mode_file = os.path.join(case_dir, 'model.pt')
 
     #=================#
     # DATA
     #=================#
 
-    disp = True
-    vmstr = False
-    temp = False
-    modelfile = outname + "_disp" + ".pt"
-
-    # disp = False
-    # vmstr = True
-    # temp = False
-    # modelfile = outname + "_vmstr" + ".pt"
-
-    fields = dict(disp=disp, vmstr=vmstr, temp=temp)
-
-    transform = MergedTimeseriesProcessor(**fields)
+    fields = dict(disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp)
+    transform = am.MergedTimeseriesDataTransform(**fields)
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
     dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform, num_workers=12)
+    _data, data_ = am.split_timeseries_dataset(dataset, [0.8, 0.2])
 
-    _data, data_ = am.split_timeseries_dataset(dataset, [0.8, 0.2]) # RIGHT
+    for i in range(10):
+        print(len(dataset.case_range(i)))
+        pass
+
+    _data = dataset[dataset.case_range(0)]
+    data_ = None
 
     #=================#
     # MODEL
     #=================#
 
-    ci = 5 + disp + vmstr + temp
+    ci = 5 + cfg.disp + cfg.vmstr + cfg.temp
     ce = 3
-    co = disp + vmstr + temp
-    width = 64
-    num_layers = 5
+    co = cfg.disp + cfg.vmstr + cfg.temp
+    width = cfg.width
+    num_layers = cfg.num_layers
 
     model = am.MaskedMGN(ci, ce, co, width, num_layers)
 
@@ -254,17 +83,18 @@ def train_timeseries(device, outdir, resdir, train=True):
     # TRAIN
     #=================#
 
-    if train:
+    if cfg.train:
         kw = dict(
-            device=device, GNN=True, stats_every=5,
-            _batch_size=4, batch_size_=12, _batch_size_=12,
-            E=100, weight_decay=0e-5, Opt='AdamW',
+            Opt='AdamW', device=device, GNN=True, stats_every=5,
+            _batch_size=4, batch_size_=12, _batch_size_=12, # v100-32
+            # _batch_size=2, batch_size_=6, _batch_size_=6, # v100-16
+            E=cfg.epochs, weight_decay=cfg.weight_decay,
         )
 
         train_loop(model, _data, data_, **kw)
 
         if LOCAL_RANK==0:
-            torch.save(model.to("cpu").state_dict(), modelfile)
+            torch.save(model.to("cpu").state_dict(), model_file)
 
     #=================#
     # ANALYSIS
@@ -273,7 +103,7 @@ def train_timeseries(device, outdir, resdir, train=True):
     if LOCAL_RANK == 0:
 
         model.eval()
-        model_state = torch.load(modelfile, weights_only=True, map_location='cpu')
+        model_state = torch.load(model_file, weights_only=True, map_location='cpu')
         model.load_state_dict(model_state)
         model.to(device)
 
@@ -281,7 +111,7 @@ def train_timeseries(device, outdir, resdir, train=True):
         # choose case
         ###
 
-        C = 5
+        C = 1
         _cases = [_data[_data.case_range(c)] for c in range(C)]
         cases_ = [data_[data_.case_range(c)] for c in range(C)]
 
@@ -292,58 +122,21 @@ def train_timeseries(device, outdir, resdir, train=True):
         # Next Step prediction
         ###
 
-        # eval_data = march_case(model, case_data, transform, autoreg=False, device=device)
-        eval_data = march_case(model, case_data, transform, autoreg=True, K=5, device=device)
+        eval_data = am.march_case(model, case_data, transform, autoreg=False, device=device)
+        # eval_data = am.march_case(model, case_data, transform, autoreg=True, K=5, device=device)
 
-        # out_dir = os.path.join(resdir, f'case{case_num}')
-        # am.visualize_timeseries_pyv(eval_data, out_dir, case_num, merge=True)
+        out_dir = os.path.join(resdir, f'case{case_num}')
+        am.visualize_timeseries_pyv(eval_data, out_dir, case_num, merge=True)
 
     return
 
 #======================================================================#
 def train_finaltime(device, outdir, resdir, train=True):
-    DISTRIBUTED = mlutils.is_torchrun()
-    LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
-
-    outname = os.path.join(outdir, "gnn")
-    resname = os.path.join(resdir, "gnn")
-    modelfile  = outname + ".pt"
-
-    vis_dir = os.path.join(resdir, 'gnn_timeseries')
-    os.makedirs(vis_dir, exist_ok=True)
-
-    #=================#
-    # DATA
-    #=================#
-
-    disp = True
-    vmstr = False
-
-    transform = 0 # MergedTimeseriesProcessor(disp, vmstr)
-    DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
-    dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform, num_workers=12)
-
-    _data, data_ = am.split_timeseries_dataset(dataset, [0.8, 0.2]) # RIGHT
-
-    #=================#
-    # MODEL
-    #=================#
-
-    ci = 5 + disp + vmstr
-    ce = 3
-    co = disp + vmstr
-    width = 64
-    num_layers = 5
-
-    model = am.MaskedMGN(ci, ce, co, width, num_layers)
-
-    #=================#
-    # TRAIN
-    #=================#
-
     return
 
 #======================================================================#
+from tqdm import tqdm
+
 def vis_timeseries(resdir, merge=None):
     DATADIR = os.path.join(DATADIR_TIMESERIES, r'data_0-100')
     dataset = am.TimeseriesDataset(DATADIR, merge=merge)
@@ -382,35 +175,69 @@ def test_timeseries_extraction():
     return
 
 #======================================================================#
+@dataclass
+class Config:
+    '''
+    Train grah neural networks on time series AM data
+    '''
+
+    # case configuration
+    name: str = 'test'
+    seed: int = 123
+    train: bool = False
+
+    # fields
+    disp: bool  = True
+    vmstr: bool = False
+    temp: bool  = False
+
+    # model
+    width: int = 64
+    num_layers: int = 5
+
+    # training arguments
+    epochs: int = 200
+    weight_decay: float = 0e-4
+
 if __name__ == "__main__":
 
-    mlutils.set_seed(123)
-    parser = argparse.ArgumentParser(description = 'AM')
-    args = parser.parse_args()
+    #===============#
+    cfg = CLI(Config, as_positional=False)
+    #===============#
 
     DISTRIBUTED = mlutils.is_torchrun()
     LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
+    device = mlutils.select_device()
 
-    if DISTRIBUTED:
-        mlutils.dist_setup()
-        device = LOCAL_RANK
-    else:
-        device = mlutils.select_device()
-
-    outdir = "./out/am/"
-    resdir = "./res/am/"
+    #===============#
+    mlutils.set_seed(cfg.seed)
+    #===============#
 
     if LOCAL_RANK == 0:
-        if not os.path.exists(outdir):
-            os.mkdir(outdir)
-        if not os.path.exists(resdir):
-            os.mkdir(resdir)
+        case_dir = os.path.join(CASEDIR, cfg.name)
+
+        if cfg.train:
+            if os.path.exists(case_dir):
+                ifrm = input(f'Remove case at {case_dir}? [Y/n]')
+                if not 'n' in ifrm:
+                    print(f'Removing {case_dir}')
+                    shutil.rmtree(case_dir)
+                else:
+                    exit()
+
+            os.makedirs(case_dir)
+            config_file = os.path.join(case_dir, 'config.yaml')
+            with open(config_file, 'w') as f:
+                yaml.safe_dump(vars(cfg), f)
+
+        else:
+            assert os.path.exists(case_dir)
 
     #===============#
     # Final time data
     #===============#
     # am.extract_zips(DATADIR_RAW, DATADIR_FINALTIME)
-    # train_finaltime(device, outdir, resdir, train=True)
+    # train_finaltime(cfg, device)
 
     #===============#
     # Timeseries data
@@ -418,11 +245,10 @@ if __name__ == "__main__":
     # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True, num_workers=12)
     # vis_timeseries(resdir, merge=True)
-    train_timeseries(device, outdir, resdir, train=False)
+    train_timeseries(cfg, device)
 
     #===============#
-    if DISTRIBUTED:
-        mlutils.dist_finalize()
-
-    pass
+    mlutils.dist_finalize()
+    #===============#
+    exit()
 #

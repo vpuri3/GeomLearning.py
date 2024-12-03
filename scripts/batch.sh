@@ -4,7 +4,7 @@ H=${1}
 N=${2}
 
 # interact -t ${H}:00:00 --gres=gpu:v100-32:${N} -N 1 -p GPU
-# salloc -J Interact --gres=
+# salloc -J Interact --gres=gpu:v100-32:8 -N 1 
 
 # interact -t ${H}:00:00 --gres=gpu:v100-32:${N} -p GPU-shared
 # salloc -J Interact --gres=gpu:v100-32:$(N) --time=$(H):00:00 --partition=GPU-shared

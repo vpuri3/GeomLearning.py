@@ -56,20 +56,27 @@ def set_num_threads(threads=None):
 
     return
 
+#=======================================================================#
 def select_device(device=None, verbose=False):
-    if device is None:
-        device = (
-            "cuda" if torch.cuda.is_available()
-            else "mps" if torch.backends.mps.is_available()
-            else "cpu"
-        )
-    # TODO: check if device is available
+    if device is not None:
+        return device
+
+    if is_torchrun():
+        if not dist.is_initialized():
+            dist_setup()
+        return int(os.environ['LOCAL_RANK'])
+
+    device = (
+        "cuda" if torch.cuda.is_available()
+        else "mps" if torch.backends.mps.is_available()
+        else "cpu"
+    )
+
     if verbose:
-        print(f"using device {device}")
+        print(f'using device {device}.')
 
     return device
 
-#=======================================================================#
 def dist_backend():
     if dist.is_nccl_available():
         return 'nccl'
@@ -95,20 +102,21 @@ def dist_setup(rank=None, world_size=None):
 
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         dist.init_process_group(backend=backend)
-
     else:
-        assert rank is not None
-        assert world_size is not None
-
-        os.environ["MASTER_ADDR"] = "localhost"
-        os.environ["MASTER_PORT"] = "29500"
-        torch.cuda.set_device(rank)
-        dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+        pass
+        # assert rank is not None
+        # assert world_size is not None
+        #
+        # os.environ["MASTER_ADDR"] = "localhost"
+        # os.environ["MASTER_PORT"] = "29500"
+        # torch.cuda.set_device(rank)
+        # dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
 
     return
 
 def dist_finalize():
-    dist.destroy_process_group()
+    if dist.is_initialized():
+        dist.destroy_process_group()
     return
 
 #=======================================================================#

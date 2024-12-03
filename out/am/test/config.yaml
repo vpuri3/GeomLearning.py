@@ -1,0 +1,10 @@
+disp: true
+epochs: 10
+name: test
+num_layers: 5
+seed: 123
+temp: false
+train: true
+vmstr: false
+weight_decay: 0.0
+width: 64

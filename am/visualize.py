@@ -33,6 +33,10 @@ def visualize_pyv(graph):
         mesh.point_data['source'] = graph.x.numpy(force=True)
     if graph.y is not None:
         mesh.point_data['target'] = graph.y.numpy(force=True)
+    if graph.e is not None:
+        mesh.point_data['error'] = graph.e.numpy(force=True)
+    if graph.mask is not None:
+        mesh.point_data['mask'] = graph.mask.numpy(force=True)
 
     return mesh
 
@@ -54,12 +58,12 @@ def visualize_timeseries_pyv(dataset, out_dir, icase, merge=None, name=None):
             mesh.point_data['error'] = graph.e.numpy(force=True)
         if graph.mask is not None:
             mesh.point_data['mask'] = graph.mask.numpy(force=True)
-        if merge:
+        if graph.disp.ndim == 3: # merge
             istep = graph.metadata['time_step']
             mesh.point_data['disp'] = graph.disp[istep].numpy(force=True)
             mesh.point_data['temp'] = graph.temp[istep].numpy(force=True)
             mesh.point_data['vmstr'] = graph.vmstr[istep].numpy(force=True)
-        else:
+        else: # == 2
             mesh.point_data['disp'] = graph.disp.numpy(force=True)
             mesh.point_data['temp'] = graph.temp.numpy(force=True)
             mesh.point_data['vmstr'] = graph.vmstr.numpy(force=True)

@@ -14,13 +14,127 @@ from .utils import get_zmax_list
 from .interpolate import interpolate_idw, make_finest_mesh
 
 __all__ = [
-    'FinaltimeDataset',
+
+    # timeseries
+    'MergedTimeseriesDataTransform',
     'TimeseriesDataset',
     'split_timeseries_dataset',
+
+    # final time
+    'FinaltimeDataset',
+
+    # utilities
     'makegraph',
     'timeseries_dataset',
     'merge_timeseries',
 ]
+
+#======================================================================#
+# TIMESERIES DATASET
+#======================================================================#
+class MergedTimeseriesDataTransform:
+    def __init__(self, disp=True, vmstr=True, temp=True):
+
+        self.disp  = disp
+        self.vmstr = vmstr
+        self.temp  = temp
+
+        # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate)
+        # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
+        # vmstr: [0, 5e3] Pascal (?)
+        # temp : Celcius [25, 300]
+        #
+        # time: [0, 1]
+
+        self.pos_scale = torch.tensor([30., 30., 60.])
+        self.disp_scale  = 1.
+        self.vmstr_scale = 1000.
+        self.temp_scale  = 500. # TODO: adjust?
+
+        return
+
+    def __call__(self, graph, tol=1e-4):
+        N  = graph.pos.size(0)
+        md = graph.metadata
+        istep  = md['time_step']
+        nsteps = md['time_steps']
+        last_step = (istep + 1) == nsteps
+
+        # TODO:
+        #    dz = zmax[istep+1] - zmax[istep]
+        #
+        # use dz to decide the interface width such that
+        # interface fully encompasses one layer and ends at the next.
+        # input to GNN should not have sharp discontinuity
+
+        # mask
+        if not last_step:
+            zmax = md['zmax'][istep+1]
+            mask = graph.pos[:,2] <= (zmax + tol)
+        else:
+            zmax = md['zmax'][-1]
+            mask = torch.full((N,), True)
+
+        # position
+        pos = graph.pos / self.pos_scale
+
+        # edges
+        edge_dxyz = graph.edge_dxyz / self.pos_scale
+
+        # time
+        t  = torch.full((N, 1), graph.metadata['t_val'])
+        dt = torch.full((N, 1), graph.metadata['dt_val'])
+
+        # disp
+        disp  = graph.disp  / self.disp_scale
+        vmstr = graph.vmstr / self.vmstr_scale
+        temp  = graph.temp  / self.temp_scale
+
+        # target fields
+        if not last_step:
+            disp_z   = disp[:, :, 2].unsqueeze(-1)
+            disp_in  = disp_z[istep]
+            disp_out = (disp_z[istep+1] - disp_z[istep]) #/ md['dt_val']
+
+            vmstr_in  = vmstr[istep]
+            vmstr_out = (vmstr[istep+1] - vmstr[istep])
+
+        else:
+            disp_in  = torch.zeros((N, 1))
+            disp_out = torch.zeros((N, 1))
+
+            vmstr_in  = torch.zeros((N, 1))
+            vmstr_out = torch.zeros((N, 1))
+
+            temp_in  = torch.zeros((N, 1))
+            temp_out = torch.zeros((N, 1))
+
+        # features / labels
+        xs = [pos, t, dt,]
+        ys = []
+
+        if self.disp:
+            xs.append(disp_in)
+            ys.append(disp_out)
+        if self.vmstr:
+            xs.append(vmstr_in)
+            ys.append(vmstr_out)
+        if self.temp:
+            xs.append(temp_in)
+            ys.append(temp_out)
+
+        assert len(ys) > 0, f"At least one of disp, vmstr, temp must be True. Got {self.disp}, {self.vmstr}, {self.temp}."
+
+        x = torch.cat(xs, dim=-1)
+        y = torch.cat(ys, dim=-1)
+
+        edge_attr = edge_dxyz
+
+        return pyg.data.Data(
+            x=x, y=y, t=t, mask=mask,
+            edge_attr=edge_attr, edge_index=graph.edge_index,
+            disp=graph.disp[istep], vmstr=graph.vmstr[istep], temp=graph.temp[istep],
+        )
 
 #======================================================================#
 class TimeseriesDataset(pyg.data.Dataset):
@@ -156,6 +270,8 @@ def split_timeseries_dataset(dataset, split):
     return subsets
 
 #======================================================================#
+# FINALTIME DATASET
+#======================================================================#
 class FinaltimeDataset(pyg.data.Dataset):
     def __init__(
         self, root, transform=None, pre_transform=None,
@@ -194,6 +310,9 @@ class FinaltimeDataset(pyg.data.Dataset):
         return torch.load(path, weights_only=False)
 
 #======================================================================#
+# DATASET UTILITIES
+#======================================================================#
+
 def makegraph(data, case_name=None, time_steps=None):
     '''
     Arguments:
