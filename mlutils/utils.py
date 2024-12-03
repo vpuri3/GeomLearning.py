@@ -2,7 +2,6 @@
 import torch
 from torch import nn
 import torch.distributed as dist
-import torch_geometric as pyg
 
 import numpy as np
 
@@ -193,6 +192,8 @@ def eval_gnn(
     data, model: nn.Module, device=None,
     batch_size=1, verbose=False,
 ):
+    import torch_geometric as pyg
+
     device = select_device(device, verbose=verbose)
     loader = pyg.loader.DataLoader(data, shuffle=False, batch_size=batch_size)
     model  = model.to(device)
