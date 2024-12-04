@@ -58,10 +58,14 @@ def train_timeseries(cfg, device):
     transform = am.MergedTimeseriesDataTransform(**fields)
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
     dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform, num_workers=12)
-    _data, data_ = am.split_timeseries_dataset(dataset, [0.8, 0.2])
+    _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
 
-    _data = dataset[dataset.case_range(5)] # 3, 5, 6, 8, 9
-    data_ = None
+    # # 3 (worst), 5, 6, 8, 9
+    # _data, = am.split_timeseries_dataset(dataset, indices=[[3,5,6,8,9]])
+    # data_ = None
+
+    N = 20
+    _data, data_ = am.split_timeseries_dataset(dataset, indices=[range(0,N), range(N,2*N)])
 
     #=================#
     # MODEL
@@ -72,8 +76,10 @@ def train_timeseries(cfg, device):
     co = cfg.disp + cfg.vmstr + cfg.temp
     width = cfg.width
     num_layers = cfg.num_layers
+    mask = cfg.mask
+    blend = cfg.blend
 
-    model = am.MaskedMGN(ci, ce, co, width, num_layers)
+    model = am.MaskedMGN(ci, ce, co, width, num_layers, mask=mask)
 
     #=================#
     # TRAIN
@@ -82,8 +88,8 @@ def train_timeseries(cfg, device):
     if cfg.train:
         kw = dict(
             Opt='AdamW', device=device, GNN=True, stats_every=5,
-            _batch_size=1, batch_size_=4, _batch_size_=1, # v100-32
-            # _batch_size=4, batch_size_=12, _batch_size_=12, # v100-32
+            # _batch_size=1, batch_size_=4, _batch_size_=1, # baby expr
+            _batch_size=4, batch_size_=12, _batch_size_=12, # v100-32
             # _batch_size=2, batch_size_=6, _batch_size_=6, # v100-16
             E=cfg.epochs, weight_decay=cfg.weight_decay,
         )
@@ -106,22 +112,41 @@ def train_timeseries(cfg, device):
         model.load_state_dict(model_state)
         model.to(device)
 
-        # C = 1
-        # _cases = [_data[_data.case_range(c)] for c in range(C)]
-        # cases_ = [data_[data_.case_range(c)] for c in range(C)]
+        C = cfg.eval_cases
+        K = cfg.autoreg_start
+
+        _cases = [_data[_data.case_range(c)] for c in range(C)]
+        cases_ = [data_[data_.case_range(c)] for c in range(C)] if data_ is not None else None
+
+        for (cases, casetype) in zip([_cases, cases_], ['train', 'test']):
+            if cases is None:
+                print(f'No {casetype} data')
+                continue
+            for (i, case) in enumerate(cases):
+                ii = str(i).zfill(2)
+                case_data = cases[i]
+        
+                for (autoreg, ext) in zip([True, False], ['AR', 'NR']):
+                    eval_data, l2s, r2s = am.march_case(
+                        model, case_data, transform,
+                        autoreg=autoreg, device=device, verbose=False,
+                    )
+
+                    out_dir = os.path.join(case_dir, f'{casetype}{ii}-{ext}')
+                    am.visualize_timeseries_pyv(eval_data, out_dir, merge=True)
+
+                    out_file = os.path.join(out_dir, 'stats.txt')
+                    with open(out_file, 'w') as f:
+                        f.write('Step\tMSE\tR-Square\n')
+                        for (k, (l2,r2)) in enumerate(zip(l2s, r2s)):
+                            f.write(f'{k}\t{l2s[k]}\t{r2s[k]}\n')
+
+        # case_data = _data
+        # eval_data, l2s, r2s = am.march_case(model, case_data, transform, autoreg=False, device=device)
+        # # eval_data, l2s, r2s = am.march_case(model, case_data, transform, autoreg=True, K=5, device=device)
         #
-        # for case in _cases:
-        #     pass
-
-        # case_data = _cases[0]
-        # case_data = cases_[2]
-        case_data = _data
-
-        eval_data = am.march_case(model, case_data, transform, autoreg=False, device=device)
-        # eval_data = am.march_case(model, case_data, transform, autoreg=True, K=5, device=device)
-
-        out_dir = os.path.join(case_dir, f'case')
-        am.visualize_timeseries_pyv(eval_data, out_dir, merge=True)
+        # out_dir = os.path.join(case_dir, f'case')
+        # am.visualize_timeseries_pyv(eval_data, out_dir, merge=True)
 
     return
 
@@ -190,9 +215,16 @@ class Config:
     width: int = 64
     num_layers: int = 5
 
+    mask: bool = True
+    blend: bool = True
+
     # training arguments
     epochs: int = 200
     weight_decay: float = 0e-4
+
+    # eval arguments
+    eval_cases: int = 10
+    autoreg_start: int = 5
 
 if __name__ == "__main__":
 

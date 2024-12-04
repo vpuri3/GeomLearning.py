@@ -53,6 +53,7 @@ class MergedTimeseriesDataTransform:
         return
 
     def __call__(self, graph, tol=1e-4):
+
         N  = graph.pos.size(0)
         md = graph.metadata
         istep  = md['time_step']
@@ -65,6 +66,15 @@ class MergedTimeseriesDataTransform:
         # use dz to decide the interface width such that
         # interface fully encompasses one layer and ends at the next.
         # input to GNN should not have sharp discontinuity
+
+        #
+        # OBSERVATION:
+        #
+        # large errors concentrated in regions with bottleneck
+        # like a contracting / expanding nozzle
+        #
+        # what to do about it?
+        #
 
         # mask
         if not last_step:
@@ -248,20 +258,23 @@ class TimeseriesDataset(pyg.data.Dataset):
 
         return graph
 
-def split_timeseries_dataset(dataset, split):
-
+def split_timeseries_dataset(dataset, split=None, indices=None):
     num_cases = len(dataset.case_files)
-    subset_indices = torch.utils.data.random_split(range(num_cases), split)
+
+    if indices is None:
+        indices = torch.utils.data.random_split(range(num_cases), split)
+
+    num_split = len(indices)
 
     # deepcopy
-    subsets = [copy.deepcopy(dataset) for _ in split]
+    subsets = [copy.deepcopy(dataset) for _ in range(num_split)]
 
-    for s in range(len(split)):
-        subset  = subsets[s]
-        indices = list(subset_indices[s])
+    for s in range(num_split):
+        idxs   = list(indices[s])
+        subset = subsets[s]
 
-        subset.case_files = [subset.case_files[index] for index in indices]
-        subset.time_steps = torch.tensor([subset.time_steps[index].item() for index in indices])
+        subset.case_files = [subset.case_files[idx] for idx in idxs]
+        subset.time_steps = torch.tensor([subset.time_steps[idx].item() for idx in idxs])
         subset.time_steps_cum = subset.time_steps.cumsum(0)
 
     return subsets

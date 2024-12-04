@@ -14,9 +14,9 @@ __all__ = [
 
 #======================================================================#
 class MaskedMGN(nn.Module):
-    def __init__(self, ci, ce, co, w, num_layers, apply_mask=True):
+    def __init__(self, ci, ce, co, w, num_layers, mask=True):
         super().__init__()
-        self.apply_mask = apply_mask
+        self.mask = mask
         self.gnn = MeshGraphNet(ci, ce, co, w, num_layers)
 
     @torch.no_grad()
@@ -31,12 +31,14 @@ class MaskedMGN(nn.Module):
         )
 
     def forward(self, graph, tol=1e-6):
-        subgraph = self.reduce_graph(graph)
-        x = self.gnn(subgraph)
 
-        if self.apply_mask:
+        if self.mask:
             mask = graph.mask.view(-1, 1)
+            subgraph = self.reduce_graph(graph)
+            x = self.gnn(subgraph)
             x = x * mask
+        else:
+            x = self.gnn(graph)
 
         last_step_mask = (graph.t <= 1. - tol).view(-1, 1)
         x = x * last_step_mask

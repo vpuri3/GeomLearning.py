@@ -38,11 +38,16 @@ def march_case(model, case_data, transform,
         return torch.cat(xs, dim=-1) / scale.to(xs[0].device)
 
     eval_data = []
+    l2s = []
+    r2s = []
+
     for data in case_data:
         data = data.clone()
         data.y = makefields(data)
         data.e = torch.zeros_like(data.y)
         eval_data.append(data)
+        l2s.append(0.)
+        r2s.append(0.)
 
     for k in range(K, len(eval_data)):
         _data = eval_data[k-1].to(device) # given (k-1)-th step
@@ -57,12 +62,12 @@ def march_case(model, case_data, transform,
         data.y = model(_data) + _data.x[:, -nf:]
         data.e = data.y - target
 
-        if verbose:
-            l1 = nn.L1Loss()( data.e, 0 * data.e).item()
-            l2 = nn.MSELoss()(data.e, 0 * data.e).item()
-            r2 = mlutils.r2(data.y, target)
-            print(f'Step {k}: {l1, l2, r2}')
+        l2s[k] = nn.MSELoss()(data.e, 0 * data.e).item()
+        r2s[k] = mlutils.r2(data.y, target)
 
-    return eval_data
+        if verbose:
+            print(f'Step {k}: {l2s[k], r2s[k]}')
+
+    return eval_data, l2s, r2s
 
 #======================================================================#
