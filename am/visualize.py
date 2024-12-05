@@ -58,6 +58,8 @@ def visualize_timeseries_pyv(dataset, out_dir, icase=None, merge=None, name=None
             mesh.point_data['error'] = graph.e.numpy(force=True)
         if graph.mask is not None:
             mesh.point_data['mask'] = graph.mask.numpy(force=True)
+        if graph.mask_bulk is not None:
+            mesh.point_data['mask_bulk'] = graph.mask_bulk.numpy(force=True)
         if graph.disp.ndim == 3: # merge
             istep = graph.metadata['time_step']
             mesh.point_data['disp'] = graph.disp[istep].numpy(force=True)

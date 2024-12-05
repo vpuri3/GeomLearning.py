@@ -1,6 +1,8 @@
 import torch
 import torch_geometric as pyg
 import torch.multiprocessing as mp
+
+import scipy
 import numpy as np
 from tqdm import tqdm
 
@@ -33,11 +35,18 @@ __all__ = [
 # TIMESERIES DATASET
 #======================================================================#
 class MergedTimeseriesDataTransform:
-    def __init__(self, disp=True, vmstr=True, temp=True):
+    def __init__(
+        self,
+        disp=True, vmstr=True, temp=True, # fields
+        interpolate=True,
+    ):
 
+        # fields
         self.disp  = disp
         self.vmstr = vmstr
         self.temp  = temp
+
+        self.interpolate = interpolate
 
         # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate)
         # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
@@ -50,7 +59,60 @@ class MergedTimeseriesDataTransform:
         self.vmstr_scale = 1000.
         self.temp_scale  = 500.
 
+        # makefields
+        self.nfields = disp + vmstr + temp 
+
+        scale = []
+        scale = [*scale, self.disp_scale ] if self.disp  else scale
+        scale = [*scale, self.vmstr_scale] if self.vmstr else scale
+        scale = [*scale, self.temp_scale ] if self.temp  else scale
+        self.scale = torch.tensor(scale)
+
+        assert self.nfields == len(scale)
+
         return
+
+    def makefields(self, data):
+        '''
+        used in am.time_march
+        '''
+
+        xs = []
+        xs = [*xs, data.disp[:,2].view(-1,1)] if self.disp  else xs
+        xs = [*xs, data.vmstr.view(-1,1)    ] if self.vmstr else xs
+        xs = [*xs, data.temp.view(-1,1)     ] if self.temp  else xs
+
+        return torch.cat(xs, dim=-1) / self.scale.to(xs[0].device)
+
+    @torch.no_grad()
+    def interpolate_up(self, u: torch.tensor, graph, istep: int, tol=1e-4):
+        '''
+        fill `u` in between `istep` and `istep+1`
+        '''
+
+        # ensure not final step
+        assert istep + 1 != graph.metadata['time_steps']
+
+        z = graph.pos[:,2].view(-1)
+        zmax = graph.metadata['zmax']
+        z0 = zmax[istep-1] if istep != 0 else 0
+        z1 = zmax[istep]
+        z2 = zmax[istep+1]
+
+        idx0 = (z0 - tol <= z) * (z <= z1 + tol) # [istep-1, istep]
+        idx1 = (z1 + tol <  z) * (z <= z2 + tol) # (istep, istep+1]
+
+        out = scipy.interpolate.griddata(
+            graph.pos[idx0].numpy(force=True),
+            u[idx0].numpy(force=True),
+            graph.pos[idx1].numpy(force=True),
+            method='nearest',
+        )
+
+        u.clone()
+        u[idx1, :] = torch.tensor(out, dtype=torch.float, device=u.device)
+
+        return u
 
     def __call__(self, graph, tol=1e-4):
 
@@ -60,6 +122,7 @@ class MergedTimeseriesDataTransform:
         nsteps = md['time_steps']
         last_step = (istep + 1) == nsteps
 
+        #
         # TODO:
         #    dz = zmax[istep+1] - zmax[istep]
         #
@@ -76,17 +139,27 @@ class MergedTimeseriesDataTransform:
         # what to do about it?
         #
 
-        # mask
+        # interface mask
         if not last_step:
             zmax = md['zmax'][istep+1]
-            mask = graph.pos[:,2] <= (zmax + tol) # sharp interface
+            mask = graph.pos[:,2] <= (zmax + tol)
         else:
             zmax = md['zmax'][-1]
             mask = torch.full((N,), True)
 
-        # position
+        # bulk mask
+        # dz = 1
+        # fmin = 0.1
+        # zi = md['zmax'][istep]
+        # zz = (graph.pos[:, 2] - zi + 20 * dz) / (self.pos_scale[2] / 10)
+        # mask_bulk = fmin + (1 + torch.tanh(zz)) * (1 - fmin) / 2
 
-        # disp
+        fmin = 0.1
+        zi = md['zmax'][istep]
+        zz = (graph.pos[:,2] - zi + 10) / (self.pos_scale[2] * 10)
+        mask_bulk = fmin + (1 + torch.tanh(zz)) * (1 - fmin) / 2
+
+        # normalize fields
         pos   = graph.pos   / self.pos_scale
         disp  = graph.disp  / self.disp_scale
         vmstr = graph.vmstr / self.vmstr_scale
@@ -97,14 +170,29 @@ class MergedTimeseriesDataTransform:
         t  = torch.full((N, 1), graph.metadata['t_val'])
         dt = torch.full((N, 1), graph.metadata['dt_val'])
 
-        # target fields
+        # fields
         if not last_step:
-            disp_z   = disp[:, :, 2].unsqueeze(-1)
-            disp_in  = disp_z[istep]
-            disp_out = (disp_z[istep+1] - disp_z[istep]) #/ md['dt_val']
 
-            vmstr_in  = vmstr[istep]
-            vmstr_out = (vmstr[istep+1] - vmstr[istep])
+            disp0  = disp[ istep, :, 2].view(-1,1)
+            vmstr0 = vmstr[istep, :, 0].view(-1,1)
+            temp0  = temp[ istep, :, 0].view(-1,1)
+
+            disp1  = disp[ istep+1, :, 2].view(-1,1)
+            vmstr1 = vmstr[istep+1, :, 0].view(-1,1)
+            temp1  = temp[ istep+1, :, 0].view(-1,1)
+
+            if self.interpolate:
+                disp0  = self.interpolate_up(disp0,  graph, istep, tol=tol)
+                vmstr0 = self.interpolate_up(vmstr0, graph, istep, tol=tol)
+                temp0  = self.interpolate_up(temp0,  graph, istep, tol=tol)
+
+            disp_in  = disp0
+            vmstr_in = vmstr0
+            temp_in  = temp0
+
+            disp_out  = disp1  - disp0
+            vmstr_out = vmstr1 - vmstr0
+            temp_out  = temp1  - temp0
 
         else:
             disp_in  = torch.zeros((N, 1))
@@ -138,9 +226,10 @@ class MergedTimeseriesDataTransform:
         edge_attr = edge_dxyz
 
         return pyg.data.Data(
-            x=x, y=y, t=t, mask=mask,
+            x=x, y=y, t=t, mask=mask, mask_bulk=mask_bulk,
             edge_attr=edge_attr, edge_index=graph.edge_index, elems=graph.elems,
             disp=graph.disp[istep], vmstr=graph.vmstr[istep], temp=graph.temp[istep], pos=graph.pos,
+            metadata=graph.metadata,
         )
 
 #======================================================================#

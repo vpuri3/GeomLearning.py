@@ -11,31 +11,17 @@ __all__ = [
 #======================================================================#
 @torch.no_grad()
 def march_case(model, case_data, transform,
-        autoreg=True, K=1, verbose=True, device=None,
+        autoreg=True, K=1, verbose=False, device=None, tol=1e-4,
 ):
 
     if device is None:
-        # TODO: make select_device work with torchrun
         device = mlutils.select_device(device)
-
     model.to(device)
 
-    scale = []
-    scale = [*scale, transform.disp_scale ] if transform.disp  else scale
-    scale = [*scale, transform.vmstr_scale] if transform.vmstr else scale
-    scale = [*scale, transform.temp_scale ] if transform.temp  else scale
-    scale = torch.tensor(scale)
+    if not autoreg:
+        K = 1
 
-    nf = transform.disp + transform.vmstr + transform.temp 
-    assert nf == len(scale)
-
-    def makefields(data):
-        xs = []
-        xs = [*xs, data.disp[:,2].view(-1,1)] if transform.disp  else xs
-        xs = [*xs, data.vmstr.view(-1,1)    ] if transform.vmstr else xs
-        xs = [*xs, data.temp.view(-1,1)     ] if transform.temp  else xs
-
-        return torch.cat(xs, dim=-1) / scale.to(xs[0].device)
+    nf = transform.nfields
 
     eval_data = []
     l2s = []
@@ -43,11 +29,11 @@ def march_case(model, case_data, transform,
 
     for data in case_data:
         data = data.clone()
-        data.y = makefields(data)
+        data.y = transform.makefields(data)
         data.e = torch.zeros_like(data.y)
         eval_data.append(data)
         l2s.append(0.)
-        r2s.append(0.)
+        r2s.append(1.)
 
     for k in range(K, len(eval_data)):
         _data = eval_data[k-1].to(device) # given (k-1)-th step
@@ -57,7 +43,12 @@ def march_case(model, case_data, transform,
             _data = _data.clone()
             _data.x[:, -nf:] = _data.y[:, -nf:]
 
-        target = makefields(data)
+        target = transform.makefields(data)
+
+        if transform.interpolate:
+            _data.x[:, -nf:] = transform.interpolate_up(
+                _data.x[:, -nf:], _data, k-1, tol=tol
+            )
 
         data.y = model(_data) + _data.x[:, -nf:]
         data.e = data.y - target

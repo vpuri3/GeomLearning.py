@@ -43,6 +43,7 @@ class Trainer:
         Schedule=None,
 
         lossfun=None,
+        batch_lossfun=None,
         nepochs=None,
 
         statsfun=None,
@@ -176,6 +177,7 @@ class Trainer:
         self.schedule = schedule
 
         self.lossfun = lossfun
+        self.batch_lossfun = batch_lossfun
         self.nepochs = nepochs
 
         # config, callback and printing
@@ -264,7 +266,7 @@ class Trainer:
         ###
         # Printing
         ###
-        if self.verbose and self.LOCAL_RANK == 0:
+        if self.verbose and self.print_config and self.LOCAL_RANK == 0:
             print(f"Number of training samples: {len(self._data)}")
             if self.data_ is not None:
                 print(f"Number of test samples: {len(self.data_)}")
@@ -298,7 +300,7 @@ class Trainer:
             # self.trigger_callbacks("epoch_end")
 
             if (self.epoch % self.stats_every) == 0:
-                self.statistics()
+                (_l, _s), (l_, s_) = self.statistics()
 
         return
 
@@ -339,7 +341,10 @@ class Trainer:
         return
 
     def batch_loss(self, batch):
-        if self.GNN:
+        if self.batch_lossfun is not None:
+            batch = batch.to(self.device)
+            loss = self.batch_lossfun(self.model, batch)
+        elif self.GNN:
             batch = batch.to(self.device)
             yh = self.model(batch)
             loss = self.lossfun(yh, batch.y)
@@ -349,7 +354,7 @@ class Trainer:
 
             yh = self.model(x)
             loss = self.lossfun(yh, y)
-        #
+
         return loss
 
     def batch_size(self, batch):

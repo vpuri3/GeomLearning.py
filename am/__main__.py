@@ -21,15 +21,10 @@ CASEDIR = os.path.join('.', 'out', 'am')
 
 #======================================================================#
 def train_loop(model, _data, data_=None, E=100, lrs=None, nepochs=None, **kw):
-    # if lrs is None:
-    #     lrs = [5e-4, 1e-4, 5e-5, 1e-5]
-    # if nepochs is None:
-    #     nepochs = [.25*E, .25*E, .25*E, 0.25*E]
-
     if lrs is None:
-        lrs = [5e-4, 1e-4,]
+        lrs = [5e-4, 2e-4, 1e-4, 5e-5]
     if nepochs is None:
-        nepochs = [.5*E, .5*E,]
+        nepochs = [.25*E, .25*E, .25*E, .25*E]
 
     nepochs = [int(e) for e in nepochs]
     assert len(lrs) == len(nepochs)
@@ -54,44 +49,60 @@ def train_timeseries(cfg, device):
     # DATA
     #=================#
 
-    fields = dict(disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp)
-    transform = am.MergedTimeseriesDataTransform(**fields)
+    transform = am.MergedTimeseriesDataTransform(disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, interpolate=cfg.interpolate)
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
     dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform, num_workers=12)
     _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
 
-    # # 3 (worst), 5, 6, 8, 9
-    # _data, = am.split_timeseries_dataset(dataset, indices=[[3,5,6,8,9]])
-    # data_ = None
+    # # run small experiments
+    # N = 20
+    # _data, data_ = am.split_timeseries_dataset(dataset, indices=[range(0,N), range(N,2*N)])
 
-    N = 20
-    _data, data_ = am.split_timeseries_dataset(dataset, indices=[range(0,N), range(N,2*N)])
+    # smaller still experiments (3 (worst), 5, 6, 8, 9)
+    _data, = am.split_timeseries_dataset(dataset, indices=[[3,5,6,8,9]])
+    data_ = None
+
+    # _data, = am.split_timeseries_dataset(dataset, indices=[[5,]])
+    # data_ = None
 
     #=================#
     # MODEL
     #=================#
+
+    # TODO: add mask_bulk as input
+    # TODO: modify mask_bulk parameters. make interface sharper
 
     ci = 5 + cfg.disp + cfg.vmstr + cfg.temp
     ce = 3
     co = cfg.disp + cfg.vmstr + cfg.temp
     width = cfg.width
     num_layers = cfg.num_layers
+
     mask = cfg.mask
     blend = cfg.blend
+    mask_bulk = cfg.mask_bulk
 
-    model = am.MaskedMGN(ci, ce, co, width, num_layers, mask=mask)
+    model = am.MaskedMGN(ci, ce, co, width, num_layers, mask=mask, mask_bulk=mask_bulk)
+    batch_lossfun = am.MaskedLoss(mask)
 
     #=================#
     # TRAIN
     #=================#
 
     if cfg.train:
+
+        _batch_size = 4 if len(_data.case_files) > 2 else 1
+        batch_size_ = _batch_size_ = 12
+
+        if False: # v100-16 GB
+            _batch_size = max(1, _batch_size // 2)
+            batch_size_ = _batch_size_ = batch_size_ // 2
+
         kw = dict(
             Opt='AdamW', device=device, GNN=True, stats_every=5,
-            # _batch_size=1, batch_size_=4, _batch_size_=1, # baby expr
-            _batch_size=4, batch_size_=12, _batch_size_=12, # v100-32
-            # _batch_size=2, batch_size_=6, _batch_size_=6, # v100-16
+            _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
             E=cfg.epochs, weight_decay=cfg.weight_decay,
+            batch_lossfun=batch_lossfun,
         )
 
         train_loop(model, _data, data_, **kw)
@@ -112,46 +123,44 @@ def train_timeseries(cfg, device):
         model.load_state_dict(model_state)
         model.to(device)
 
-        C = cfg.eval_cases
+        C = min(cfg.eval_cases, len(_data.case_files))
         K = cfg.autoreg_start
 
         _cases = [_data[_data.case_range(c)] for c in range(C)]
         cases_ = [data_[data_.case_range(c)] for c in range(C)] if data_ is not None else None
 
         for (cases, casetype) in zip([_cases, cases_], ['train', 'test']):
+
             if cases is None:
                 print(f'No {casetype} data')
                 continue
+            else:
+                print(f'Evaluating {casetype} data')
+
             for (i, case) in enumerate(cases):
                 ii = str(i).zfill(2)
                 case_data = cases[i]
-        
+
                 for (autoreg, ext) in zip([True, False], ['AR', 'NR']):
                     eval_data, l2s, r2s = am.march_case(
                         model, case_data, transform,
-                        autoreg=autoreg, device=device, verbose=False,
+                        autoreg=autoreg, device=device, K=K,
                     )
 
-                    out_dir = os.path.join(case_dir, f'{casetype}{ii}-{ext}')
-                    am.visualize_timeseries_pyv(eval_data, out_dir, merge=True)
+                    name = f'{cfg.name}-{casetype}{ii}-{ext}'
+                    out_dir = os.path.join(case_dir, name)
+                    am.visualize_timeseries_pyv(eval_data, out_dir, merge=True, name=name)
 
-                    out_file = os.path.join(out_dir, 'stats.txt')
+                    out_file = os.path.join(case_dir, f'{name}.txt')
                     with open(out_file, 'w') as f:
                         f.write('Step\tMSE\tR-Square\n')
                         for (k, (l2,r2)) in enumerate(zip(l2s, r2s)):
                             f.write(f'{k}\t{l2s[k]}\t{r2s[k]}\n')
 
-        # case_data = _data
-        # eval_data, l2s, r2s = am.march_case(model, case_data, transform, autoreg=False, device=device)
-        # # eval_data, l2s, r2s = am.march_case(model, case_data, transform, autoreg=True, K=5, device=device)
-        #
-        # out_dir = os.path.join(case_dir, f'case')
-        # am.visualize_timeseries_pyv(eval_data, out_dir, merge=True)
-
     return
 
 #======================================================================#
-def train_finaltime(device, outdir, resdir, train=True):
+def train_finaltime(cfg, device):
     return
 
 #======================================================================#
@@ -217,6 +226,8 @@ class Config:
 
     mask: bool = True
     blend: bool = True
+    mask_bulk: bool = False
+    interpolate: bool = True
 
     # training arguments
     epochs: int = 200
@@ -224,7 +235,7 @@ class Config:
 
     # eval arguments
     eval_cases: int = 10
-    autoreg_start: int = 5
+    autoreg_start: int = 10
 
 if __name__ == "__main__":
 
