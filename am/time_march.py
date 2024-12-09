@@ -46,7 +46,7 @@ def march_case(model, case_data, transform,
         target = transform.makefields(data)
 
         if transform.interpolate:
-            _data.x[:, -nf:] = transform.interpolate_up(
+            _data.x[:, -nf:] = transform.interpolate_layer(
                 _data.x[:, -nf:], _data, k-1, tol=tol
             )
 

@@ -4,6 +4,7 @@ import torch
 import os
 import yaml
 import shutil
+from tqdm import tqdm
 from jsonargparse import ArgumentParser, CLI
 from dataclasses import dataclass
 
@@ -49,20 +50,22 @@ def train_timeseries(cfg, device):
     # DATA
     #=================#
 
-    transform = am.MergedTimeseriesDataTransform(disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, interpolate=cfg.interpolate)
+    transform = am.TimeseriesDataTransform(
+        merge=cfg.merge, pool=cfg.pool,
+        disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp,
+        interpolate=cfg.interpolate, metadata=False,
+    )
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
-    dataset = am.TimeseriesDataset(DATADIR, merge=True, transform=transform, num_workers=12)
+    dataset = am.TimeseriesDataset(DATADIR, merge=cfg.merge, transform=transform, num_workers=12)
     _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
 
-    # # run small experiments
-    # N = 20
-    # _data, data_ = am.split_timeseries_dataset(dataset, indices=[range(0,N), range(N,2*N)])
+    # run small experiments
+    N1 = 30
+    N2 = 10
+    _data, data_ = am.split_timeseries_dataset(dataset, indices=[range(N1), range(N1,N1+N2)])
 
-    # smaller still experiments (3 (worst), 5, 6, 8, 9)
-    _data, = am.split_timeseries_dataset(dataset, indices=[[3,5,6,8,9]])
-    data_ = None
-
-    # _data, = am.split_timeseries_dataset(dataset, indices=[[5,]])
+    # # smaller still experiments (3 (worst), 5, 6, 8, 9)
+    # _data, = am.split_timeseries_dataset(dataset, indices=[[3,5,6,8,9]])
     # data_ = None
 
     #=================#
@@ -91,21 +94,22 @@ def train_timeseries(cfg, device):
 
     if cfg.train:
 
-        _batch_size = 4 if len(_data.case_files) > 2 else 1
-        batch_size_ = _batch_size_ = 12
+        if cfg.epochs > 0:
+            _batch_size = 4 if len(_data.case_files) > 2 else 1
+            batch_size_ = _batch_size_ = 12
 
-        if False: # v100-16 GB
-            _batch_size = max(1, _batch_size // 2)
-            batch_size_ = _batch_size_ = batch_size_ // 2
+            if False: # v100-16 GB
+                _batch_size = max(1, _batch_size // 2)
+                batch_size_ = _batch_size_ = batch_size_ // 2
 
-        kw = dict(
-            Opt='AdamW', device=device, GNN=True, stats_every=5,
-            _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
-            E=cfg.epochs, weight_decay=cfg.weight_decay,
-            batch_lossfun=batch_lossfun,
-        )
+            kw = dict(
+                Opt='AdamW', device=device, GNN=True, stats_every=5,
+                _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
+                E=cfg.epochs, weight_decay=cfg.weight_decay,
+                batch_lossfun=batch_lossfun,
+            )
 
-        train_loop(model, _data, data_, **kw)
+            train_loop(model, _data, data_, **kw)
 
         if LOCAL_RANK==0:
             print(f'Saving {model_file}')
@@ -115,6 +119,11 @@ def train_timeseries(cfg, device):
     # ANALYSIS
     #=================#
 
+    transform.metadata = True
+    _data.transform.metadata = True
+    if data_ is not None:
+        data_.transform.metadata = True
+
     if LOCAL_RANK == 0:
 
         print(f'Loading {model_file}')
@@ -123,23 +132,26 @@ def train_timeseries(cfg, device):
         model.load_state_dict(model_state)
         model.to(device)
 
-        C = min(cfg.eval_cases, len(_data.case_files))
         K = cfg.autoreg_start
+        _C = min(cfg.eval_cases, len(_data.case_files))
+        C_ = min(cfg.eval_cases, len(data_.case_files)) if data_ is not None else None
 
-        _cases = [_data[_data.case_range(c)] for c in range(C)]
-        cases_ = [data_[data_.case_range(c)] for c in range(C)] if data_ is not None else None
+        _cases = [_data[_data.case_range(c)] for c in range(_C)]
+        cases_ = [data_[data_.case_range(c)] for c in range(C_)] if data_ is not None else None
 
-        for (cases, casetype) in zip([_cases, cases_], ['train', 'test']):
+        for (cases, split) in zip([_cases, cases_], ['train', 'test']):
 
             if cases is None:
-                print(f'No {casetype} data')
+                print(f'No {split} data')
                 continue
             else:
-                print(f'Evaluating {casetype} data')
+                print(f'Evaluating {split} data')
 
-            for (i, case) in enumerate(cases):
-                ii = str(i).zfill(2)
+            # for (i, case) in enumerate(cases):
+            for i in tqdm(range(len(cases))):
+                case = cases[i]
                 case_data = cases[i]
+                ii = str(i).zfill(2)
 
                 for (autoreg, ext) in zip([True, False], ['AR', 'NR']):
                     eval_data, l2s, r2s = am.march_case(
@@ -147,7 +159,7 @@ def train_timeseries(cfg, device):
                         autoreg=autoreg, device=device, K=K,
                     )
 
-                    name = f'{cfg.name}-{casetype}{ii}-{ext}'
+                    name = f'{cfg.name}-{split}{ii}-{ext}'
                     out_dir = os.path.join(case_dir, name)
                     am.visualize_timeseries_pyv(eval_data, out_dir, merge=True, name=name)
 
@@ -164,22 +176,37 @@ def train_finaltime(cfg, device):
     return
 
 #======================================================================#
-from tqdm import tqdm
+def vis_timeseries(cfg, num_workers=8):
 
-def vis_timeseries(resdir, merge=None):
-    DATADIR = os.path.join(DATADIR_TIMESERIES, r'data_0-100')
-    dataset = am.TimeseriesDataset(DATADIR, merge=merge)
+    DIRS = [
+        r'data_0-100',
+        # r'data_100-200',
+        # r'data_400-500',
+        # r'data_500-600',
+    ]
 
-    vis_name = 'vis_timeseries_merged' if merge else 'vis_timeseries'
-    vis_dir  = os.path.join(resdir, vis_name)
-    case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
+    # for DIR in DIRS:
+    #     DATADIR  = os.path.join(DATADIR_TIMESERIES, DIR)
+    #     print(DIR)
+    #     dataset  = am.TimeseriesDataset(DATADIR, merge=cfg.merge, force_reload=True, num_workers=8)
 
-    for icase in tqdm(range(20)):
-        case_name = case_names[icase]
-        idx_case  = dataset.case_range(case_name)
-        case_data = dataset[idx_case]
-        out_dir   = os.path.join(vis_dir, f'case{str(icase).zfill(2)}')
-        am.visualize_timeseries_pyv(case_data, out_dir, icase, merge=merge)
+    for DIR in DIRS:
+        DATADIR  = os.path.join(DATADIR_TIMESERIES, DIR)
+        dataset  = am.TimeseriesDataset(DATADIR, merge=cfg.merge)
+        case_dir = os.path.join(CASEDIR, cfg.name)
+        vis_dir  = os.path.join(case_dir, DIR)
+
+        case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
+        num_cases = len(case_names)
+
+        print(DIR)
+
+        for icase in tqdm(range(num_cases)):
+            case_name = case_names[icase]
+            idx_case  = dataset.case_range(case_name)
+            case_data = dataset[idx_case]
+            out_dir   = os.path.join(vis_dir, f'case{str(icase).zfill(2)}')
+            am.visualize_timeseries_pyv(case_data, out_dir, icase, merge=cfg.merge)
 
     return
 
@@ -215,13 +242,17 @@ class Config:
     seed: int = 123
     train: bool = False
 
+    # timeseries dataset
+    merge: bool = True
+    pool: bool = False
+
     # fields
     disp: bool  = True
     vmstr: bool = False
     temp: bool  = False
 
     # model
-    width: int = 64
+    width: int = 96
     num_layers: int = 5
 
     mask: bool = True
@@ -230,11 +261,11 @@ class Config:
     interpolate: bool = True
 
     # training arguments
-    epochs: int = 200
+    epochs: int = 100
     weight_decay: float = 0e-4
 
     # eval arguments
-    eval_cases: int = 10
+    eval_cases: int = 20
     autoreg_start: int = 10
 
 if __name__ == "__main__":
@@ -282,8 +313,8 @@ if __name__ == "__main__":
     #===============#
     # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True, num_workers=12)
-    # vis_timeseries(resdir, merge=True)
-    train_timeseries(cfg, device)
+    vis_timeseries(cfg)
+    # train_timeseries(cfg, device)
 
     #===============#
     mlutils.dist_finalize()

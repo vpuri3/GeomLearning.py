@@ -44,30 +44,45 @@ def visualize_timeseries_pyv(dataset, out_dir, icase=None, merge=None, name=None
     N = len(dataset)
     if os.path.exists(out_dir):
         shutil.rmtree(out_dir)
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(out_dir)
 
     for i in range(N):
         graph = dataset[i]
         mesh = mesh_pyv(graph.pos, graph.elems)
-        # wrap in try/catch blocks
-        if graph.x is not None:
+
+        try:
             mesh.point_data['source'] = graph.x.numpy(force=True)
-        if graph.y is not None:
+        except:
+            pass
+
+        try:
             mesh.point_data['target'] = graph.y.numpy(force=True)
-        if graph.e is not None:
+        except:
+            pass
+
+        try:
             mesh.point_data['error'] = graph.e.numpy(force=True)
-        if graph.mask is not None:
+        except:
+            pass
+
+        try:
             mesh.point_data['mask'] = graph.mask.numpy(force=True)
-        if graph.mask_bulk is not None:
+        except:
+            pass
+
+        try:
             mesh.point_data['mask_bulk'] = graph.mask_bulk.numpy(force=True)
+        except:
+            pass
+
         if graph.disp.ndim == 3: # merge
             istep = graph.metadata['time_step']
-            mesh.point_data['disp'] = graph.disp[istep].numpy(force=True)
-            mesh.point_data['temp'] = graph.temp[istep].numpy(force=True)
+            mesh.point_data['disp']  = graph.disp[istep].numpy(force=True)
+            mesh.point_data['temp']  = graph.temp[istep].numpy(force=True)
             mesh.point_data['vmstr'] = graph.vmstr[istep].numpy(force=True)
         else: # == 2
-            mesh.point_data['disp'] = graph.disp.numpy(force=True)
-            mesh.point_data['temp'] = graph.temp.numpy(force=True)
+            mesh.point_data['disp']  = graph.disp.numpy(force=True)
+            mesh.point_data['temp']  = graph.temp.numpy(force=True)
             mesh.point_data['vmstr'] = graph.vmstr.numpy(force=True)
 
         mesh.save(os.path.join(out_dir, f'data{str(i).zfill(2)}.vtu'))
@@ -76,6 +91,7 @@ def visualize_timeseries_pyv(dataset, out_dir, icase=None, merge=None, name=None
         name = 'merged' if merge else 'series'
     if icase is not None:
         name = name + str(icase).zfill(2)
+
     pvd_file = os.path.join(out_dir, f'{name}.pvd')
     write_pvd(pvd_file, N, 'data')
 
