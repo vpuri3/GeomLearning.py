@@ -12,8 +12,8 @@ from dataclasses import dataclass
 import am
 import mlutils
 
-DATADIR_BASE       = 'data/'
-# DATADIR_BASE       = '/home/shared/'
+# DATADIR_BASE       = 'data/'
+DATADIR_BASE       = '/home/shared/'
 DATADIR_RAW        = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_raw')
 DATADIR_TIMESERIES = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_timeseries')
 DATADIR_FINALTIME  = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_finaltime')
@@ -179,10 +179,12 @@ def train_finaltime(cfg, device):
 def vis_timeseries(cfg, num_workers=8):
 
     DIRS = [
-        r'data_0-100',
-        # r'data_100-200',
-        # r'data_400-500',
-        # r'data_500-600',
+        # r'data_0-100',
+        r'data_100-200',
+        r'data_200-300',
+        r'data_300-400',
+        r'data_400-500',
+        r'data_500-600',
     ]
 
     # for DIR in DIRS:
@@ -195,12 +197,11 @@ def vis_timeseries(cfg, num_workers=8):
         dataset  = am.TimeseriesDataset(DATADIR, merge=cfg.merge)
         case_dir = os.path.join(CASEDIR, cfg.name)
         vis_dir  = os.path.join(case_dir, DIR)
-
+    
+        print(DIR)
         case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
         num_cases = len(case_names)
-
-        print(DIR)
-
+    
         for icase in tqdm(range(num_cases)):
             case_name = case_names[icase]
             idx_case  = dataset.case_range(case_name)
@@ -319,5 +320,6 @@ if __name__ == "__main__":
     #===============#
     mlutils.dist_finalize()
     #===============#
+
     exit()
 #
