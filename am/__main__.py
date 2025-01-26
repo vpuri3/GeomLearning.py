@@ -173,6 +173,26 @@ def train_timeseries(cfg, device):
 
 #======================================================================#
 def train_finaltime(cfg, device):
+    DISTRIBUTED = mlutils.is_torchrun()
+    LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
+
+    case_dir = os.path.join(CASEDIR, cfg.name)
+    model_file = os.path.join(case_dir, 'model.pt')
+
+    #=================#
+    # DATA
+    #=================#
+
+    transfrom = None
+    # transform = am.TimeseriesDataTransform(
+    #     merge=cfg.merge, pool=cfg.pool,
+    #     disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp,
+    #     interpolate=cfg.interpolate, metadata=False,
+    # )
+    DATADIR = os.path.join(DATADIR_FINALTIME, r"data_0-100")
+    dataset = am.FinaltimeDataset(DATADIR, transform=transform, num_workers=12)
+    _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
+
     return
 
 #======================================================================#
@@ -313,7 +333,7 @@ if __name__ == "__main__":
     #===============#
     # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True, num_workers=12)
-    vis_timeseries(cfg)
+    # vis_timeseries(cfg)
     # train_timeseries(cfg, device)
 
     #===============#
