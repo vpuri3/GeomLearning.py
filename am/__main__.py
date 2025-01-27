@@ -75,7 +75,7 @@ def train_timeseries(cfg, device):
     # TODO: add mask_bulk as input
     # TODO: modify mask_bulk parameters. make interface sharper
 
-    ci = 5 + cfg.disp + cfg.vmstr + cfg.temp
+    ci = 3 + 2 + cfg.disp + cfg.vmstr + cfg.temp # 3 - pos, 2 - (t, dt)
     ce = 3
     co = cfg.disp + cfg.vmstr + cfg.temp
     width = cfg.width
@@ -95,6 +95,7 @@ def train_timeseries(cfg, device):
     if cfg.train:
 
         if cfg.epochs > 0:
+            # v100-32 GB
             _batch_size = 4 if len(_data.case_files) > 2 else 1
             batch_size_ = _batch_size_ = 12
 
@@ -102,7 +103,7 @@ def train_timeseries(cfg, device):
                 _batch_size = max(1, _batch_size // 2)
                 batch_size_ = _batch_size_ = batch_size_ // 2
 
-            if True: # 2070-12 GB
+            if True: # RTX 2070-12 GB
                 _batch_size = 1
                 batch_size_ = 1
 
@@ -123,9 +124,12 @@ def train_timeseries(cfg, device):
     # ANALYSIS
     #=================#
 
-    transform.metadata = True
+    # update transform
+    _data.transform.orig = True
     _data.transform.metadata = True
+
     if data_ is not None:
+        data_.transform.orig = True
         data_.transform.metadata = True
 
     if LOCAL_RANK == 0:
@@ -187,13 +191,49 @@ def train_finaltime(cfg, device):
     # DATA
     #=================#
 
-    transfrom = None
     transform = am.FinaltimeDatasetTransform(
         disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=True,
     )
     DATADIR = os.path.join(DATADIR_FINALTIME, r"data_0-100")
-    dataset = am.FinaltimeDataset(DATADIR, transform=transform, num_workers=12)
-    _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
+    dataset = am.FinaltimeDataset(DATADIR, transform=transform)
+    _data, data_ = torch.utils.data.random_split(dataset, [0.8, 0.2])
+
+    #=================#
+    # MODEL
+    #=================#
+
+    ci = 3
+    ce = 3
+    co = cfg.disp + cfg.vmstr + cfg.temp
+    width = cfg.width
+    num_layers = cfg.num_layers
+
+    model = am.MeshGraphNet(ci, ce, co, width, num_layers)
+    lossfun = torch.nn.MSELoss()
+
+    #=================#
+    # TRAIN
+    #=================#
+
+    if cfg.train:
+
+        if cfg.epochs > 0:
+            _batch_size  = 1
+            batch_size_  = 1
+            _batch_size_ = 1
+
+            kw = dict(
+                Opt='AdamW', device=device, GNN=True, stats_every=5,
+                _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
+                E=cfg.epochs, weight_decay=cfg.weight_decay,
+                lossfun=lossfun,
+            )
+
+            train_loop(model, _data, data_, **kw)
+
+        if LOCAL_RANK==0:
+            print(f'Saving {model_file}')
+            torch.save(model.to("cpu").state_dict(), model_file)
 
     return
 
@@ -274,7 +314,7 @@ class Config:
 
     # model
     width: int = 32 # 96
-    num_layers: int = 2 # 5
+    num_layers: int = 5 # 5
 
     mask: bool = True
     blend: bool = True
@@ -327,7 +367,7 @@ if __name__ == "__main__":
     # Final time data
     #===============#
     # am.extract_zips(DATADIR_RAW, DATADIR_FINALTIME)
-    # train_finaltime(cfg, device)
+    train_finaltime(cfg, device)
 
     #===============#
     # Timeseries data
@@ -335,7 +375,7 @@ if __name__ == "__main__":
     # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True, num_workers=12)
     # vis_timeseries(cfg)
-    train_timeseries(cfg, device)
+    # train_timeseries(cfg, device)
 
     #===============#
     mlutils.dist_finalize()

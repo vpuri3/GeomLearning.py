@@ -23,8 +23,9 @@ __all__ = [
 class TimeseriesDatasetTransform:
     def __init__(
         self,
-        disp=True, vmstr=True, temp=True, mesh=True,
-        merge=True, interpolate=True, metadata=False,
+        disp=True, vmstr=True, temp=True,
+        mesh=True, elems=False, orig=False,
+        metadata=False, merge=True, interpolate=True,
     ):
 
         # fields
@@ -33,10 +34,15 @@ class TimeseriesDatasetTransform:
         self.temp  = temp
         self.mesh  = mesh
 
+        self.mesh  = mesh
+        self.elems = elems
+        self.orig  = orig
+
+        self.metadata = metadata
+
         # dataset
         self.merge = merge
         self.interpolate = interpolate
-        self.metadata = metadata
 
         # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate)
         # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
@@ -227,24 +233,25 @@ class TimeseriesDatasetTransform:
             xs.append(temp_in)
             ys.append(temp_out)
 
-        assert len(ys) > 0, f"At least one of disp, vmstr, temp must be True. Got {self.disp}, {self.vmstr}, {self.temp}."
+        assert len(ys) == self.nfields, f"At least one of disp, vmstr, temp must be True. Got {self.disp}, {self.vmstr}, {self.temp}."
 
         x = torch.cat(xs, dim=-1)
         y = torch.cat(ys, dim=-1)
 
         edge_attr = edge_dxyz
 
-        data = pyg.data.Data(
-            x=x, y=y, t=t, mask=mask, mask_bulk=mask_bulk,
-            # edge_attr=edge_attr, edge_index=graph.edge_index, elems=graph.elems,
-            disp=graph.disp[istep], vmstr=graph.vmstr[istep], temp=graph.temp[istep], pos=graph.pos,
-        )
+        data = pyg.data.Data(x=x, y=y, t=t, mask=mask, mask_bulk=mask_bulk,)
 
         if self.mesh:
-            data.elems      = graph.elems
             data.edge_attr  = edge_attr
             data.edge_index = graph.edge_index
-
+        if self.elems:
+            data.elems = graph.elems
+        if self.orig:
+            data.pos   = graph.pos
+            data.disp  = graph.disp[istep]
+            data.vmstr = graph.vmstr[istep]
+            data.temp  = graph.temp[istep]
         if self.metadata:
             data.metadata = graph.metadata
 

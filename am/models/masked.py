@@ -6,11 +6,11 @@ import torch_geometric as pyg
 from .meshGNN import MeshGraphNet
 
 __all__ = [
+    'MaskedLoss',
     'MaskedMGN',
 ]
 
 #======================================================================#
-__all__.append('MaskedLoss')
 
 class MaskedLoss(torch.nn.Module):
     def __init__(self, mask: bool):

@@ -19,8 +19,8 @@ __all__ = [
 class FinaltimeDatasetTransform:
     def __init__(
         self,
-        # fields
-        disp=True, vmstr=True, temp=True, mesh=True,
+        disp=True, vmstr=True, temp=True,
+        mesh=True, elems=False, orig=False,
         metadata=False,
     ):
 
@@ -28,7 +28,10 @@ class FinaltimeDatasetTransform:
         self.disp  = disp
         self.vmstr = vmstr
         self.temp  = temp
+
         self.mesh  = mesh
+        self.elems = elems
+        self.orig  = orig
 
         self.metadata = metadata
 
@@ -36,7 +39,6 @@ class FinaltimeDatasetTransform:
         # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
         # vmstr: [0, ~5e3] Pascal (?)
         # temp : Celcius [25, ~300]
-        # time: [0, 1]
 
         self.pos_scale = torch.tensor([30., 30., 60.])
         self.disp_scale  = 1.
@@ -56,18 +58,6 @@ class FinaltimeDatasetTransform:
 
         return
 
-    def makefields(self, data):
-        '''
-        used in am.time_march
-        '''
-
-        xs = []
-        xs = [*xs, data.disp[:,2].view(-1,1)] if self.disp  else xs
-        xs = [*xs, data.vmstr.view(-1,1)    ] if self.vmstr else xs
-        xs = [*xs, data.temp.view(-1,1)     ] if self.temp  else xs
-
-        return torch.cat(xs, dim=-1) / self.scale.to(xs[0].device)
-
     def __call__(self, graph, tol=1e-4):
 
         N  = graph.pos.size(0)
@@ -81,7 +71,7 @@ class FinaltimeDatasetTransform:
         edge_dxyz = graph.edge_dxyz / self.pos_scale
 
         # only consider z disp
-        disp = disp[:, 2]
+        disp = disp[:, 2:]
 
         # features / labels
         xs = [pos,]
@@ -94,26 +84,30 @@ class FinaltimeDatasetTransform:
         if self.temp:
             ys.append(temp)
 
-        assert len(ys) > 0, f"At least one of disp, vmstr, temp must be True. Got {self.disp}, {self.vmstr}, {self.temp}."
+        assert len(ys) == self.nfields, f"At least one of disp, vmstr, temp must be True. Got {self.disp}, {self.vmstr}, {self.temp}."
 
         x = torch.cat(xs, dim=-1)
         y = torch.cat(ys, dim=-1)
 
         edge_attr = edge_dxyz
 
-        data = pyg.data.Data(
-            x=x, y=y, t=t,
-            # edge_attr=edge_attr, edge_index=graph.edge_index, elems=graph.elems,
-            disp=graph.disp, vmstr=graph.vmstr, temp=graph.temp, pos=graph.pos,
-        )
+        data = pyg.data.Data(x=x, y=y)
 
         if self.mesh:
-            data.elems      = graph.elems
             data.edge_attr  = edge_attr
             data.edge_index = graph.edge_index
-
+        if self.elems:
+            data.elems = graph.elems
+        if self.orig:
+            data.pos   = graph.pos
+            data.disp  = graph.disp
+            data.vmstr = graph.vmstr
+            data.temp  = graph.temp
         if self.metadata:
             data.metadata = graph.metadata
+
+        # print(data)
+        # assert False
 
         return data
 
