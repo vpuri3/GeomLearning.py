@@ -12,8 +12,8 @@ from dataclasses import dataclass
 import am
 import mlutils
 
-DATADIR_BASE       = 'data/'
-# DATADIR_BASE       = '/home/shared/'
+# DATADIR_BASE       = 'data/'
+DATADIR_BASE       = '/home/shared/'
 DATADIR_RAW        = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_raw')
 DATADIR_TIMESERIES = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_timeseries')
 DATADIR_FINALTIME  = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_finaltime')
@@ -50,11 +50,11 @@ def train_timeseries(cfg, device):
     # DATA
     #=================#
 
-    transform = am.TimeseriesDataTransform(
-        merge=cfg.merge, pool=cfg.pool,
+    transform = am.TimeseriesDatasetTransform(
         disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp,
-        interpolate=cfg.interpolate, metadata=False,
+        merge=cfg.merge, interpolate=cfg.interpolate, metadata=False,
     )
+
     DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
     dataset = am.TimeseriesDataset(DATADIR, merge=cfg.merge, transform=transform, num_workers=12)
     _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
@@ -101,6 +101,10 @@ def train_timeseries(cfg, device):
             if False: # v100-16 GB
                 _batch_size = max(1, _batch_size // 2)
                 batch_size_ = _batch_size_ = batch_size_ // 2
+
+            if True: # 2070-12 GB
+                _batch_size = 1
+                batch_size_ = 1
 
             kw = dict(
                 Opt='AdamW', device=device, GNN=True, stats_every=5,
@@ -184,11 +188,9 @@ def train_finaltime(cfg, device):
     #=================#
 
     transfrom = None
-    # transform = am.TimeseriesDataTransform(
-    #     merge=cfg.merge, pool=cfg.pool,
-    #     disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp,
-    #     interpolate=cfg.interpolate, metadata=False,
-    # )
+    transform = am.FinaltimeDatasetTransform(
+        disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=True,
+    )
     DATADIR = os.path.join(DATADIR_FINALTIME, r"data_0-100")
     dataset = am.FinaltimeDataset(DATADIR, transform=transform, num_workers=12)
     _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
@@ -264,7 +266,6 @@ class Config:
 
     # timeseries dataset
     merge: bool = True
-    pool: bool = False
 
     # fields
     disp: bool  = True
@@ -272,8 +273,8 @@ class Config:
     temp: bool  = False
 
     # model
-    width: int = 96
-    num_layers: int = 5
+    width: int = 32 # 96
+    num_layers: int = 2 # 5
 
     mask: bool = True
     blend: bool = True
@@ -334,7 +335,7 @@ if __name__ == "__main__":
     # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True, num_workers=12)
     # vis_timeseries(cfg)
-    # train_timeseries(cfg, device)
+    train_timeseries(cfg, device)
 
     #===============#
     mlutils.dist_finalize()

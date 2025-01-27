@@ -12,7 +12,7 @@ import json
 from typing import Union
 
 __all__ = [
-    'TimeseriesDataTransform',
+    'TimeseriesDatasetTransform',
     'TimeseriesDataset',
     'split_timeseries_dataset',
 ]
@@ -20,26 +20,21 @@ __all__ = [
 #======================================================================#
 # TRANSFORM
 #======================================================================#
-class TimeseriesDataTransform:
+class TimeseriesDatasetTransform:
     def __init__(
         self,
-        # dataset
-        merge=True, pool=False,
-        # fields
-        disp=True, vmstr=True, temp=True,
-        interpolate=True,
-        metadata=False,
+        disp=True, vmstr=True, temp=True, mesh=True,
+        merge=True, interpolate=True, metadata=False,
     ):
-
-        # merge
-        self.merge = merge
-        self.pool = pool
 
         # fields
         self.disp  = disp
         self.vmstr = vmstr
         self.temp  = temp
+        self.mesh  = mesh
 
+        # dataset
+        self.merge = merge
         self.interpolate = interpolate
         self.metadata = metadata
 
@@ -241,21 +236,22 @@ class TimeseriesDataTransform:
 
         data = pyg.data.Data(
             x=x, y=y, t=t, mask=mask, mask_bulk=mask_bulk,
-            edge_attr=edge_attr, edge_index=graph.edge_index, elems=graph.elems,
+            # edge_attr=edge_attr, edge_index=graph.edge_index, elems=graph.elems,
             disp=graph.disp[istep], vmstr=graph.vmstr[istep], temp=graph.temp[istep], pos=graph.pos,
         )
+
+        if self.mesh:
+            data.elems      = graph.elems
+            data.edge_attr  = edge_attr
+            data.edge_index = graph.edge_index
 
         if self.metadata:
             data.metadata = graph.metadata
 
-        # TODO
-        if self.pool:
-            pass
-
         return data
 
 #======================================================================#
-# DATASET
+# TIMESERIES DATASET
 #======================================================================#
 class TimeseriesDataset(pyg.data.Dataset):
     def __init__(
@@ -371,6 +367,9 @@ class TimeseriesDataset(pyg.data.Dataset):
 
         return graph
 
+#======================================================================#
+# SPLIT TIMESERIES DATASET
+#======================================================================#
 def split_timeseries_dataset(dataset, split=None, indices=None):
     num_cases = len(dataset.case_files)
 

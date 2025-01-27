@@ -3,6 +3,8 @@ import torch
 from torch import nn
 import torch_geometric as pyg
 
+from .meshGNN import MeshGraphNet
+
 __all__ = [
     'MaskedMGN',
 ]
