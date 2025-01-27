@@ -32,9 +32,9 @@ class Trainer:
         device=None,
 
         collate_fn=None,
-        _batch_size=None,
-        batch_size_=None,
-        _batch_size_=None,
+        _batch_size=None,  # bwd over _data
+        batch_size_=None,  # fwd over data_
+        _batch_size_=None, # fwd over _data
 
         lr=None,
         weight_decay=None,
