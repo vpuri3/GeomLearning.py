@@ -187,8 +187,10 @@ def train_finaltime(cfg, device):
     # DATA
     #=================#
 
-    transform = am.FinaltimeDatasetTransform(disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=cfg.GNN)
     DATADIR = os.path.join(DATADIR_FINALTIME, r"data_0-100")
+    DATADIR = os.path.join(DATADIR_FINALTIME, r"data_100-200")
+
+    transform = am.FinaltimeDatasetTransform(disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=cfg.GNN)
     dataset = am.FinaltimeDataset(DATADIR, transform=transform)#, force_reload=True)
     _data, data_ = torch.utils.data.random_split(dataset, [0.8, 0.2])
 
@@ -373,19 +375,19 @@ if __name__ == "__main__":
     mlutils.set_seed(cfg.seed)
     #===============#
 
-    if LOCAL_RANK == 0:
-        case_dir = os.path.join(CASEDIR, cfg.name)
+    case_dir = os.path.join(CASEDIR, cfg.name)
 
-        if cfg.train:
-            if os.path.exists(case_dir):
-                nd = 1 + len([dir for dir in os.listdir(CASEDIR) if dir.startswith(case_dir)])
-                case_dir = case_dir + str(nd).zfill(2)
-
-            os.makedirs(case_dir)
+    if cfg.train:
+        if os.path.exists(case_dir):
+            nd = 1 + len([dir for dir in os.listdir(CASEDIR) if dir.startswith(case_dir)])
+            case_dir = case_dir + str(nd).zfill(2)
             config_file = os.path.join(case_dir, 'config.yaml')
-            print(f'Saving config to {config_file}')
-            with open(config_file, 'w') as f:
-                yaml.safe_dump(vars(cfg), f)
+
+            if LOCAL_RANK == 0:
+                os.makedirs(case_dir)
+                print(f'Saving config to {config_file}')
+                with open(config_file, 'w') as f:
+                    yaml.safe_dump(vars(cfg), f)
         else:
             assert os.path.exists(case_dir)
 
