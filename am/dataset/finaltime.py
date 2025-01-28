@@ -8,6 +8,8 @@ from tqdm import tqdm
 
 import os
 
+from .utils import makegraph
+
 __all__ = [
     'FinaltimeDatasetTransform',
     'FinaltimeDataset',

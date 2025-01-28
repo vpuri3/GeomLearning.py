@@ -1,4 +1,4 @@
-# 3rd party
+#
 import torch
 
 import os
@@ -21,17 +21,17 @@ DATADIR_FINALTIME  = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_finaltime')
 CASEDIR = os.path.join('.', 'out', 'am')
 
 #======================================================================#
-def train_loop(model, _data, data_=None, E=100, lrs=None, nepochs=None, **kw):
+def train_loop(cfg, model, _data, data_=None, E=100, lrs=None, epochs=None, **kw):
     if lrs is None:
         lrs = [5e-4, 2e-4, 1e-4, 5e-5]
-    if nepochs is None:
-        nepochs = [.25*E, .25*E, .25*E, .25*E]
+    if epochs is None:
+        epochs = [.25*E, .25*E, .25*E, .25*E]
 
-    nepochs = [int(e) for e in nepochs]
-    assert len(lrs) == len(nepochs)
+    epochs = [int(e) for e in epochs]
+    assert len(lrs) == len(epochs)
     for i in range(len(lrs)):
         kwargs = dict(
-            **kw, lr=lrs[i], nepochs=nepochs[i], print_config=False,#(i==0),
+            **kw, lr=lrs[i], epochs=epochs[i], print_config=False,#(i==0),
         )
         trainer = mlutils.Trainer(model, _data, data_, **kwargs)
         trainer.train()
@@ -78,15 +78,12 @@ def train_timeseries(cfg, device):
     ci = 3 + 2 + cfg.disp + cfg.vmstr + cfg.temp # 3 - pos, 2 - (t, dt)
     ce = 3
     co = cfg.disp + cfg.vmstr + cfg.temp
-    width = cfg.width
-    num_layers = cfg.num_layers
 
-    mask = cfg.mask
     blend = cfg.blend
-    mask_bulk = cfg.mask_bulk
 
-    model = am.MaskedMGN(ci, ce, co, width, num_layers, mask=mask, mask_bulk=mask_bulk)
-    batch_lossfun = am.MaskedLoss(mask)
+    model = am.MaskedMGN(ci, ce, co, cfg.gnn_width, cfg.gnn_num_layers,
+                         mask=cfg.mask, mask_bulk=cfg.mask_bulk)
+    batch_lossfun = am.MaskedLoss(cfg.mask)
 
     #=================#
     # TRAIN
@@ -108,13 +105,13 @@ def train_timeseries(cfg, device):
                 batch_size_ = 1
 
             kw = dict(
-                Opt='AdamW', device=device, GNN=True, stats_every=5,
+                Opt='AdamW', device=device, gnn_loader=True, stats_every=5,
                 _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
                 E=cfg.epochs, weight_decay=cfg.weight_decay,
                 batch_lossfun=batch_lossfun,
             )
 
-            train_loop(model, _data, data_, **kw)
+            train_loop(cfg, model, _data, data_, **kw)
 
         if LOCAL_RANK==0:
             print(f'Saving {model_file}')
@@ -185,17 +182,14 @@ def train_finaltime(cfg, device):
     LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
 
     case_dir = os.path.join(CASEDIR, cfg.name)
-    model_file = os.path.join(case_dir, 'model.pt')
 
     #=================#
     # DATA
     #=================#
 
-    transform = am.FinaltimeDatasetTransform(
-        disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=True,
-    )
+    transform = am.FinaltimeDatasetTransform(disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=cfg.GNN)
     DATADIR = os.path.join(DATADIR_FINALTIME, r"data_0-100")
-    dataset = am.FinaltimeDataset(DATADIR, transform=transform)
+    dataset = am.FinaltimeDataset(DATADIR, transform=transform)#, force_reload=True)
     _data, data_ = torch.utils.data.random_split(dataset, [0.8, 0.2])
 
     #=================#
@@ -205,40 +199,64 @@ def train_finaltime(cfg, device):
     ci = 3
     ce = 3
     co = cfg.disp + cfg.vmstr + cfg.temp
-    width = cfg.width
-    num_layers = cfg.num_layers
 
-    model = am.MeshGraphNet(ci, ce, co, width, num_layers)
+    # GNN
+    if cfg.GNN:
+        model = am.MeshGraphNet(ci, ce, co, cfg.gnn_width, cfg.gnn_num_layers)
+    elif cfg.TRA:
+        model = am.Transolver(
+            space_dim=ci, out_dim=co, fun_dim=0,
+            n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
+            n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
+            # slice_num=32
+        )
+    else:
+        raise NotImplementedError()
+
     lossfun = torch.nn.MSELoss()
 
     #=================#
     # TRAIN
     #=================#
 
-    if cfg.train:
+    callback = am.FinaltimeCallback(case_dir)
 
+    if cfg.train:
         if cfg.epochs > 0:
             _batch_size  = 1
             batch_size_  = 1
             _batch_size_ = 1
 
             kw = dict(
-                Opt='AdamW', device=device, GNN=True, stats_every=5,
-                _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
-                E=cfg.epochs, weight_decay=cfg.weight_decay,
-                lossfun=lossfun,
+                device=device, gnn_loader=True, stats_every=5,
+                Opt='AdamW', weight_decay=cfg.weight_decay, lossfun=lossfun,
+                _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_
             )
 
-            train_loop(model, _data, data_, **kw)
+            kw = dict(lr=5e-4, epochs=cfg.epochs, **kw,)
+            trainer = mlutils.Trainer(model, _data, data_, **kw)
+            trainer.add_callback('epoch_end', callback)
+            trainer.train()
 
-        if LOCAL_RANK==0:
-            print(f'Saving {model_file}')
-            torch.save(model.to("cpu").state_dict(), model_file)
+            # if cfg.GNN:
+            #     train_loop(cfg, model, _data, data_, E=cfg.epochs, **kw)
+            # elif cfg.TRA:
+            #     kw = dict(lr=1e-3, Schedule="OneCycleLR", epochs=cfg.epochs, **kw,)
+            #     trainer = mlutils.Trainer(model, _data, data_, **kw)
+            #     trainer.train()
+
+    #=================#
+    # ANALYSIS
+    #=================#
+
+    trainer = mlutils.Trainer(model, _data, data_, device=device)
+    callback.load(trainer)
+    callback(trainer, final=True)
 
     return
 
 #======================================================================#
-def vis_timeseries(cfg, num_workers=8):
+def vis_timeseries(cfg, num_workers=12):
 
     DIRS = [
         # r'data_0-100',
@@ -314,9 +332,20 @@ class Config:
     temp: bool  = False
 
     # model
-    width: int = 32 # 96
-    num_layers: int = 5 # 5
+    GNN: bool = False
+    TRA: bool = False
 
+    # GNN
+    gnn_width: int = 96
+    gnn_num_layers: int = 5
+
+    # TRA
+    tra_width: int = 192
+    tra_num_layers: int = 5
+    tra_num_heads: int = 16
+    tra_mlp_ratio: float = 2.0
+
+    # dataset
     mask: bool = True
     blend: bool = True
     mask_bulk: bool = False
@@ -349,18 +378,14 @@ if __name__ == "__main__":
 
         if cfg.train:
             if os.path.exists(case_dir):
-                ifrm = input(f'Remove case at {case_dir}? [Y/n]')
-                if not 'n' in ifrm:
-                    print(f'Removing {case_dir}')
-                    shutil.rmtree(case_dir)
-                else:
-                    exit()
+                nd = 1 + len([dir for dir in os.listdir(CASEDIR) if dir.startswith(case_dir)])
+                case_dir = case_dir + str(nd).zfill(2)
 
             os.makedirs(case_dir)
             config_file = os.path.join(case_dir, 'config.yaml')
+            print(f'Saving config to {config_file}')
             with open(config_file, 'w') as f:
                 yaml.safe_dump(vars(cfg), f)
-
         else:
             assert os.path.exists(case_dir)
 

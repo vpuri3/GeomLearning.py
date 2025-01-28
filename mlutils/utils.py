@@ -157,7 +157,7 @@ def unnormalize(x_norm: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
 
 #=======================================================================#
 
-def r2(y_true, y_pred):
+def r2(y_pred, y_true):
     y_true = y_true.flatten()
     y_pred = y_pred.flatten()
     

@@ -71,14 +71,6 @@ def makegraph(data, case_name=None, time_steps=None):
 
     edge_dxyz = torch.stack([dx, dy, dz], dim=-1) # [Nedge, 3]
 
-    # normalization
-    verts_bar, verts_std = mlutils.mean_std(verts, -1)
-    disp_bar , disp_std  = mlutils.mean_std(disp , -1)
-    temp_bar , temp_std  = mlutils.mean_std(temp , -1)
-    vmstr_bar, vmstr_std = mlutils.mean_std(vmstr, -1)
-    # extrema
-    verts_min, verts_max = verts.aminmax(dim=0, keepdim=True)
-
     if disp.ndim == 3: # merged timeseries
         time_steps = disp.shape[0]
 

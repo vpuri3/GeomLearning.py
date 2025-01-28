@@ -21,6 +21,8 @@ __all__ = [
     'Trainer',
 ]
 
+#======================================================================#
+
 class Trainer:
     def __init__(
         self, 
@@ -28,7 +30,7 @@ class Trainer:
         _data,
         data_=None,
 
-        GNN=False,
+        gnn_loader=False,
         device=None,
 
         collate_fn=None,
@@ -44,7 +46,7 @@ class Trainer:
 
         lossfun=None,
         batch_lossfun=None,
-        nepochs=None,
+        epochs=None,
 
         statsfun=None,
         verbose=True,
@@ -56,6 +58,16 @@ class Trainer:
 
         # TODO
         # - EARLY STOPPING with patience (5 epochs)
+
+        ###
+        # PRINTING
+        ###
+
+        self.verbose = verbose
+        self.print_config = print_config
+        self.print_batch = print_batch
+        self.print_epoch = print_epoch
+        self.stats_every = stats_every
 
         ###
         # DEVICE
@@ -78,76 +90,89 @@ class Trainer:
         if _data is None:
             raise ValueError('_data passed to Trainer cannot be None.')
 
-        if _batch_size is None:
-            _batch_size = 32
-        if _batch_size_ is None:
-            _batch_size_ = len(_data)
-        if data_ is not None:
-            if batch_size_ is None:
-                batch_size_ = len(data_)
+        self._data = _data
+        self.data_ = data_
+
+        self._batch_size = 32 if _batch_size is None else _batch_size
+        self._batch_size_ = len(_data) if _batch_size is None else batch_size_
+        self.batch_size_ = batch_size_
+
+        if (data_ is not None) and (batch_size_ is None):
+            self.batch_size_ = len(data_)
+
+        self.collate_fn = collate_fn
+        self.gnn_loader = gnn_loader
 
         ###
         # MODEL
         ###
 
-        if verbose and (self.LOCAL_RANK == 0):
+        if self.verbose and (self.LOCAL_RANK == 0):
             print(f"Moving model with {num_parameters(model)} parameters to device {device}")
-        model.to(device)
+
+        self.model = model.to(device)
 
         if self.DDP:
-            model = nn.parallel.DistributedDataParallel(model, device_ids=[device])
+            self.model = nn.parallel.DistributedDataParallel(self.model, device_ids=[device])
 
         ###
         # OPTIMIZER
         ###
-
-        param = model.parameters()
 
         if lr is None:
             lr = 1e-3
         if weight_decay is None:
             weight_decay = 0.0
 
-        if Opt == "Adam" or Opt is None:
-            opt = optim.Adam(param, lr=lr)
-        elif Opt == "AdamW":
-            opt = optim.AdamW(param, lr=lr, weight_decay=weight_decay)
+        params = self.model.parameters()
+
+        if (Opt == "Adam") or (Opt == "AdamW") or (Opt is None):
+            self.opt = optim.AdamW(params, lr=lr, weight_decay=weight_decay)
         else:
             raise NotImplementedError()
 
-        if lossfun is None:
-            lossfun = nn.MSELoss()
-        if nepochs is None:
-            nepochs = 100
+        ###
+        # LOSS CALCULATION
+        ###
+
+        self.lossfun = nn.MSELoss() if lossfun is None else lossfun
+        self.batch_lossfun = batch_lossfun
+
+        ###
+        # iteration
+        ###
+
+        self.epoch = 0
+        self.epochs = 100 if epochs is None else epochs
 
         if Schedule == "OneCycleLR":
-            niters = nepochs * len(_loader)
-            schedule = optim.lr_scheduler.OneCycleLR(opt, 1e-2, total_steps=niters)
+            total_steps = epochs * len(_data) // self._batch_size
+            self.schedule = optim.lr_scheduler.OneCycleLR(self.opt, max_lr=lr, total_steps=total_steps)
         elif Schedule == "CosineAnnealingLR":
-            niters = nepochs * len(_loader)
-            schedule = optim.lr_scheduler.CosineAnnealingLR(opt, niters)
+            niters = epochs * len(_loader)
+            self.schedule = optim.lr_scheduler.CosineAnnealingLR(self.opt, niters)
         elif Schedule is None:
-            schedule = optim.lr_scheduler.ConstantLR(opt, factor=1.0, total_iters=1e10)
+            self.schedule = optim.lr_scheduler.ConstantLR(self.opt, factor=1.0, total_iters=1e10)
         else:
             raise NotImplementedError()
 
-        config = {
-            "GNN" : GNN,
+        self.config = {
             "device" : device,
+            "gnn_loader" : self.gnn_loader,
 
-            "data_size" : len(_data),
-            "num_batches" : len(_data) // _batch_size,
+            "data_size" : len(self._data),
+            "num_batches" : len(self._data) // self._batch_size,
             "batch_size" : _batch_size,
 
-            "num_parameters" : num_parameters(model),
+            "num_parameters" : num_parameters(self.model),
 
             "learning_rate" : lr,
             "weight_decay" : weight_decay,
-            # "optimizer" : str(opt),
-            "schedule"  : str(schedule),
+            # "optimizer" : str(self.opt),
+            "schedule"  : str(self.schedule),
 
-            "nepochs" : nepochs,
-            "lossfun" : str(lossfun),
+            "epochs" : self.epochs,
+            "lossfun" : str(self.lossfun),
         }
 
         if verbose and print_config and (self.LOCAL_RANK == 0):
@@ -156,43 +181,16 @@ class Trainer:
             for (k, v) in config.items():
                 print(f"{k} : {v}")
 
-        # ASSIGN TO SELF
+        ###
+        # STATISTICS
+        ###
 
-        # MISC
-        self.GNN = GNN
-
-        # DATA
-        self._data = _data
-        self.data_ = data_
-        self.collate_fn = collate_fn
-        self._batch_size = _batch_size
-        self.batch_size_ = batch_size_
-        self._batch_size_ = _batch_size_
-
-        # MODEL
-        self.model = model
-
-        # OPT
-        self.opt = opt
-        self.schedule = schedule
-
-        self.lossfun = lossfun
-        self.batch_lossfun = batch_lossfun
-        self.nepochs = nepochs
-
-        # config, callback and printing
-        self.config = config
         self.statsfun = statsfun
         self.callbacks = collections.defaultdict(list)
 
-        self.verbose = verbose
-        self.print_config = print_config
-        self.print_batch = print_batch
-        self.print_epoch = print_epoch
-        self.stats_every = stats_every
-
-        # iteration
-        self.epoch = 0
+    #------------------------#
+    # CALLBACKS
+    #------------------------#
 
     # https://github.com/karpathy/minGPT/
     def add_callback(self, event: str, callback):
@@ -204,6 +202,10 @@ class Trainer:
     def trigger_callbacks(self, event: str):
         for callback in self.callbacks[event]:
             callback(self)
+
+    #------------------------#
+    # SAVE / LOAD
+    #------------------------#
 
     def save(self, save_path: str): # call only if device==0
         if self.LOCAL_RANK != 0:
@@ -221,15 +223,26 @@ class Trainer:
         return
 
     def load(self, load_path: str):
-        print(f"Loading {load_path}")
-        snapshot = torch.load(load_path)
+        if self.LOCAL_RANK == 0:
+            print(f"Loading checkpoint {load_path}")
+
+        snapshot = torch.load(load_path, weights_only=False)
 
         self.epoch = snapshot['epoch']
-        self.model.load_state_dict(snapshot['model_state'])
+        if self.DDP:
+            self.model.module.load_state_dict(snapshot['model_state'])
+            self.model.module.to(self.device)
+        else:
+            self.model.load_state_dict(snapshot['model_state'])
+            self.model.to(self.device)
         self.opt = snapshot['opt']
 
+    #------------------------#
+    # DATALOADER
+    #------------------------#
+
     def make_dataloader(self):
-        if self.GNN:
+        if self.gnn_loader:
             import torch_geometric as pyg
 
             DL = pyg.loader.DataLoader
@@ -266,6 +279,7 @@ class Trainer:
         ###
         # Printing
         ###
+
         if self.verbose and self.print_config and self.LOCAL_RANK == 0:
             print(f"Number of training samples: {len(self._data)}")
             if self.data_ is not None:
@@ -273,7 +287,7 @@ class Trainer:
             else:
                 print(f"No test data provided")
 
-            if self.GNN:
+            if self.gnn_loader:
                 for batch in self._loader:
                     print(batch)
                     break
@@ -288,16 +302,23 @@ class Trainer:
                     break
         return
 
+    #------------------------#
+    # TRAINING
+    #------------------------#
+
     def train(self):
         self.make_dataloader()
-        self.statistics()
 
-        while self.epoch < self.nepochs:
+        self.trigger_callbacks("epoch_start")
+        self.statistics()
+        self.trigger_callbacks("epoch_end")
+
+        while self.epoch < self.epochs:
             self.epoch += 1
 
-            # self.trigger_callbacks("epoch_start")
+            self.trigger_callbacks("epoch_start")
             self.train_epoch()
-            # self.trigger_callbacks("epoch_end")
+            self.trigger_callbacks("epoch_end")
 
             if (self.epoch % self.stats_every) == 0:
                 (_l, _s), (l_, s_) = self.statistics()
@@ -333,7 +354,7 @@ class Trainer:
 
             if print_batch:
                 batch_iterator.set_description(
-                    f"[Epoch {self.epoch} / {self.nepochs}] " +
+                    f"[Epoch {self.epoch} / {self.epochs}] " +
                     f"LR {self.schedule.get_last_lr()[0]:.2e} " +
                     f"LOSS {loss.item():.8e}"
                 )
@@ -344,7 +365,7 @@ class Trainer:
         if self.batch_lossfun is not None:
             batch = batch.to(self.device)
             loss = self.batch_lossfun(self.model, batch)
-        elif self.GNN:
+        elif self.gnn_loader:
             batch = batch.to(self.device)
             yh = self.model(batch)
             loss = self.lossfun(yh, batch.y)
@@ -358,10 +379,14 @@ class Trainer:
         return loss
 
     def batch_size(self, batch):
-        if self.GNN:
+        if self.gnn_loader:
             return batch.y.size(0)
         else:
             return batch[1].size(0)
+
+    #------------------------#
+    # STATISTICS
+    #------------------------#
 
     @torch.no_grad()
     def evaluate(self, loader):
@@ -398,7 +423,7 @@ class Trainer:
 
         # printing
         if self.print_epoch and self.verbose and (self.LOCAL_RANK == 0):
-            msg = f"[Epoch {self.epoch} / {self.nepochs}] "
+            msg = f"[Epoch {self.epoch} / {self.epochs}] "
             if self.loader_ is not None:
                 msg += f"TRAIN LOSS: {_loss:.6e} | TEST LOSS: {loss_:.6e}"
             else:
@@ -411,4 +436,5 @@ class Trainer:
             print(msg)
 
         return (_loss, _stats), (loss_, stats_)
+#======================================================================#
 #

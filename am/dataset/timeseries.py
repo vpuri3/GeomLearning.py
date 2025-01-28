@@ -11,6 +11,8 @@ import copy
 import json
 from typing import Union
 
+from .utils import (timeseries_dataset, merge_timeseries)
+
 __all__ = [
     'TimeseriesDatasetTransform',
     'TimeseriesDataset',
