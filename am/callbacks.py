@@ -6,6 +6,9 @@ from tqdm import tqdm
 
 import mlutils
 
+from .time_march import march_case
+from .visualize import visualize_timeseries_pyv
+
 __all__ = [
     'FinaltimeCallback',
     'TimeseriesCallback',
@@ -13,8 +16,9 @@ __all__ = [
 
 #======================================================================#
 class Callback:
-    def __init__(self, case_dir: str, save_every=None):
+    def __init__(self, case_dir: str, mesh: bool, save_every=None):
         self.case_dir = case_dir
+        self.mesh = mesh
         self.save_every = save_every
 
     def get_ckpt_dir(self, trainer: mlutils.Trainer, final: bool):
@@ -24,6 +28,10 @@ class Callback:
             ckpt_dirs = [dir for dir in os.listdir(self.case_dir) if dir.startswith('ckpt')]
             nsave = len(ckpt_dirs) #+ 1
             ckpt_dir = os.path.join(self.case_dir, f'ckpt{str(nsave).zfill(2)}')
+
+        if os.path.exists(ckpt_dir):
+            print(f"Removing {ckpt_dir}")
+            shutil.rmtree(ckpt_dir)
 
         return ckpt_dir
 
@@ -50,7 +58,9 @@ class Callback:
             if isinstance(data, torch.utils.data.Subset):
                 data = data.dataset
 
+            data.transform.mesh = True if val else self.mesh
             data.transform.orig = val
+            data.transform.elems = val
             data.transform.metadata = val
 
         return
@@ -69,7 +79,7 @@ class Callback:
         #------------------------#
 
         ckpt_dir = self.get_ckpt_dir(trainer, final)
-        print("saving checkpoint to", ckpt_dir)
+        print(f"saving checkpoint to {ckpt_dir}")
         os.makedirs(ckpt_dir, exist_ok=True)
 
         # save model
@@ -118,16 +128,60 @@ class FinaltimeCallback(Callback):
 
 #======================================================================#
 class TimeseriesCallback(Callback):
+    def __init__(
+        self, case_dir: str, save_every=None, 
+        autoreg_start=1, num_eval_cases=None
+    ):
+        super().__init__(case_dir, save_every)
+        self.autoreg_start = autoreg_start
+        self.num_eval_cases = num_eval_cases
+
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
 
         device = trainer.device
         model  = trainer.model.module if trainer.DDP else trainer.model
 
-        for (dataset, split) in zip([trainer._data, trainer.data_], ['train', 'test']):
-            if dataset is None:
+        _data = trainer._data
+        data_ = trainer.data_
+
+        _transform = _data.transform
+        transform_ = data_.transform if data_ is not None else None
+
+        K = self.autoreg_start
+        _C = min(self.num_eval_cases, len(_data.case_files))
+        C_ = min(self.num_eval_cases, len(data_.case_files)) if data_ is not None else None
+
+        _cases = [_data[_data.case_range(c)] for c in range(_C)]
+        cases_ = [data_[data_.case_range(c)] for c in range(C_)] if data_ is not None else None
+
+        for (cases, transform, split) in zip(
+            [_cases, cases_], [_transform, transform_], ['train', 'test'],
+        ):
+            if cases is None:
                 print(f"No {split} dataset.")
             else:
                 print(f"Evaluating {split} dataset.")
+
+            for icase in tqdm(range(len(cases))):
+                case = cases[icase]
+                case_data = cases[icase]
+                ii = str(icase).zfill(2)
+    
+                for (autoreg, ext) in zip([True, False], ['AR', 'NR']):
+                    eval_data, l2s, r2s = march_case(
+                        model, case_data, transform,
+                        autoreg=autoreg, device=device, K=K,
+                    )
+    
+                    name = f'{os.path.basename(self.case_dir)}-{split}{ii}-{ext}'
+                    case_dir = os.path.join(ckpt_dir, name)
+                    visualize_timeseries_pyv(eval_data, case_dir, merge=True, name=name)
+    
+                    r2_file = os.path.join(ckpt_dir, f'{name}.txt')
+                    with open(r2_file, 'w') as f:
+                        f.write('Step\tMSE\tR-Square\n')
+                        for (k, (l2,r2)) in enumerate(zip(l2s, r2s)):
+                            f.write(f'{k}\t{l2s[k]}\t{r2s[k]}\n')
 
         return
 

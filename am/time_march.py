@@ -10,8 +10,9 @@ __all__ = [
 
 #======================================================================#
 @torch.no_grad()
-def march_case(model, case_data, transform,
-        autoreg=True, K=1, verbose=False, device=None, tol=1e-4,
+def march_case(
+    model, case_data, transform,
+    autoreg=True, K=1, verbose=False, device=None, tol=1e-4,
 ):
 
     if device is None:

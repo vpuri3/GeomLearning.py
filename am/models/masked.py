@@ -3,15 +3,12 @@ import torch
 from torch import nn
 import torch_geometric as pyg
 
-from .meshGNN import MeshGraphNet
-
 __all__ = [
     'MaskedLoss',
-    'MaskedMGN',
+    'MaskedModel',
 ]
 
 #======================================================================#
-
 class MaskedLoss(torch.nn.Module):
     def __init__(self, mask: bool):
         super().__init__()
@@ -39,22 +36,28 @@ class MaskedLoss(torch.nn.Module):
         return loss
 
 #======================================================================#
-class MaskedMGN(nn.Module):
-    def __init__(self, ci, ce, co, w, num_layers, mask=True, mask_bulk=False):
+class MaskedModel(nn.Module):
+    def __init__(self, model, mask=True, mask_bulk=False):
         super().__init__()
         self.mask = mask
+        self.model = model
         self.mask_bulk = mask_bulk
-        self.gnn = MeshGraphNet(ci, ce, co, w, num_layers)
 
     @torch.no_grad()
     def reduce_graph(self, graph):
+
+        if hasattr(graph, 'edge_index'):
+            if graph.edge_index == None:
+                return graph
+        else:
+            return graph
 
         edge_index, edge_attr = pyg.utils.subgraph(
             graph.mask.view(-1), graph.edge_index, graph.edge_attr
         )
 
         return pyg.data.Data(
-            x=graph.x, edge_index=edge_index, edge_attr=edge_attr
+            x=graph.x, edge_index=edge_index, edge_attr=edge_attr,
         )
 
     def forward(self, graph, tol=1e-6):
@@ -62,10 +65,10 @@ class MaskedMGN(nn.Module):
         if self.mask:
             mask = graph.mask.view(-1, 1)
             subgraph = self.reduce_graph(graph)
-            x = self.gnn(subgraph)
+            x = self.model(subgraph)
             x = x * mask
         else:
-            x = self.gnn(graph)
+            x = self.model(graph)
 
         if self.mask_bulk:
             mask_bulk = graph.mask_bulk.view(-1, 1)
