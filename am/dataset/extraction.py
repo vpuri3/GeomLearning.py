@@ -23,7 +23,7 @@ __all__ = [
 #=================================#
 # Based on Andrew Porco's
 # https://github.com/andrewporco/netfabb//netfabb-tools/extract-stress-strain.py
-# which is in turn based on Kevin Ferguson's
+# which in turn is based on Kevin Ferguson's
 # https://github.com/kevinferg/netfabb-tools/extract-netfabb-data-binary.py
 #=================================#
 

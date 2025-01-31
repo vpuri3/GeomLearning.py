@@ -147,6 +147,8 @@ class Trainer:
 
         if Schedule == "OneCycleLR":
             total_steps = epochs * len(_data) // self._batch_size
+            if self.DISTRIBUTED:
+                total_steps = total_steps // dist.get_world_size()
             self.schedule = optim.lr_scheduler.OneCycleLR(self.opt, max_lr=lr, total_steps=total_steps)
         elif Schedule == "CosineAnnealingLR":
             niters = epochs * len(_loader)
@@ -331,7 +333,7 @@ class Trainer:
         if self.DDP:
             self._loader.sampler.set_epoch(self.epoch)
 
-        print_batch = self.verbose and (self.LOCAL_RANK == 0) and (len(self._loader) > 1) and self.print_batch
+        print_batch = self.verbose and (self.LOCAL_RANK == 0) and self.print_batch # and (len(self._loader) > 1)
 
         if print_batch:
             batch_iterator = tqdm(
@@ -358,7 +360,7 @@ class Trainer:
                     f"LR {self.schedule.get_last_lr()[0]:.2e} " +
                     f"LOSS {loss.item():.8e}"
                 )
-        #
+
         return
 
     def batch_loss(self, batch):

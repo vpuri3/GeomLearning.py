@@ -4,6 +4,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from timm.layers import trunc_normal_
+# from timm.models.layers import trunc_normal_ # 
 from einops import rearrange, repeat
 
 __all__ = [

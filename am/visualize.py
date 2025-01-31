@@ -24,19 +24,44 @@ __all__ = [
 #======================================================================#
 # PyVista
 #======================================================================#
-def visualize_pyv(graph):
+def visualize_pyv(graph, out_file=None):
     mesh = mesh_pyv(graph.pos, graph.elems)
     mesh.point_data['disp'] = graph.disp.numpy(force=True)
     mesh.point_data['temp'] = graph.temp.numpy(force=True)
     mesh.point_data['vmstr'] = graph.vmstr.numpy(force=True)
-    if graph.x is not None:
-        mesh.point_data['source'] = graph.x.numpy(force=True)
-    if graph.y is not None:
-        mesh.point_data['target'] = graph.y.numpy(force=True)
-    if graph.e is not None:
-        mesh.point_data['error'] = graph.e.numpy(force=True)
-    if graph.mask is not None:
+
+    try:
+        mesh.point_data['source_normalized'] = graph.x.numpy(force=True)
+    except:
+        pass
+
+    try:
+        mesh.point_data['target_normalized'] = graph.y.numpy(force=True)
+    except:
+        pass
+
+    try:
+        mesh.point_data['pred_normalized'] = graph.yh.numpy(force=True)
+    except:
+        pass
+
+    try:
+        mesh.point_data['error_normalized'] = graph.e.numpy(force=True)
+    except:
+        pass
+
+    try:
+        mesh.point_data['pred'] = graph.yp.numpy(force=True)
+    except:
+        pass
+
+    try:
         mesh.point_data['mask'] = graph.mask.numpy(force=True)
+    except:
+        pass
+
+    if out_file is not None:
+        mesh.save(out_file)
 
     return mesh
 
@@ -50,18 +75,38 @@ def visualize_timeseries_pyv(dataset, out_dir, icase=None, merge=None, name=None
         graph = dataset[i]
         mesh = mesh_pyv(graph.pos, graph.elems)
 
+        if graph.disp.ndim == 3: # merge
+            istep = graph.metadata['time_step']
+            mesh.point_data['disp']  = graph.disp[istep].numpy(force=True)
+            mesh.point_data['temp']  = graph.temp[istep].numpy(force=True)
+            mesh.point_data['vmstr'] = graph.vmstr[istep].numpy(force=True)
+        else: # == 2
+            mesh.point_data['disp']  = graph.disp.numpy(force=True)
+            mesh.point_data['temp']  = graph.temp.numpy(force=True)
+            mesh.point_data['vmstr'] = graph.vmstr.numpy(force=True)
+
         try:
-            mesh.point_data['source'] = graph.x.numpy(force=True)
+            mesh.point_data['source_normalized'] = graph.x.numpy(force=True)
         except:
             pass
 
         try:
-            mesh.point_data['target'] = graph.y.numpy(force=True)
+            mesh.point_data['target_normalized'] = graph.y.numpy(force=True)
         except:
             pass
 
         try:
-            mesh.point_data['error'] = graph.e.numpy(force=True)
+            mesh.point_data['pred_normalized'] = graph.yh.numpy(force=True)
+        except:
+            pass
+
+        try:
+            mesh.point_data['error_normalized'] = graph.e.numpy(force=True)
+        except:
+            pass
+
+        try:
+            mesh.point_data['pred'] = graph.yp.numpy(force=True)
         except:
             pass
 
@@ -74,16 +119,6 @@ def visualize_timeseries_pyv(dataset, out_dir, icase=None, merge=None, name=None
             mesh.point_data['mask_bulk'] = graph.mask_bulk.numpy(force=True)
         except:
             pass
-
-        if graph.disp.ndim == 3: # merge
-            istep = graph.metadata['time_step']
-            mesh.point_data['disp']  = graph.disp[istep].numpy(force=True)
-            mesh.point_data['temp']  = graph.temp[istep].numpy(force=True)
-            mesh.point_data['vmstr'] = graph.vmstr[istep].numpy(force=True)
-        else: # == 2
-            mesh.point_data['disp']  = graph.disp.numpy(force=True)
-            mesh.point_data['temp']  = graph.temp.numpy(force=True)
-            mesh.point_data['vmstr'] = graph.vmstr.numpy(force=True)
 
         mesh.save(os.path.join(out_dir, f'data{str(i).zfill(2)}.vtu'))
 

@@ -2,13 +2,13 @@ import torch
 import torch_geometric as pyg
 import torch.multiprocessing as mp
 
-import scipy
 import numpy as np
 from tqdm import tqdm
 
 import os
 
 from .utils import makegraph
+from .transform import DatasetTransform
 
 __all__ = [
     'FinaltimeDatasetTransform',
@@ -18,59 +18,13 @@ __all__ = [
 #======================================================================#
 # TRANSFORM
 #======================================================================#
-class FinaltimeDatasetTransform:
-    def __init__(
-        self,
-        disp=True, vmstr=True, temp=True,
-        mesh=True, elems=False, orig=False,
-        metadata=False,
-    ):
-
-        # fields
-        self.disp  = disp
-        self.vmstr = vmstr
-        self.temp  = temp
-
-        self.mesh  = mesh
-        self.elems = elems
-        self.orig  = orig
-
-        self.metadata = metadata
-
-        # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate)
-        # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
-        # vmstr: [0, ~5e3] Pascal (?)
-        # temp : Celcius [25, ~300]
-
-        self.pos_scale = torch.tensor([30., 30., 60.])
-        self.disp_scale  = 1.
-        self.vmstr_scale = 1000.
-        self.temp_scale  = 500.
-
-        # makefields
-        self.nfields = disp + vmstr + temp 
-
-        scale = []
-        scale = [*scale, self.disp_scale ] if self.disp  else scale
-        scale = [*scale, self.vmstr_scale] if self.vmstr else scale
-        scale = [*scale, self.temp_scale ] if self.temp  else scale
-        self.scale = torch.tensor(scale)
-
-        assert self.nfields == len(scale)
-
-        return
-
-    def __call__(self, graph, tol=1e-4):
+class FinaltimeDatasetTransform(DatasetTransform):
+    def __call__(self, graph):
 
         N  = graph.pos.size(0)
         md = graph.metadata
 
-        # normalize fields
-        pos   = graph.pos   / self.pos_scale
-        disp  = graph.disp  / self.disp_scale
-        vmstr = graph.vmstr / self.vmstr_scale
-        temp  = graph.temp  / self.temp_scale
-        edge_dxyz = graph.edge_dxyz / self.pos_scale
+        pos, disp, vmstr, temp, edge_dxyz = self.normalize_fields(graph)
 
         # only consider z disp
         disp = disp[:, 2:]
@@ -92,24 +46,7 @@ class FinaltimeDatasetTransform:
         y = torch.cat(ys, dim=-1)
 
         edge_attr = edge_dxyz
-
-        data = pyg.data.Data(x=x, y=y)
-
-        if self.mesh:
-            data.edge_attr  = edge_attr
-            data.edge_index = graph.edge_index
-        if self.elems:
-            data.elems = graph.elems
-        if self.orig:
-            data.pos   = graph.pos
-            data.disp  = graph.disp
-            data.vmstr = graph.vmstr
-            data.temp  = graph.temp
-        if self.metadata:
-            data.metadata = graph.metadata
-
-        # print(data)
-        # assert False
+        data = self.make_pyg_data(graph, edge_attr, x=x, y=y)
 
         return data
 

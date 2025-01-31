@@ -3,7 +3,6 @@ import torch_geometric as pyg
 import torch.multiprocessing as mp
 
 import scipy
-import numpy as np
 from tqdm import tqdm
 
 import os
@@ -12,6 +11,7 @@ import json
 from typing import Union
 
 from .utils import (timeseries_dataset, merge_timeseries)
+from .transform import DatasetTransform
 
 __all__ = [
     'TimeseriesDatasetTransform',
@@ -22,7 +22,7 @@ __all__ = [
 #======================================================================#
 # TRANSFORM
 #======================================================================#
-class TimeseriesDatasetTransform:
+class TimeseriesDatasetTransform(DatasetTransform):
     def __init__(
         self,
         disp=True, vmstr=True, temp=True,
@@ -30,43 +30,13 @@ class TimeseriesDatasetTransform:
         metadata=False, merge=True, interpolate=True,
     ):
 
-        # fields
-        self.disp  = disp
-        self.vmstr = vmstr
-        self.temp  = temp
-        self.mesh  = mesh
+        super().__init__(
+            disp=disp, vmstr=vmstr, temp=temp,
+            mesh=mesh, elems=elems, orig=orig, metadata=metadata,
+        )
 
-        self.mesh  = mesh
-        self.elems = elems
-        self.orig  = orig
-
-        self.metadata = metadata
-
-        # dataset
         self.merge = merge
         self.interpolate = interpolate
-
-        # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate)
-        # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
-        # vmstr: [0, ~5e3] Pascal (?)
-        # temp : Celcius [25, ~300]
-        # time: [0, 1]
-
-        self.pos_scale = torch.tensor([30., 30., 60.])
-        self.disp_scale  = 1.
-        self.vmstr_scale = 1000.
-        self.temp_scale  = 500.
-
-        # makefields
-        self.nfields = disp + vmstr + temp 
-
-        scale = []
-        scale = [*scale, self.disp_scale ] if self.disp  else scale
-        scale = [*scale, self.vmstr_scale] if self.vmstr else scale
-        scale = [*scale, self.temp_scale ] if self.temp  else scale
-        self.scale = torch.tensor(scale)
-
-        assert self.nfields == len(scale)
 
         return
 
@@ -163,11 +133,7 @@ class TimeseriesDatasetTransform:
         # mask_bulk = fmin + (1 + torch.tanh(zz)) * (1 - fmin) / 2
 
         # normalize fields
-        pos   = graph.pos   / self.pos_scale
-        disp  = graph.disp  / self.disp_scale
-        vmstr = graph.vmstr / self.vmstr_scale
-        temp  = graph.temp  / self.temp_scale
-        edge_dxyz = graph.edge_dxyz / self.pos_scale
+        pos, disp, vmstr, temp, edge_dxyz = self.normalize_fields(graph)
 
         # time
         t  = torch.full((N, 1), graph.metadata['t_val'])
@@ -176,24 +142,24 @@ class TimeseriesDatasetTransform:
         # fields (works for merged=True)
         if self.merge:
             if not last_step:
-            
+
                 disp0  = disp[ istep, :, 2].view(-1,1)
                 vmstr0 = vmstr[istep, :, 0].view(-1,1)
                 temp0  = temp[ istep, :, 0].view(-1,1)
-            
+
                 disp1  = disp[ istep+1, :, 2].view(-1,1)
                 vmstr1 = vmstr[istep+1, :, 0].view(-1,1)
                 temp1  = temp[ istep+1, :, 0].view(-1,1)
-            
+
                 if self.interpolate:
                     disp0  = self.interpolate_layer(disp0,  graph, istep, tol=tol)
                     vmstr0 = self.interpolate_layer(vmstr0, graph, istep, tol=tol)
                     temp0  = self.interpolate_layer(temp0,  graph, istep, tol=tol)
-            
+
                 disp_in  = disp0
                 vmstr_in = vmstr0
                 temp_in  = temp0
-            
+
                 disp_out  = disp1  - disp0
                 vmstr_out = vmstr1 - vmstr0
                 temp_out  = temp1  - temp0
@@ -201,10 +167,10 @@ class TimeseriesDatasetTransform:
             else:
                 disp_in  = torch.zeros((N, 1))
                 disp_out = torch.zeros((N, 1))
-            
+
                 vmstr_in  = torch.zeros((N, 1))
                 vmstr_out = torch.zeros((N, 1))
-            
+
                 temp_in  = torch.zeros((N, 1))
                 temp_out = torch.zeros((N, 1))
         else:
@@ -241,21 +207,7 @@ class TimeseriesDatasetTransform:
         y = torch.cat(ys, dim=-1)
 
         edge_attr = edge_dxyz
-
-        data = pyg.data.Data(x=x, y=y, t=t, mask=mask, mask_bulk=mask_bulk,)
-
-        if self.mesh:
-            data.edge_attr  = edge_attr
-            data.edge_index = graph.edge_index
-        if self.elems:
-            data.elems = graph.elems
-        if self.orig:
-            data.pos   = graph.pos
-            data.disp  = graph.disp[istep]
-            data.vmstr = graph.vmstr[istep]
-            data.temp  = graph.temp[istep]
-        if self.metadata:
-            data.metadata = graph.metadata
+        data = self.make_pyg_data(graph, edge_attr, x=x, y=y, t=t, mask=mask, mask_bulk=mask_bulk,)
 
         return data
 

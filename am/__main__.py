@@ -15,6 +15,7 @@ import mlutils
 # DATADIR_BASE       = 'data/'
 DATADIR_BASE       = '/home/shared/'
 DATADIR_RAW        = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_raw')
+DATADIR_EXT        = os.path.join(DATADIR_RAW , 'extracted', 'SandBox')
 DATADIR_TIMESERIES = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_timeseries')
 DATADIR_FINALTIME  = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_finaltime')
 
@@ -25,7 +26,7 @@ def train_timeseries(cfg, device):
     DISTRIBUTED = mlutils.is_torchrun()
     LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
 
-    case_dir = os.path.join(CASEDIR, cfg.name)
+    case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
     #=================#
     # DATA
@@ -78,7 +79,7 @@ def train_timeseries(cfg, device):
     # TRAIN
     #=================#
 
-    callback = am.TimeseriesCallback(case_dir, cfg.GNN, autoreg_start=cfg.autoreg_start, num_eval_cases=cfg.num_eval_cases)
+    callback = am.TimeseriesCallback(case_dir, cfg.GNN, num_eval_cases=cfg.num_eval_cases, autoreg_start=cfg.autoreg_start)
     lossfun = torch.nn.MSELoss()
     batch_lossfun = am.MaskedLoss(cfg.mask)
 
@@ -94,12 +95,13 @@ def train_timeseries(cfg, device):
 
             kw = dict(
                 device=device, gnn_loader=True, stats_every=cfg.epochs//10,
-                Opt='AdamW', weight_decay=cfg.weight_decay, lossfun=lossfun,
+                Opt='AdamW', weight_decay=cfg.weight_decay, lossfun=lossfun, epochs=cfg.epochs,
                 _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
                 batch_lossfun=batch_lossfun,
             )
 
-            kw = dict(lr=5e-4, epochs=cfg.epochs, **kw,)
+            # kw = dict(lr=5e-4, **kw,)
+            kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
             trainer = mlutils.Trainer(model, _data, data_, **kw)
             trainer.add_callback('epoch_end', callback)
             trainer.train()
@@ -119,18 +121,25 @@ def train_finaltime(cfg, device):
     DISTRIBUTED = mlutils.is_torchrun()
     LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
 
-    case_dir = os.path.join(CASEDIR, cfg.name)
+    case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
     #=================#
     # DATA
     #=================#
 
     DATADIR = os.path.join(DATADIR_FINALTIME, r"data_0-100")
-    DATADIR = os.path.join(DATADIR_FINALTIME, r"data_100-200")
+    # DATADIR = os.path.join(DATADIR_FINALTIME, r"data_100-200")
 
     transform = am.FinaltimeDatasetTransform(disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=cfg.GNN)
     dataset = am.FinaltimeDataset(DATADIR, transform=transform)#, force_reload=True)
     _data, data_ = torch.utils.data.random_split(dataset, [0.8, 0.2])
+
+    # _data = torch.utils.data.random_split(dataset, [0.01, 0.99])[0] # works
+    # _data = torch.utils.data.random_split(dataset, [0.05, 0.95])[0] # fails
+    # data_ = None
+    #
+    # print(len(_data))
+    # # assert False
 
     #=================#
     # MODEL
@@ -147,7 +156,7 @@ def train_finaltime(cfg, device):
             space_dim=ci, out_dim=co, fun_dim=0,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
-            # slice_num=32,
+            slice_num=64,
         )
     else:
         raise NotImplementedError()
@@ -157,7 +166,7 @@ def train_finaltime(cfg, device):
     #=================#
 
     lossfun  = torch.nn.MSELoss()
-    callback = am.FinaltimeCallback(case_dir, cfg.GNN)
+    callback = am.FinaltimeCallback(case_dir, cfg.GNN, num_eval_cases=cfg.num_eval_cases)
 
     if cfg.train:
         if cfg.epochs > 0:
@@ -167,12 +176,12 @@ def train_finaltime(cfg, device):
 
             kw = dict(
                 device=device, gnn_loader=True, stats_every=cfg.epochs//10,
-                Opt='AdamW', weight_decay=cfg.weight_decay, lossfun=lossfun,
+                Opt='AdamW', weight_decay=cfg.weight_decay, lossfun=lossfun, epochs=cfg.epochs,
                 _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_
             )
 
-            kw = dict(lr=5e-4, epochs=cfg.epochs, **kw,)
-            # kw = dict(lr=1e-3, Schedule="OneCycleLR", epochs=cfg.epochs, **kw,)
+            # kw = dict(lr=5e-4, **kw,)
+            kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
             trainer = mlutils.Trainer(model, _data, data_, **kw)
             trainer.add_callback('epoch_end', callback)
             trainer.train()
@@ -188,10 +197,10 @@ def train_finaltime(cfg, device):
     return
 
 #======================================================================#
-def vis_timeseries(cfg, num_workers=12):
+def vis_finaltime(cfg, num_workers=None):
 
     DIRS = [
-        # r'data_0-100',
+        r'data_0-100',
         r'data_100-200',
         r'data_200-300',
         r'data_300-400',
@@ -199,15 +208,39 @@ def vis_timeseries(cfg, num_workers=12):
         r'data_500-600',
     ]
 
-    # for DIR in DIRS:
-    #     DATADIR  = os.path.join(DATADIR_TIMESERIES, DIR)
-    #     print(DIR)
-    #     dataset  = am.TimeseriesDataset(DATADIR, merge=cfg.merge, force_reload=True, num_workers=8)
+    for DIR in DIRS:
+        DATADIR = os.path.join(DATADIR_FINALTIME, DIR)
+        dataset = am.FinaltimeDataset(DATADIR)
+        vis_dir = os.path.join(CASEDIR, cfg.exp_name, DIR)
+        os.makedirs(vis_dir, exist_ok=False)
+    
+        print(vis_dir)
+
+        for icase in tqdm(range(len(dataset))):
+            data = dataset[icase]
+            ii = str(icase).zfill(3)
+            case_name = data.metadata['case_name']
+            out_file = os.path.join(vis_dir, f'{ii}_{case_name}.vtu')
+            am.visualize_pyv(data, out_file)
+
+    return
+
+#======================================================================#
+def vis_timeseries(cfg, num_workers=12):
+
+    DIRS = [
+        r'data_0-100',
+        # r'data_100-200',
+        # r'data_200-300',
+        # r'data_300-400',
+        # r'data_400-500',
+        # r'data_500-600',
+    ]
 
     for DIR in DIRS:
         DATADIR  = os.path.join(DATADIR_TIMESERIES, DIR)
         dataset  = am.TimeseriesDataset(DATADIR, merge=cfg.merge)
-        case_dir = os.path.join(CASEDIR, cfg.name)
+        case_dir = os.path.join(CASEDIR, cfg.exp_name)
         vis_dir  = os.path.join(case_dir, DIR)
     
         print(DIR)
@@ -225,6 +258,7 @@ def vis_timeseries(cfg, num_workers=12):
 
 #======================================================================#
 def test_timeseries_extraction():
+    ext_dir = DATADIR_EXT
     ext_dir = "/home/shared/netfabb_ti64_hires_out/extracted/SandBox/"
     out_dir = "/home/shared/netfabb_ti64_hires_out/tmp/"
     errfile = os.path.join(out_dir, "error.txt")
@@ -251,12 +285,9 @@ class Config:
     '''
 
     # case configuration
-    name: str = 'test'
+    exp_name: str = 'exp'
     seed: int = 123
     train: bool = False
-
-    # timeseries dataset
-    merge: bool = True
 
     # fields
     disp: bool  = True
@@ -277,7 +308,8 @@ class Config:
     tra_num_heads: int = 16
     tra_mlp_ratio: float = 2.0
 
-    # dataset
+    # timeseries  dataset
+    merge: bool = True
     mask: bool = True
     blend: bool = True
     mask_bulk: bool = False
@@ -285,7 +317,7 @@ class Config:
 
     # training arguments
     epochs: int = 100
-    weight_decay: float = 0e-4
+    weight_decay: float = 5e-3
 
     # eval arguments
     num_eval_cases: int = 20
@@ -305,18 +337,20 @@ if __name__ == "__main__":
     mlutils.set_seed(cfg.seed)
     #===============#
 
-    case_dir = os.path.join(CASEDIR, cfg.name)
+    case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
     if cfg.train:
         if os.path.exists(case_dir):
-            nd = len([dir for dir in os.listdir(CASEDIR) if dir.startswith(cfg.name)])
+            nd = len([dir for dir in os.listdir(CASEDIR) if dir.startswith(cfg.exp_name)])
             case_dir = case_dir + str(nd).zfill(2)
-            cfg.name = cfg.name + str(nd).zfill(2)
+            cfg.exp_name = cfg.exp_name + str(nd).zfill(2)
 
-        config_file = os.path.join(case_dir, 'config.yaml')
+        if DISTRIBUTED:
+            torch.distributed.barrier()
 
         if LOCAL_RANK == 0:
             os.makedirs(case_dir)
+            config_file = os.path.join(case_dir, 'config.yaml')
             print(f'Saving config to {config_file}')
             with open(config_file, 'w') as f:
                 yaml.safe_dump(vars(cfg), f)
@@ -330,7 +364,8 @@ if __name__ == "__main__":
     # Final time data
     #===============#
     # am.extract_zips(DATADIR_RAW, DATADIR_FINALTIME)
-    # train_finaltime(cfg, device)
+    # vis_finaltime(cfg)
+    train_finaltime(cfg, device)
 
     #===============#
     # Timeseries data
@@ -338,7 +373,7 @@ if __name__ == "__main__":
     # test_timeseries_extraction()
     # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True, num_workers=12)
     # vis_timeseries(cfg)
-    train_timeseries(cfg, device)
+    # train_timeseries(cfg, device)
 
     #===============#
     mlutils.dist_finalize()
