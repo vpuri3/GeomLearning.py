@@ -146,9 +146,8 @@ class Trainer:
         self.epochs = 100 if epochs is None else epochs
 
         if Schedule == "OneCycleLR":
-            total_steps = epochs * len(_data) // self._batch_size
-            if self.DISTRIBUTED:
-                total_steps = total_steps // dist.get_world_size()
+            bsize = self._batch_size * dist.get_world_size() if self.DISTRIBUTED else self._batch_size
+            total_steps = epochs * (len(_data) // bsize + 1)
             self.schedule = optim.lr_scheduler.OneCycleLR(self.opt, max_lr=lr, total_steps=total_steps)
         elif Schedule == "CosineAnnealingLR":
             niters = epochs * len(_loader)
