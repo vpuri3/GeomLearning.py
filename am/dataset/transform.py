@@ -30,10 +30,16 @@ class DatasetTransform:
 
         self.metadata = metadata
 
-        # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate)
+        # Normalization
+        # pos  : x, y [-30, 30] mm, z [-25, 60] mm ([-25, 0] build plate, [0, 60] part)
         # disp : x [-0.5, 0.5] mm, y [-0.05, 0.05] mm, z [-0.1, -1] mm
         # vmstr: [0, ~5e3] Pascal (?)
         # temp : Celcius [25, ~300]
+        #
+        # layer thickness is 2.5 mm. Total number of layer increments is 60 / 2.5 = 24
+        # layer 0 is [0, 2.5] mm
+        # layer 1 is [2.5, 5] mm
+        # layer 24 is [57.5, 60] mm
 
         self.pos_scale = torch.tensor([30., 30., 60.])
         self.disp_scale  = 1.
@@ -82,3 +88,4 @@ class DatasetTransform:
     def __call__(self, graph):
         pass
 #======================================================================#
+#

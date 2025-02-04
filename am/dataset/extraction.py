@@ -12,7 +12,6 @@ import struct
 import zipfile
 import shutil
 import collections
-import itertools
 
 __all__ = [
     'extract_zips',
@@ -279,6 +278,7 @@ def extract_from_dir(data_dir, out_dir, timeseries=None, num_workers=None):
 
     processor = Processor(data_dir, out_dir, timeseries)
 
+    mp.set_start_method('spawn', force=True)
     with mp.Pool(num_workers) as pool:
         outlist = list(tqdm(pool.imap_unordered(processor, cases), total=len(cases)))
 

@@ -46,9 +46,9 @@ class TimeseriesDatasetTransform(DatasetTransform):
         '''
 
         xs = []
-        xs = [*xs, data.disp[:,2].view(-1,1)] if self.disp  else xs
-        xs = [*xs, data.vmstr.view(-1,1)    ] if self.vmstr else xs
-        xs = [*xs, data.temp.view(-1,1)     ] if self.temp  else xs
+        xs = [*xs, data.disp[:,2].reshape(-1,1)] if self.disp  else xs
+        xs = [*xs, data.vmstr.reshape(-1,1)    ] if self.vmstr else xs
+        xs = [*xs, data.temp.reshape(-1,1)     ] if self.temp  else xs
 
         return torch.cat(xs, dim=-1) / self.scale.to(xs[0].device)
 
@@ -64,7 +64,7 @@ class TimeseriesDatasetTransform(DatasetTransform):
         # ensure not final step
         assert istep + 1 != graph.metadata['time_steps']
 
-        z = graph.pos[:,2].view(-1)
+        z = graph.pos[:,2].reshape(-1)
         zmax = graph.metadata['zmax']
         z0 = zmax[istep-1] if istep != 0 else 0
         z1 = zmax[istep]
@@ -143,13 +143,13 @@ class TimeseriesDatasetTransform(DatasetTransform):
         if self.merge:
             if not last_step:
 
-                disp0  = disp[ istep, :, 2].view(-1,1)
-                vmstr0 = vmstr[istep, :, 0].view(-1,1)
-                temp0  = temp[ istep, :, 0].view(-1,1)
+                disp0  = disp[ istep, :, 2].reshape(-1,1)
+                vmstr0 = vmstr[istep, :, 0].reshape(-1,1)
+                temp0  = temp[ istep, :, 0].reshape(-1,1)
 
-                disp1  = disp[ istep+1, :, 2].view(-1,1)
-                vmstr1 = vmstr[istep+1, :, 0].view(-1,1)
-                temp1  = temp[ istep+1, :, 0].view(-1,1)
+                disp1  = disp[ istep+1, :, 2].reshape(-1,1)
+                vmstr1 = vmstr[istep+1, :, 0].reshape(-1,1)
+                temp1  = temp[ istep+1, :, 0].reshape(-1,1)
 
                 if self.interpolate:
                     disp0  = self.interpolate_layer(disp0,  graph, istep, tol=tol)
@@ -263,11 +263,12 @@ class TimeseriesDataset(pyg.data.Dataset):
         num_cases = len(self.case_files)
         icases = range(num_cases)
 
-        with mp.Pool(self.num_workers) as pool:
-            list(tqdm(pool.imap_unordered(self.process_single, icases), total=num_cases))
-
         # for icase in tqdm(range(num_cases)):
         #     self.process_single(icase)
+
+        mp.set_start_method('spawn', force=True)
+        with mp.Pool(self.num_workers) as pool:
+            list(tqdm(pool.imap_unordered(self.process_single, icases), total=num_cases))
 
         return
 
@@ -277,8 +278,11 @@ class TimeseriesDataset(pyg.data.Dataset):
         if self.merge:
             graph = merge_timeseries(dataset, case_file[:-3])
             torch.save(graph, self.processed_paths[icase])
+            del graph
         else:
             torch.save(dataset, self.processed_paths[icase])
+
+        del dataset
         return
 
     def len(self):
@@ -307,10 +311,10 @@ class TimeseriesDataset(pyg.data.Dataset):
         path = self.processed_paths[icase]
 
         # LOAD GRAPH
-        if self.merge:
-            graph = torch.load(path, weights_only=False)
-        else:
-            graph = torch.load(path, weights_only=False)[time_step]
+        graph = torch.load(path, weights_only=False, mmap_mode='r')
+
+        if not self.merge:
+            graph = graph[time_step]
 
         # WRITE ACTIVE TIME-STEP (zero indexed)
         assert time_steps == graph.metadata['time_steps'] > 0

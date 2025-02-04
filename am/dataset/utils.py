@@ -1,4 +1,5 @@
 #
+import os
 import torch
 import torch_geometric as pyg
 
@@ -6,6 +7,8 @@ import scipy
 import numpy as np
 
 __all__ = [
+    'CompositeDataset',
+
     # dataset utilities
     'makegraph',
     'timeseries_dataset',
@@ -16,7 +19,27 @@ __all__ = [
     'interpolate_idw',
     'combine_meshes',
     'make_finest_mesh',
+    
+    # misc
+    'compute_aspect_ratios',
 ]
+
+#======================================================================#
+# COMPOSITE DATASET
+#======================================================================#
+class CompositeDataset(pyg.data.Dataset):
+    def __init__(self, *datasets, transform=None):
+        super().__init__(transform=transform)
+        self.datasets = datasets
+
+    def len(self):
+        return sum(len(dataset) for dataset in self.datasets)
+
+    def get(self, idx):
+        for dataset in self.datasets:
+            if idx < len(dataset):
+                return dataset[idx]
+            idx -= len(dataset)
 
 #======================================================================#
 # DATASET UTILITIES
@@ -95,7 +118,7 @@ def timeseries_dataset(case_file: str):
     assert case_file.endswith('.pt'), f"got invalid file name {case_file}"
     case_name = os.path.basename(case_file)[:-3]
 
-    case = torch.load(case_file, weights_only=False)
+    case = torch.load(case_file, weights_only=False, mmap_mode='r')
     nsteps = len(case['verts'])
 
     dataset = []
@@ -247,6 +270,36 @@ def make_finest_mesh(dataset, tol=1e-6):
     E = rm_overlapping_elems(V, E)
 
     return V, E
+
+#======================================================================#
+# MISC
+#======================================================================#
+
+def compute_aspect_ratios(pos, elems):
+    """
+    Compute aspect ratios for hexahedral elements.
+    
+    Args:
+        pos: (Nv, 3) array of node positions
+        elems: (Ne, 8) array of element connectivity
+        
+    Returns:
+        aspect_ratios: (Ne,) array of aspect ratios for each element
+    """
+    aspect_ratios = []
+    for elem in elems:
+        # Get the 12 edges of the hex element
+        edges = [
+            (elem[0], elem[1]), (elem[1], elem[2]), (elem[2], elem[3]), (elem[3], elem[0]),
+            (elem[4], elem[5]), (elem[5], elem[6]), (elem[6], elem[7]), (elem[7], elem[4]),
+            (elem[0], elem[4]), (elem[1], elem[5]), (elem[2], elem[6]), (elem[3], elem[7])
+        ]
+        
+        # Calculate lengths of all edges
+        lengths = [np.linalg.norm(pos[i] - pos[j]) for (i,j) in edges]
+        aspect_ratios.append(max(lengths)/min(lengths))
+    
+    return np.array(aspect_ratios)
 
 #======================================================================#
 #

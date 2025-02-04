@@ -1,6 +1,8 @@
 #
 import os
 import torch
+import torch_geometric as pyg
+
 import shutil
 from tqdm import tqdm
 
@@ -53,9 +55,10 @@ class Callback:
     def get_dataset_transform(self, dataset):
         if dataset is None:
             return None
-        if isinstance(dataset, torch.utils.data.Subset):
-            dataset = dataset.dataset
-        return dataset.transform
+        elif isinstance(dataset, torch.utils.data.Subset):
+            return self.get_dataset_transform(dataset.dataset)
+        elif isinstance(dataset, pyg.data.Dataset):
+            return dataset.transform
 
     def modify_dataset_transform(self, trainer: mlutils.Trainer, val: bool):
         """

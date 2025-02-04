@@ -85,18 +85,20 @@ class FinaltimeDataset(pyg.data.Dataset):
         num_cases = len(self.case_files)
         icases = range(num_cases)
 
+        # for icase in tqdm(range(num_cases)):
+        #     self.process_single(icase)
+
+        mp.set_start_method('spawn', force=True)
         with mp.Pool(self.num_workers) as pool:
             list(tqdm(pool.imap_unordered(self.process_single, icases), total=num_cases))
-
-        # for icase in tqdm(range(len(self))):
-        #     self.process_single(icase)
 
         return
 
     def process_single(self, icase):
-        data = np.load(self.raw_paths[icase])
+        data = np.load(self.raw_paths[icase], mmap_mode='r')
         graph = makegraph(data, self.case_files[icase][:-4], 1)
         torch.save(graph, self.processed_paths[icase])
+        del data, graph
         return
 
     def len(self):

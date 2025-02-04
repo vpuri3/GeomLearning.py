@@ -177,6 +177,7 @@ wandb/
 
 # Datasets
 data/
+/analysis/*.csv
 
 # Zip files
 *.zip
