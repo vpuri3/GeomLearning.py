@@ -217,7 +217,7 @@ def train_finaltime(cfg, device):
     return
 
 #======================================================================#
-def filter_dataset():
+def filter_dataset(force_reload=False):
     """
     remove cases with
     - extremely large meshes (>500k edges), (100k verts)
@@ -249,87 +249,100 @@ def filter_dataset():
     import seaborn as sns
     import matplotlib.pyplot as plt
     
-    stats = {
-        # mesh
-        'num_vertices': [],
-        'num_edges': [],
-        'min_aspect_ratio': [],
-        'max_aspect_ratio': [],
-
-        # fields
-        'max_z': [],
-        'max_disp': [],
-        'max_vmstr': [],
-
-        # metadata
-        'datadir': [],
-        'case_name': [],
-        # 'num_time_steps': [],
-    }
-
-    for (idir, DIR) in enumerate(SUBDIRS):
-        DATADIR = os.path.join(DATADIR_FINALTIME, DIR)
-        dataset = am.FinaltimeDataset(DATADIR)
-    
-        print(DATADIR)
-        
-        for case in dataset:
-            # Extract basic metadata
-            stats['datadir'].append(DATADIR)
-            stats['case_name'].append(case.metadata['case_name'])
-            # stats['num_time_steps'].append(len(case.metadata.time_steps))
-            
-            # Mesh statistics
-            stats['num_vertices'].append(case.pos.size(0))
-            stats['num_edges'].append(case.edge_index.size(1))
-            
-            # aspect_ratios = am.compute_aspect_ratios(case.pos.numpy(), case.elems.numpy())
-            # stats['min_aspect_ratio'].append(np.min(aspect_ratios))
-            # stats['max_aspect_ratio'].append(np.max(aspect_ratios))
-
-            stats['min_aspect_ratio'].append(-1)
-            stats['max_aspect_ratio'].append(-1)
-
-            # fields
-            stats['max_z'].append(torch.max(case.pos[:,2]).item())
-            stats['max_disp'].append(torch.max(case.disp[:,2]).item())
-            stats['max_vmstr'].append(torch.max(case.vmstr).item())
-
-            del case
-
-    # Create DataFrame
-    df = pd.DataFrame(stats)
-    
-    # derived statistics
-    df['edges_per_vert'] = df['num_edges'] / df['num_vertices']
-    
     # Create output directory based on mode
     case_dir = os.path.join(PROJDIR, 'analysis')
     os.makedirs(case_dir, exist_ok=True)
     
-    # Save and display statistics
-    stats_file = os.path.join(case_dir, 'dataset_statistics.csv')
-    df.to_csv(stats_file, index=False)
-    
-    print("Dataset statistics:")
-    print(df.describe())
+    # Save dataset statistics
+    stats_csv = os.path.join(case_dir, 'dataset_statistics.csv')
+    stats_txt = os.path.join(case_dir, 'dataset_statistics.txt')
+    stats_png = os.path.join(case_dir, 'dataset_statistics.png')
 
+    if force_reload:
+        stats = {
+            # mesh
+            'num_vertices': [],
+            'num_edges': [],
+            'min_aspect_ratio': [],
+            'max_aspect_ratio': [],
+
+            # fields
+            'max_z': [],
+            'max_disp': [],
+            'max_vmstr': [],
+
+            # metadata
+            'datadir': [],
+            'case_name': [],
+            # 'num_time_steps': [],
+        }
+
+        for (idir, DIR) in enumerate(SUBDIRS):
+            DATADIR = os.path.join(DATADIR_FINALTIME, DIR)
+            dataset = am.FinaltimeDataset(DATADIR)
+        
+            print(DATADIR)
+            
+            for case in dataset:
+                # Extract basic metadata
+                stats['datadir'].append(DATADIR)
+                stats['case_name'].append(case.metadata['case_name'])
+                # stats['num_time_steps'].append(len(case.metadata.time_steps))
+                
+                # Mesh statistics
+                stats['num_vertices'].append(case.pos.size(0))
+                stats['num_edges'].append(case.edge_index.size(1))
+                
+                # stats['min_aspect_ratio'].append(-1)
+                # stats['max_aspect_ratio'].append(-1)
+
+                pos, elems = case.pos.numpy(), case.elems.numpy()
+                aspect_ratios = am.compute_aspect_ratios(pos, elems)
+                stats['min_aspect_ratio'].append(np.min(aspect_ratios))
+                stats['max_aspect_ratio'].append(np.max(aspect_ratios))
+                del pos, elems
+
+                # fields
+                stats['max_z'].append(torch.max(case.pos[:,2]).item())
+                stats['max_disp'].append(torch.max(case.disp[:,2]).item())
+                stats['max_vmstr'].append(torch.max(case.vmstr).item())
+
+                del case
+        # Create DataFrame
+        df = pd.DataFrame(stats)
+
+        # derived statistics
+        df['edges_per_vert'] = df['num_edges'] / df['num_vertices']
+
+        # save stats.csv
+        print(df.describe())
+        df.to_csv(stats_csv, index=False)
+
+        # save stats.txt
+        with open(stats_txt, 'w') as f:
+            f.write(str(df.describe()))
+
+    else: # force_reload
+        df = pd.read_csv(stats_csv)
+        
     # Create probability density plots
     numerical_cols = df.select_dtypes(include=['number']).columns
     
     # Create plots
-    plt.figure(figsize=(15, 10))
-    plt.title('Probability density')
+    plt.figure(figsize=(20, 15))
+    plt.suptitle('Probability density', y=1.02)
     for i, col in enumerate(numerical_cols, 1):
         plt.subplot(4, 4, i)
         sns.kdeplot(df[col], fill=True, warn_singular=False)
-        plt.title(f'{col}')
-        plt.xlabel(col)
-        plt.ylabel('Density')
+        plt.title(f'{col}', pad=10)
+        plt.xlabel(col, labelpad=5)
+        plt.ylabel("")
+        plt.yticks([])
+        plt.tight_layout(pad=3.0)
 
     plt.tight_layout()
-    plot_file = os.path.join(case_dir, 'density_plots.png')
-    plt.savefig(plot_file)
+    plot_file = os.path.join(case_dir, stats_png)
+    plt.savefig(plot_file, bbox_inches='tight')
     plt.close()
 
     return
@@ -405,9 +418,9 @@ def test_extraction():
 
 def do_extraction():
 
-    # zip_file = os.path.join(DATADIR_RAW, "data_600-1000.zip")
-    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_600-1000")
-    # am.extract_from_zip(zip_file, out_dir)
+    zip_file = os.path.join(DATADIR_RAW, "data_1000-1500.zip")
+    out_dir  = os.path.join(DATADIR_FINALTIME, "data_1000-1500")
+    am.extract_from_zip(zip_file, out_dir)
     # am.extract_from_zip(zip_file, out_dir, timeseries=True)
 
     return
@@ -484,7 +497,7 @@ if __name__ == "__main__":
     #===============#
 
     if cfg.analysis:
-        filter_dataset()
+        filter_dataset(force_reload=False)
         exit()
 
     if cfg.extraction:
@@ -531,7 +544,6 @@ if __name__ == "__main__":
         train_timeseries(cfg, device)
     else:
         train_finaltime(cfg, device)
-
 
     #===============#
     mlutils.dist_finalize()

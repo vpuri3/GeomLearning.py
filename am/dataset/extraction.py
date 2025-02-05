@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 
 import torch.multiprocessing as mp
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import os
 import json
@@ -42,7 +42,7 @@ def extract_frames_from_case(casefile): # mechanical.case
         if "number of steps:" in line:
             fr = int(line[17:])
             nframes.append(fr)
-
+            
     return nframes
 
 def read80(f):
@@ -138,10 +138,16 @@ def get_case_info(casedir):
     nframes = extract_frames_from_case(casefile)
     if nframes == []:
         return dict(error=f"Case file missing frame count. {casedir}")
+    if len(nframes) != 2:
+        return dict(error=f"Case file with incorrect frame count. {casedir}")
 
     frame_count, semi_frame_count = nframes
-    assert (frame_count % 2) == 0, f"Frame count must be even. Got {frame_count}."
-    assert (semi_frame_count - 2) == (frame_count - 2) // 2, f"Got incompatible frame counts, {frame_count}, {semi_frame_count}."
+    if (frame_count % 2) != 0:
+        return dict(error=f"Frame count must be even. Got {frame_count} in {casedir}.")
+    if (semi_frame_count - 2) != (frame_count - 2) // 2:
+        return dict(error=f"Got incompatible frame counts, {frame_count}, {semi_frame_count} in {casedir}.")
+    if frame_count > 100:
+        return dict(error=f"Frame count is too large in {casedir}. Got {frame_count} > 100.")
 
     basefilename = f"{casedir}/results/{basename}mechanical00_{frame_count}."
     geo_file = os.path.join(casedir, 'results', f'{basename}mechanical_{semi_frame_count}.geo')
@@ -309,23 +315,40 @@ def extract_from_dir(data_dir, out_dir, timeseries=None, num_workers=None):
 
 def unzip(zip_path, extract_dir):
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        zip_ref.extractall(extract_dir)
-
-from concurrent.futures import ThreadPoolExecutor
+        # Use larger buffer size for faster extraction
+        for file in tqdm(zip_ref.namelist(), desc="Extracting", unit="file"):
+            zip_ref.extract(file, extract_dir)
 
 def extract_file(zip_file, file_name, out_dir):
     with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-        zip_ref.extract(file_name, out_dir)
+        # Use larger buffer size
+        with zip_ref.open(file_name) as source, open(os.path.join(out_dir, file_name), 'wb') as target:
+            shutil.copyfileobj(source, target, length=1024*1024)  # 1MB buffer
 
-def unzip_parallel(zip_file, out_dir, num_workers=None):
+def unzip_parallel(zip_file, out_dir, num_workers=None, chunk_size=10):
     if num_workers is None:
         num_workers = mp.cpu_count() // 2
 
     with zipfile.ZipFile(zip_file, 'r') as zip_ref:
         file_names = zip_ref.namelist()
+        # Filter out directories and sort by size (largest first)
+        files_to_extract = sorted(
+            [f for f in file_names if not f.endswith('/')],
+            key=lambda x: zip_ref.getinfo(x).file_size,
+            reverse=True
+        )
 
+    # Create all directories first
+    dirs = [name for name in file_names if name.endswith('/')]
+    for dir_name in dirs:
+        os.makedirs(os.path.join(out_dir, dir_name), exist_ok=True)
+
+    # Extract files in parallel using chunks
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        executor.map(lambda file: extract_file(zip_file, file, out_dir), file_names)
+        # Process files in chunks to reduce overhead
+        for i in tqdm(range(0, len(files_to_extract), chunk_size), desc="Extracting chunks"):
+            chunk = files_to_extract[i:i + chunk_size]
+            list(executor.map(lambda file: extract_file(zip_file, file, out_dir), chunk))
 
 #=================================#
 # assemble data
