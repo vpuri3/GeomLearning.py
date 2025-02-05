@@ -177,7 +177,12 @@ wandb/
 
 # Datasets
 data/
+
+# Analysis
 /analysis/*.csv
+/analysis/exclusion_list.txt
+/analysis/mesh_aspect_ratios/
+/analysis/filtered/*.csv
 
 # Zip files
 *.zip

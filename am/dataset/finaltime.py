@@ -55,19 +55,19 @@ class FinaltimeDatasetTransform(DatasetTransform):
 #======================================================================#
 class FinaltimeDataset(pyg.data.Dataset):
     def __init__(
-        self, root, transform=None, pre_transform=None,
-        pre_filter=None, force_reload=False,
-        num_workers=None,
+        self, root, transform=None, force_reload=False,
+        num_workers=None, exclude_list=None,
     ):
-
         if num_workers is None:
             self.num_workers = mp.cpu_count() // 2
         else:
             self.num_workers = num_workers
 
         self.case_files = [c for c in os.listdir(root) if c.endswith('.npz')]
-        super().__init__(root, transform, pre_transform,
-                         pre_filter, force_reload=force_reload)
+        if exclude_list is not None:
+            self.case_files = [c for c in self.case_files if c not in exclude_list]
+
+        super().__init__(root, transform, force_reload=force_reload)
 
     @property
     def raw_paths(self):

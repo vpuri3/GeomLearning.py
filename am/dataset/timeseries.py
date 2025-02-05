@@ -216,9 +216,8 @@ class TimeseriesDatasetTransform(DatasetTransform):
 #======================================================================#
 class TimeseriesDataset(pyg.data.Dataset):
     def __init__(
-        self, root, transform=None, pre_transform=None,
-        pre_filter=None, force_reload=False,
-        merge=None, num_workers=None,
+        self, root, transform=None, force_reload=False,
+        merge=None, num_workers=None, exclude_list=None,
     ):
         """
         Create dataset of time-series
@@ -234,7 +233,8 @@ class TimeseriesDataset(pyg.data.Dataset):
 
         self.merge = merge
         self.case_files = [c for c in os.listdir(root) if c.endswith('.pt')]
-        # self.filter = None
+        if exclude_list is not None:
+            self.case_files = [c for c in self.case_files if c not in exclude_list]
 
         with open(os.path.join(root, 'series.json')) as file:
             time_step_dict = json.load(file)
@@ -242,8 +242,7 @@ class TimeseriesDataset(pyg.data.Dataset):
             [time_step_dict[case_file[:-3]] for case_file in self.case_files])
         self.time_steps_cum = self.time_steps.cumsum(0)
 
-        super().__init__(root, transform, pre_transform,
-                         pre_filter, force_reload=force_reload)
+        super().__init__(root, transform, force_reload=force_reload)
 
     @property
     def raw_paths(self):
