@@ -15,7 +15,6 @@ import collections
 
 __all__ = [
     'extract_zips',
-    'extract_from_dir',
     'extract_from_zip',
 ]
 
@@ -56,64 +55,85 @@ def read_ints(f,N):
     arr = np.array(struct.unpack(f"<{N}i", f.read(4*N)))
     return arr[0] if N == 1 else arr
 
-def read_geo_binary(path):
-    with open(path, 'rb') as f:
+def read_geo_binary(file_or_path):
+    # Handle both file paths and file-like objects
+    if isinstance(file_or_path, (str, bytes, os.PathLike)):
+        with open(file_or_path, 'rb') as f:
+            return _read_geo_binary(f)
+    else:
+        # Assume it's a file-like object
+        return _read_geo_binary(file_or_path)
 
-        ############ Info
-        assert read80(f) == 'Fortran Binary'
-        description1 = read80(f)
-        description2 = read80(f)
-        assert read80(f) == 'node id off'
-        assert read80(f) == 'element id off'
-        # extents_str = read80(f)       # No extents
-        # extents = read_floats(f,6)    # No extents
+def _read_geo_binary(f):
+    ############ Info
+    assert read80(f) == 'Fortran Binary'
+    description1 = read80(f)
+    description2 = read80(f)
+    assert read80(f) == 'node id off'
+    assert read80(f) == 'element id off'
+    # extents_str = read80(f)       # No extents
+    # extents = read_floats(f,6)    # No extents
 
-        ############ Begin part 1
-        assert read80(f) == 'part'
-        assert read_ints(f,1) == 1 # Should be 1 part only
-        description3 = read80(f)
+    ############ Begin part 1
+    assert read80(f) == 'part'
+    assert read_ints(f,1) == 1 # Should be 1 part only
+    description3 = read80(f)
 
-        ############ Coordinates
-        assert read80(f) == 'coordinates'
-        nn = read_ints(f,1)
-        # node_ids = read_ints(f,nn) # node id is off
-        x = read_floats(f,nn)
-        y = read_floats(f,nn)
-        z = read_floats(f,nn)
-        nodes = np.vstack([x,y,z]).T
+    ############ Coordinates
+    assert read80(f) == 'coordinates'
+    nn = read_ints(f,1)
+    # node_ids = read_ints(f,nn) # node id is off
+    x = read_floats(f,nn)
+    y = read_floats(f,nn)
+    z = read_floats(f,nn)
+    nodes = np.vstack([x,y,z]).T
 
-        ############ Elements
-        element_type = read80(f)
-        assert(element_type == 'hexa8')
-        # element_ids = read_ints(f,nn) # element id is off
-        ne = read_ints(f, 1)
-        elems = read_ints(f, 8*ne).reshape(ne,8)
+    ############ Elements
+    element_type = read80(f)
+    assert(element_type == 'hexa8')
+    # element_ids = read_ints(f,nn) # element id is off
+    ne = read_ints(f, 1)
+    elems = read_ints(f, 8*ne).reshape(ne,8)
 
     data = dict(description1=description1, description2=description2, description3=description3, 
                 nn=nn, nodes=nodes, element_type=element_type, ne=ne, elems=elems)
     return data
 
 
-def read_ens_binary(path, num_nodes, dim):
-    with open(path, 'rb') as f:
-        description = read80(f)
-        assert(read80(f) == 'part')
-        assert(read_ints(f, 1) == 1)
-        assert(read80(f) == 'coordinates')
-        arr = read_floats(f, num_nodes * dim)
+def read_ens_binary(file_or_path, num_nodes, dim):
+    # Handle both file paths and file-like objects
+    if isinstance(file_or_path, (str, bytes, os.PathLike)):
+        with open(file_or_path, 'rb') as f:
+            return _read_ens_binary(f, num_nodes, dim)
+    else:
+        # Assume it's a file-like object
+        return _read_ens_binary(file_or_path, num_nodes, dim)
+
+def _read_ens_binary(f, num_nodes, dim):
+    description = read80(f)
+    assert(read80(f) == 'part')
+    assert(read_ints(f, 1) == 1)
+    assert(read80(f) == 'coordinates')
+    arr = read_floats(f, num_nodes * dim)
     data = arr.reshape(dim, num_nodes).T
     return dict(description=description, data=data)
 
-def get_vertices_from_geo(filename, return_elements=False):
-    data = read_geo_binary(filename)
-    # print(data["nodes"], data["elems"])
+def get_vertices_from_geo(zip_path, internal_path, return_elements=False):
+    internal_path = internal_path.lstrip('/')  # Normalize path
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        with zip_ref.open(internal_path) as f:
+            data = read_geo_binary(f)
+
     if not return_elements:
         return data["nodes"]
     else:
         return data["nodes"], data["elems"]
 
-def get_values_from_ens(filename, num_nodes, dim):
-    data = read_ens_binary(filename, num_nodes, dim)
+def get_values_from_ens(zip_path, internal_path, num_nodes, dim):
+    internal_path = internal_path.lstrip('/')  # Normalize path
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        with zip_ref.open(internal_path) as f:
+            data = read_ens_binary(f, num_nodes, dim)
     return data["data"]
 
 #=================================#
@@ -121,87 +141,113 @@ def get_values_from_ens(filename, num_nodes, dim):
 #=================================#
 
 def get_case_info(casedir):
+    # Split the path into zip file and internal path
+    if '.zip/' in casedir:
+        zip_path, internal_path = casedir.split('.zip/', 1)
+        zip_path += '.zip'  # Add back the .zip extension
+        internal_path = internal_path.rstrip('/')  # Remove trailing slash if present
+        
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            basename = os.path.basename(internal_path) + "_"
+            
+            # Check for mechanical.case file
+            case_file_path = f"{internal_path}/results/{basename}mechanical.case"
+            if case_file_path not in zip_ref.namelist():
+                basename = ""
+                case_file_path = f"{internal_path}/results/mechanical.case"
+                if case_file_path not in zip_ref.namelist():
+                    return dict(error="Error preparing simulation.")
 
-    basename = get_basefile(casedir) + "_"
-    if not os.path.exists(f"{casedir}/results/{basename}mechanical.case"):
-        basename = ""
-        casefile = os.path.join(casedir, 'results', 'mechanical.case')
-        if not os.path.exists(casefile):
-            return dict(error="Error preparing simulation.")
+            # Check mechanical.out for termination
+            mech_out_path = f"{internal_path}/{basename}mechanical.out"
+            if mech_out_path in zip_ref.namelist():
+                with zip_ref.open(mech_out_path) as f:
+                    if 'Analysis terminated' in f.read().decode('utf-8'):
+                        return dict(error="Error running simulation.")
+            
+            # Get frame count from case file
+            with zip_ref.open(case_file_path) as f:
+                lines = f.read().decode('utf-8').splitlines()
+                nframes = []
+                for line in lines:
+                    if "number of steps:" in line:
+                        fr = int(line[17:])
+                        nframes.append(fr)
 
-    mech_outfile = os.path.join(casedir, f"{basename}mechanical.out")
-    with open(mech_outfile) as f:
-        if 'Analysis terminated' in f.read():
-            return dict(error="Error running simulation.")
+            if nframes == []:
+                return dict(error=f"Case file missing frame count. {casedir}")
+            if len(nframes) != 2:
+                return dict(error=f"Case file with incorrect frame count. {casedir}")
 
-    casefile = os.path.join(casedir, 'results', f'{basename}mechanical.case')
-    nframes = extract_frames_from_case(casefile)
-    if nframes == []:
-        return dict(error=f"Case file missing frame count. {casedir}")
-    if len(nframes) != 2:
-        return dict(error=f"Case file with incorrect frame count. {casedir}")
+            frame_count, semi_frame_count = nframes
+            if (frame_count % 2) != 0:
+                return dict(error=f"Frame count must be even. Got {frame_count} in {casedir}.")
+            if (semi_frame_count - 2) != (frame_count - 2) // 2:
+                return dict(error=f"Got incompatible frame counts, {frame_count}, {semi_frame_count} in {casedir}.")
+            if frame_count > 100:
+                return dict(error=f"Frame count is too large in {casedir}. Got {frame_count} > 100.")
 
-    frame_count, semi_frame_count = nframes
-    if (frame_count % 2) != 0:
-        return dict(error=f"Frame count must be even. Got {frame_count} in {casedir}.")
-    if (semi_frame_count - 2) != (frame_count - 2) // 2:
-        return dict(error=f"Got incompatible frame counts, {frame_count}, {semi_frame_count} in {casedir}.")
-    if frame_count > 100:
-        return dict(error=f"Frame count is too large in {casedir}. Got {frame_count} > 100.")
+            basefilename = f"{internal_path}/results/{basename}mechanical00_{frame_count}."
+            geo_file = f"{internal_path}/results/{basename}mechanical_{semi_frame_count}.geo"
+            if geo_file not in zip_ref.namelist():
+                return dict(error="Missing Geo file.")
 
-    basefilename = f"{casedir}/results/{basename}mechanical00_{frame_count}."
-    geo_file = os.path.join(casedir, 'results', f'{basename}mechanical_{semi_frame_count}.geo')
-    if not os.path.exists(geo_file):
-        return dict(error="Missing Geo file.")
+            geo_files = []
+            base_names = []
 
-    # # Grab files corresponding to all time-steps
-    # NetFabb write state twice for every layer. This is why there are ~twice
-    # as many `base_names` as `geo_files`. We want to grab the later file.
-    # 
-    # For both geo_files and base_names, the last two files correspond to 
-    # "cooling" and "substrate removal". We will skip those files for now.
-    #
-    # Based on mechanical.out, thermal.out
+            for i in range(1, semi_frame_count - 1):
+                geo_path = f"{internal_path}/results/{basename}mechanical_{i}.geo"
+                if geo_path not in zip_ref.namelist():
+                    return dict(error=f"Geo file {geo_path} not found.")
+                geo_files.append(geo_path)
 
-    geo_files  = [] # 0:semi_frame_count
-    base_names = [] # 1:frame_count
+                ii = 2 * i
+                base_name = f"{internal_path}/results/{basename}mechanical00_{ii}"
+                dis_path = base_name + '.dis.ens'
+                if dis_path not in zip_ref.namelist():
+                    return dict(error=f"Base file {dis_path} not found.")
+                base_names.append(base_name)
 
-    for i in range(1, semi_frame_count - 1):
-        geo_path  = os.path.join(casedir, 'results', f'{basename}mechanical_{i}.geo')
-        assert os.path.exists(geo_path ), f"Geo file {geo_path} not found."
-        geo_files.append(geo_path)
+            assert len(geo_files) == len(base_names)
 
-        ii = 2 * i
-        base_name = os.path.join(casedir, 'results', f'{basename}mechanical00_{ii}')
-        dis_path = base_name + '.dis.ens'
-        assert os.path.exists(dis_path), f"Base file {dis_path} not found."
-        base_names.append(base_name)
+            # Grab files corresponding to all time-steps
+            # NetFabb write state twice for every layer. This is why there are ~twice
+            # as many `base_names` as `geo_files`. We want to grab the later file.
+            # 
+            # For both geo_files and base_names, the last two files correspond to 
+            # "cooling" and "substrate removal". We will skip those files for now.
+            #
+            # Based on mechanical.out, thermal.out
 
-    assert len(geo_files) == len(base_names)
+            # for i in range(1, semi_frame_count + 1):
+            #     geo_path  = os.path.join(casedir, 'results', f'{basename}mechanical_{i}.geo')
+            #     assert os.path.exists(geo_path ), f"Geo file {geo_path} not found."
+            #     geo_files.append(geo_path)
+            #
+            # for i in range(frame_count):
+            #     ii = i+1
+            #     base_name = os.path.join(casedir, 'results', f'{basename}mechanical00_{ii}')
+            #     dis_path = base_name + '.dis.ens'
+            #     assert os.path.exists(dis_path), f"Base file {dis_path} not found."
+            #     base_names.append(base_name)
 
-    # for i in range(1, semi_frame_count + 1):
-    #     geo_path  = os.path.join(casedir, 'results', f'{basename}mechanical_{i}.geo')
-    #     assert os.path.exists(geo_path ), f"Geo file {geo_path} not found."
-    #     geo_files.append(geo_path)
-    #
-    # for i in range(frame_count):
-    #     ii = i+1
-    #     base_name = os.path.join(casedir, 'results', f'{basename}mechanical00_{ii}')
-    #     dis_path = base_name + '.dis.ens'
-    #     assert os.path.exists(dis_path), f"Base file {dis_path} not found."
-    #     base_names.append(base_name)
-
-    return dict(
-        geo=geo_file, basefilename=basefilename,
-        geo_files=geo_files, base_names=base_names,
-    )
+            return dict(
+                zip_path=zip_path,
+                internal_path=internal_path,
+                geo=geo_file, 
+                basefilename=basefilename,
+                geo_files=geo_files, 
+                base_names=base_names,
+            )
+    else:
+        return dict(error=f"Case directory {casedir} is not a zip file.")
 
 def get_finaltime_results(casedir):
     case_info = get_case_info(casedir)
     if len(case_info) == 1:
         return [case_info["error"],] # Case failed
     
-    verts, elems = get_vertices_from_geo(case_info["geo"], return_elements=True)
+    verts, elems = get_vertices_from_geo(case_info["zip_path"], case_info["geo"], return_elements=True)
     N_verts = verts.shape[0]
 
     result_types = dict(dis="disp", ept="strain", rcd="recoater_status", rct="recoater_clearance_percent", sd1="max_dir", sd2="mid_dir", sd3="min_dir",
@@ -210,7 +256,7 @@ def get_finaltime_results(casedir):
 
     results = dict(verts=verts, elems=elems)
     for key in result_types:
-        result = get_values_from_ens(case_info['basefilename'] + key + ".ens",N_verts, result_nums[key])
+        result = get_values_from_ens(case_info["zip_path"], case_info["basefilename"] + key + ".ens",N_verts, result_nums[key])
         results[result_types[key]] = result.astype(np.float32)
 
     return results
@@ -259,6 +305,7 @@ class Processor:
     def __call__(self, case):
         casedir = os.path.join(self.data_dir, case)
         results = self.result_func(casedir)
+        case = os.path.basename(case.rstrip('/'))
         if len(results) == 1:
             return False, [case], dict() # succ/fail, fail-case, series_dict
         else:
@@ -266,10 +313,12 @@ class Processor:
                 out_path = os.path.join(self.out_dir, case + '.pt')
                 torch.save(results, out_path)
                 N = len(results['verts'])
+                del results
                 return True, [], {case : N}
             else:
                 out_path = os.path.join(self.out_dir, case + '.npz')
                 np.savez(out_path, **results)
+                del results
                 return True, [], dict()
 
 def extract_from_dir(data_dir, out_dir, timeseries=None, num_workers=None):
@@ -278,9 +327,13 @@ def extract_from_dir(data_dir, out_dir, timeseries=None, num_workers=None):
     if num_workers is None:
         num_workers = mp.cpu_count() // 2
 
-    cases = os.listdir(data_dir)
-    cases = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
-    print(f"Loading displacement results from: {data_dir} into {out_dir}")
+    assert data_dir.endswith('.zip')
+
+    with zipfile.ZipFile(data_dir, 'r') as zip_ref:
+        cases = [f for f in zip_ref.namelist() 
+                 if f.startswith('SandBox/') and f.endswith('/') and f.count('/') == 2]
+    
+    print(f"Loading {len(cases)} cases from: {data_dir} into {out_dir}")
 
     processor = Processor(data_dir, out_dir, timeseries)
 
@@ -310,67 +363,11 @@ def extract_from_dir(data_dir, out_dir, timeseries=None, num_workers=None):
     return
 
 #=================================#
-# unzipping
-#=================================#
-
-def unzip(zip_path, extract_dir):
-    with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        # Use larger buffer size for faster extraction
-        for file in tqdm(zip_ref.namelist(), desc="Extracting", unit="file"):
-            zip_ref.extract(file, extract_dir)
-
-def extract_file(zip_file, file_name, out_dir):
-    with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-        # Use larger buffer size
-        with zip_ref.open(file_name) as source, open(os.path.join(out_dir, file_name), 'wb') as target:
-            shutil.copyfileobj(source, target, length=1024*1024)  # 1MB buffer
-
-def unzip_parallel(zip_file, out_dir, num_workers=None, chunk_size=10):
-    if num_workers is None:
-        num_workers = mp.cpu_count() // 2
-
-    with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-        file_names = zip_ref.namelist()
-        # Filter out directories and sort by size (largest first)
-        files_to_extract = sorted(
-            [f for f in file_names if not f.endswith('/')],
-            key=lambda x: zip_ref.getinfo(x).file_size,
-            reverse=True
-        )
-
-    # Create all directories first
-    dirs = [name for name in file_names if name.endswith('/')]
-    for dir_name in dirs:
-        os.makedirs(os.path.join(out_dir, dir_name), exist_ok=True)
-
-    # Extract files in parallel using chunks
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        # Process files in chunks to reduce overhead
-        for i in tqdm(range(0, len(files_to_extract), chunk_size), desc="Extracting chunks"):
-            chunk = files_to_extract[i:i + chunk_size]
-            list(executor.map(lambda file: extract_file(zip_file, file, out_dir), chunk))
-
-#=================================#
 # assemble data
 #=================================#
 def extract_from_zip(source_zip, target_dir, timeseries=None, num_workers=None):
     os.makedirs(target_dir, exist_ok=True)
-
-    # extract to temporary directory
-    extract_dir = os.path.join(target_dir, "extracted")
-    os.makedirs(extract_dir, exist_ok=True)
-    print(f"Unzipping {source_zip}...")
-    unzip(source_zip, extract_dir)
-    # unzip_parallel(source_zip, extract_dir, num_workers)
-
-    # get data
-    data_dir = os.path.join(extract_dir, "SandBox")
-    extract_from_dir(data_dir, target_dir, timeseries=timeseries, num_workers=num_workers)
-
-    # clean up
-    print(f"Cleaning up extracted file: {extract_dir}")
-    shutil.rmtree(extract_dir)
-
+    extract_from_dir(source_zip, target_dir, timeseries=timeseries, num_workers=num_workers)
     return
 
 def extract_zips(source_dir, target_dir, timeseries=None, num_workers=None):

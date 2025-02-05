@@ -33,6 +33,11 @@ SUBDIRS = [
     r'data_400-500',
     r'data_500-600',
     r'data_600-1000',
+    r'data_1000-1500',
+    r'data_1500-2000',
+    # r'data_2000-2500',
+    # r'data_2500-3000',
+    # r'data_3000-3500',
 ]
 
 CASEDIR = os.path.join('.', 'out', 'am')
@@ -293,14 +298,14 @@ def filter_dataset(force_reload=False):
                 stats['num_vertices'].append(case.pos.size(0))
                 stats['num_edges'].append(case.edge_index.size(1))
                 
-                # stats['min_aspect_ratio'].append(-1)
-                # stats['max_aspect_ratio'].append(-1)
+                stats['min_aspect_ratio'].append(-1)
+                stats['max_aspect_ratio'].append(-1)
 
-                pos, elems = case.pos.numpy(), case.elems.numpy()
-                aspect_ratios = am.compute_aspect_ratios(pos, elems)
-                stats['min_aspect_ratio'].append(np.min(aspect_ratios))
-                stats['max_aspect_ratio'].append(np.max(aspect_ratios))
-                del pos, elems
+                # pos, elems = case.pos.numpy(), case.elems.numpy()
+                # aspect_ratios = am.compute_aspect_ratios(pos, elems)
+                # stats['min_aspect_ratio'].append(np.min(aspect_ratios))
+                # stats['max_aspect_ratio'].append(np.max(aspect_ratios))
+                # del pos, elems
 
                 # fields
                 stats['max_z'].append(torch.max(case.pos[:,2]).item())
@@ -315,7 +320,6 @@ def filter_dataset(force_reload=False):
         df['edges_per_vert'] = df['num_edges'] / df['num_vertices']
 
         # save stats.csv
-        print(df.describe())
         df.to_csv(stats_csv, index=False)
 
         # save stats.txt
@@ -325,6 +329,9 @@ def filter_dataset(force_reload=False):
     else: # force_reload
         df = pd.read_csv(stats_csv)
         
+    # print stats
+    print(df.describe())
+
     # Create probability density plots
     numerical_cols = df.select_dtypes(include=['number']).columns
     
@@ -348,7 +355,7 @@ def filter_dataset(force_reload=False):
     return
 
 #======================================================================#
-def vis_finaltime(cfg, num_workers=None):
+def vis_finaltime(cfg, max_cases=10):
 
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
@@ -357,10 +364,11 @@ def vis_finaltime(cfg, num_workers=None):
         dataset = am.FinaltimeDataset(DATADIR)
         vis_dir = os.path.join(case_dir, DIR)
         os.makedirs(vis_dir, exist_ok=False)
-    
-        print(vis_dir)
 
-        for icase in tqdm(range(len(dataset))):
+        print(vis_dir)
+        num_cases = min(len(dataset), max_cases)
+
+        for icase in tqdm(range(num_cases)):
             data = dataset[icase]
             ii = str(icase).zfill(3)
             case_name = data.metadata['case_name']
@@ -370,7 +378,7 @@ def vis_finaltime(cfg, num_workers=None):
     return
 
 #======================================================================#
-def vis_timeseries(cfg, num_workers=12):
+def vis_timeseries(cfg, max_cases=10):
 
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
@@ -379,14 +387,12 @@ def vis_timeseries(cfg, num_workers=12):
         dataset  = am.TimeseriesDataset(DATADIR, merge=cfg.merge)
         vis_dir  = os.path.join(case_dir, DIR)
     
-        if idir > 1:
-            break
-        
-        print(DIR)
-
         case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
         num_cases = len(case_names)
     
+        print(vis_dir)
+        num_cases = min(num_cases, max_cases)
+
         for icase in tqdm(range(num_cases)):
             case_name = case_names[icase]
             idx_case  = dataset.case_range(case_name)
@@ -418,10 +424,15 @@ def test_extraction():
 
 def do_extraction():
 
-    zip_file = os.path.join(DATADIR_RAW, "data_1000-1500.zip")
-    out_dir  = os.path.join(DATADIR_FINALTIME, "data_1000-1500")
+    zip_file = os.path.join(DATADIR_RAW, "data_1500-2000.zip")
+    out_dir  = os.path.join(DATADIR_FINALTIME, "data_1500-2000")
     am.extract_from_zip(zip_file, out_dir)
     # am.extract_from_zip(zip_file, out_dir, timeseries=True)
+
+    # zip_file = os.path.join(DATADIR_RAW, "data_0-100.zip")
+    # out_dir  = os.path.join(DATADIR_FINALTIME, "dump")
+    # am.extract_from_zip(zip_file, out_dir)
+    # # am.extract_from_zip(zip_file, out_dir, timeseries=True)
 
     return
 
@@ -497,7 +508,8 @@ if __name__ == "__main__":
     #===============#
 
     if cfg.analysis:
-        filter_dataset(force_reload=False)
+        # filter_dataset(force_reload=False)
+        filter_dataset(force_reload=True)
         exit()
 
     if cfg.extraction:
@@ -505,13 +517,11 @@ if __name__ == "__main__":
         exit()
 
     if cfg.visualization:
-        # am.extract_zips(DATADIR_RAW, DATADIR_FINALTIME)
-        # vis_finaltime(cfg)
-
-        # test_extraction()
-        # am.extract_zips(DATADIR_RAW, DATADIR_TIMESERIES, timeseries=True, num_workers=12)
-        # vis_timeseries(cfg)
-        pass
+        if cfg.timeseries:
+            vis_timeseries(cfg)
+        else:
+            vis_finaltime(cfg)
+        exit()
 
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
