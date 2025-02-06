@@ -63,8 +63,9 @@ class FinaltimeDataset(pyg.data.Dataset):
         else:
             self.num_workers = num_workers
 
-        self.case_files = [c for c in os.listdir(root) if c.endswith('.npz')]
+        self.case_files = [c for c in sorted(os.listdir(root)) if c.endswith('.npz')]
         if exclude_list is not None:
+            exclude_list = [e + '.npz' for e in exclude_list]
             self.case_files = [c for c in self.case_files if c not in exclude_list]
 
         super().__init__(root, transform, force_reload=force_reload)
@@ -78,7 +79,6 @@ class FinaltimeDataset(pyg.data.Dataset):
     def processed_paths(self):
         proc_dir = os.path.join(self.root, "processed")
         case_files = [f"case{str(i).zfill(5)}_{self.case_files[i][:-4]}.pt" for i in range(len(self))]
-        # case_files = [f"case{str(i).zfill(5)}_{case[:-4]}.pt" for (i, case) in enumerate(self.case_files)]
         return [os.path.join(proc_dir, case) for case in case_files]
 
     def process(self):
@@ -90,7 +90,10 @@ class FinaltimeDataset(pyg.data.Dataset):
 
         mp.set_start_method('spawn', force=True)
         with mp.Pool(self.num_workers) as pool:
-            list(tqdm(pool.imap_unordered(self.process_single, icases), total=num_cases))
+            list(tqdm(
+                pool.imap_unordered(self.process_single, icases), total=num_cases,
+                desc=f'Processing FinaltimeDataset in {self.root}',
+            ))
 
         return
 

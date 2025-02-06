@@ -232,7 +232,7 @@ class TimeseriesDataset(pyg.data.Dataset):
             self.num_workers = num_workers
 
         self.merge = merge
-        self.case_files = [c for c in os.listdir(root) if c.endswith('.pt')]
+        self.case_files = [c for c in sorted(os.listdir(root)) if c.endswith('.pt')]
         if exclude_list is not None:
             self.case_files = [c for c in self.case_files if c not in exclude_list]
 
@@ -267,7 +267,10 @@ class TimeseriesDataset(pyg.data.Dataset):
 
         mp.set_start_method('spawn', force=True)
         with mp.Pool(self.num_workers) as pool:
-            list(tqdm(pool.imap_unordered(self.process_single, icases), total=num_cases))
+            list(tqdm(
+                pool.imap_unordered(self.process_single, icases), total=num_cases,
+                desc=f'Processing TimeseriesDataset in {self.root}',
+            ))
 
         return
 

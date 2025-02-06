@@ -2,9 +2,12 @@
 import os
 import torch
 import torch_geometric as pyg
-
 import shutil
 from tqdm import tqdm
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 
 import mlutils
 
@@ -76,6 +79,7 @@ class Callback:
 
         return
 
+    @torch.no_grad()
     def __call__(self, trainer: mlutils.Trainer, final: bool=False):
 
         #------------------------#
@@ -131,28 +135,48 @@ class FinaltimeCallback(Callback):
             else:
                 print(f"Evaluating {split} dataset.")
 
-            out_file = os.path.join(ckpt_dir, f'{split}_stats.txt')
-            with open(out_file, 'w') as f:
-                f.write('Case\tName\tMSE\tR-Square\n')
-                for icase in tqdm(range(len(dataset))):
-                    data = dataset[icase].to(device)
-                    data.yh = model(data)
-                    data.e = data.y - data.yh
-                    data.yp = data.yh * transform.scale.to(device)
+            stats_file = os.path.join(ckpt_dir, f'{split}_stats.txt')
 
-                    case_name = data.metadata['case_name']
-                    l2 = torch.nn.MSELoss()(data.yh, data.y).item()
-                    r2 = mlutils.r2(data.yh, data.y)
+            case_nums = []
+            case_names = []
+            l2s = []
+            r2s = []
+            
+            for icase in tqdm(range(len(dataset))):
+                data = dataset[icase].to(device)
+                data.yh = model(data)
+                data.e = data.y - data.yh
+                data.yp = data.yh * transform.scale.to(device)
 
-                    ii = str(icase).zfill(4)
-                    f.write(f'{ii}\t{case_name}\t{l2:.8e}\t{r2}\n')
+                case_nums.append(str(icase).zfill(4))
+                case_names.append(data.metadata['case_name'])
+                l2s.append(torch.nn.MSELoss()(data.yh, data.y).item())
+                r2s.append(mlutils.r2(data.yh, data.y))
 
-                    if self.final and (icase < self.num_eval_cases):
-                        name = f'{os.path.basename(self.case_dir)}-{split}{ii}'
-                        out_file = os.path.join(ckpt_dir, name + '.vtu')
-                        visualize_pyv(data, out_file)
+                if self.final and (icase < self.num_eval_cases):
+                    name = f'{os.path.basename(self.case_dir)}-{split}{str(icase).zfill(4)}'
+                    out_file = os.path.join(ckpt_dir, name + '.vtu')
+                    visualize_pyv(data, out_file)
 
-                    del data
+                del data
+
+            df = pd.DataFrame({
+                'case_num': case_nums,
+                'case_name': case_names,
+                'MSE': l2s,
+                'R-Square': r2s
+            })
+            print(f"Saving {split} stats to {stats_file}")
+            df.to_csv(stats_file, index=False)
+            
+        if self.final:
+            r2_values = {'train': [], 'test': []}
+            for split in ['train', 'test']:
+                stats_file = os.path.join(ckpt_dir, f'{split}_stats.txt')
+                df = pd.read_csv(stats_file)
+                r2_values[split] = df['R-Square'].values
+            
+            plot_boxes(r2_values, filename=os.path.join(ckpt_dir, 'r2_boxplot.png'))
 
         return
 
@@ -210,5 +234,36 @@ class TimeseriesCallback(Callback):
                 del case_data
 
         return
+
+#======================================================================#
+def plot_boxes(
+    vals,
+    titles=dict(train="Training", test="Testing", od="Out-of-Dist."),
+    lims=[-1, 1],
+    filename=None,
+    dpi=175,
+):
+    n = len(vals)
+    plt.figure(figsize=(2*n, 3.4), dpi=dpi)
+
+    vals_list = []
+    ticklocs = []
+    ticklabels = []
+
+    for i, key in enumerate(vals):
+        vals_list.append(vals[key])
+        ticklocs.append(i)
+        ticklabels.append(f"{titles[key]}, N={len(vals[key])}")
+
+    plt.boxplot(vals_list, positions=ticklocs)
+    plt.xticks(ticklocs, ticklabels)
+    plt.ylabel('R-Squared')
+    plt.ylim(lims)
+    plt.xlim(ticklocs[0]-0.5, ticklocs[-1]+0.5)
+    plt.plot([ticklocs[0]-0.5, ticklocs[-1]+0.5], [0, 0],'k-', linewidth=0.5, zorder=-1)
+
+    plt.savefig(filename, bbox_inches = "tight")
+
+    return
 
 #======================================================================#
