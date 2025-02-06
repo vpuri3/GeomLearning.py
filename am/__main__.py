@@ -185,6 +185,8 @@ def train_finaltime(cfg, device):
             slice_num=64,
         )
     else:
+        if LOCAL_RANK == 0:
+            print(f"No model selected. Choose between GNN or TRA.")
         raise NotImplementedError()
 
     #=================#

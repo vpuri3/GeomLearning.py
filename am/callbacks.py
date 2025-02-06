@@ -32,11 +32,10 @@ class Callback:
         if self.final:
             ckpt_dir = os.path.join(self.case_dir, f'final')
         else:
-            ckpt_dirs = [dir for dir in os.listdir(self.case_dir) if dir.startswith('ckpt')]
-            nsave = len(ckpt_dirs) + 1
+            nsave = trainer.epoch // trainer.stats_every
             ckpt_dir = os.path.join(self.case_dir, f'ckpt{str(nsave).zfill(2)}')
 
-        if os.path.exists(ckpt_dir):
+        if os.path.exists(ckpt_dir) and trainer.LOCAL_RANK == 0:
             print(f"Removing {ckpt_dir}")
             shutil.rmtree(ckpt_dir)
 
@@ -83,25 +82,22 @@ class Callback:
     def __call__(self, trainer: mlutils.Trainer, final: bool=False):
 
         #------------------------#
-        if trainer.LOCAL_RANK != 0:
-            return
-
-        #------------------------#
         self.final = final
         if not self.final:
             if self.save_every is None:
                 self.save_every = trainer.stats_every
-            if trainer.epoch == 0:
-                return
+            # if trainer.epoch == 0:
+            #     return
             if (trainer.epoch % self.save_every) != 0:
                 return
         #------------------------#
 
         # save model
         ckpt_dir = self.get_ckpt_dir(trainer)
-        print(f"saving checkpoint to {ckpt_dir}")
-        os.makedirs(ckpt_dir, exist_ok=True)
-        trainer.save(os.path.join(ckpt_dir, 'model.pt'))
+        if trainer.LOCAL_RANK == 0:
+            print(f"saving checkpoint to {ckpt_dir}")
+            os.makedirs(ckpt_dir, exist_ok=True)
+            trainer.save(os.path.join(ckpt_dir, 'model.pt'))
 
         # update data transform
         self.modify_dataset_transform(trainer, True)
@@ -130,19 +126,30 @@ class FinaltimeCallback(Callback):
             ['train', 'test'],
         ):
             if dataset is None:
-                print(f"No {split} dataset.")
+                if trainer.LOCAL_RANK == 0:
+                    print(f"No {split} dataset.")
                 continue
-            else:
-                print(f"Evaluating {split} dataset.")
 
+            if self.final:
+                vis_dir = os.path.join(ckpt_dir, f'vis_{split}')
+                os.makedirs(vis_dir, exist_ok=True)
+            
             stats_file = os.path.join(ckpt_dir, f'{split}_stats.txt')
+
+            # distribute cases across ranks
+            cases_per_rank = len(dataset) // trainer.WORLD_SIZE 
+            icase0 = trainer.LOCAL_RANK * cases_per_rank
+            icase1 = (trainer.LOCAL_RANK + 1) * cases_per_rank if trainer.LOCAL_RANK != trainer.WORLD_SIZE - 1 else len(dataset)
 
             case_nums = []
             case_names = []
             l2s = []
             r2s = []
+
+            if trainer.LOCAL_RANK == 0:
+                pbar = tqdm(total=len(dataset), desc=f"Evaluating {split} dataset...")
             
-            for icase in tqdm(range(len(dataset))):
+            for icase in range(icase0, icase1):
                 data = dataset[icase].to(device)
                 data.yh = model(data)
                 data.e = data.y - data.yh
@@ -154,11 +161,19 @@ class FinaltimeCallback(Callback):
                 r2s.append(mlutils.r2(data.yh, data.y))
 
                 if self.final and (icase < self.num_eval_cases):
-                    name = f'{os.path.basename(self.case_dir)}-{split}{str(icase).zfill(4)}'
-                    out_file = os.path.join(ckpt_dir, name + '.vtu')
+                    base_name = os.path.basename(self.case_dir)
+                    case_name = data.metadata["case_name"]
+                    name = f'{base_name}-{split}{str(icase).zfill(4)}-{case_name}'
+                    out_file = os.path.join(vis_dir, name + '.vtu')
                     visualize_pyv(data, out_file)
 
                 del data
+                
+                if trainer.LOCAL_RANK == 0:
+                    pbar.update(trainer.WORLD_SIZE)
+            
+            if trainer.LOCAL_RANK == 0:
+                pbar.close()
 
             df = pd.DataFrame({
                 'case_num': case_nums,
@@ -166,16 +181,34 @@ class FinaltimeCallback(Callback):
                 'MSE': l2s,
                 'R-Square': r2s
             })
-            print(f"Saving {split} stats to {stats_file}")
-            df.to_csv(stats_file, index=False)
             
-        if self.final:
-            r2_values = {'train': [], 'test': []}
-            for split in ['train', 'test']:
-                stats_file = os.path.join(ckpt_dir, f'{split}_stats.txt')
-                df = pd.read_csv(stats_file)
-                r2_values[split] = df['R-Square'].values
+            # gather dataframe across ranks
+            if trainer.DDP:
+                local_data = df.to_dict('records')
+                
+                # Gather data from all processes
+                gathered_data = [None] * trainer.WORLD_SIZE
+                torch.distributed.all_gather_object(gathered_data, local_data)
+                
+                # Flatten the list of lists and create final DataFrame
+                all_data = [item for sublist in gathered_data for item in sublist]
+                df = pd.DataFrame(all_data)
+
+            if trainer.LOCAL_RANK == 0:
+                print(f"Saving {split} stats to {stats_file}")
+                df.to_csv(stats_file, index=False)
+        
+        if trainer.DDP:
+            torch.distributed.barrier()
             
+        r2_values = {'train': [], 'test': []}
+        for split in ['train', 'test']:
+            stats_file = os.path.join(ckpt_dir, f'{split}_stats.txt')
+            df = pd.read_csv(stats_file)
+            r2_values[split] = df['R-Square'].values
+
+        if trainer.LOCAL_RANK == 0:
+            print(f"Plotting R-Squared boxplot to {ckpt_dir}/r2_boxplot.png")
             plot_boxes(r2_values, filename=os.path.join(ckpt_dir, 'r2_boxplot.png'))
 
         return
@@ -205,6 +238,10 @@ class TimeseriesCallback(Callback):
             else:
                 print(f"Evaluating {split} dataset.")
 
+            if self.final:
+                vis_dir = os.path.join(ckpt_dir, f'vis_{split}')
+                os.makedirs(vis_dir, exist_ok=True)
+            
             C = min(self.num_eval_cases, len(dataset.case_files))
             cases = [dataset[dataset.case_range(c)] for c in range(C)]
 

@@ -75,6 +75,7 @@ class Trainer:
 
         self.DISTRIBUTED = is_torchrun()
         self.LOCAL_RANK = int(os.environ['LOCAL_RANK']) if self.DISTRIBUTED else 0
+        self.WORLD_SIZE = int(os.environ['WORLD_SIZE']) if self.DISTRIBUTED else 1
         if self.DISTRIBUTED:
             assert dist.is_initialized()
             self.DDP = dist.get_world_size() > 1
