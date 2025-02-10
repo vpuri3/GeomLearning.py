@@ -63,7 +63,6 @@ def train_timeseries(cfg, device):
         merge=cfg.merge, interpolate=cfg.interpolate, metadata=False,
     )
     DATADIRS = [os.path.join(DATADIR_TIMESERIES, DIR) for DIR in SUBDIRS]
-    # DATADIRS = DATADIRS[:2]
     DATADIRS = DATADIRS[:5]
     dataset = am.TimeseriesDataset(DATADIRS, merge=cfg.merge, exclude_list=exclude_list, transform=transform, verbose=LOCAL_RANK==0)
     _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
@@ -97,6 +96,7 @@ def train_timeseries(cfg, device):
             slice_num=64,
         )
     else:
+        print(f"No model selected. Choose between GNN or TRA.")
         raise NotImplementedError()
 
     model = am.MaskedModel(model, mask=cfg.mask, mask_bulk=cfg.mask_bulk)
@@ -378,7 +378,7 @@ class Config:
 
     # eval arguments
     num_eval_cases: int = 50
-    autoreg_start: int = 5
+    autoreg_start: int = 1
 
 if __name__ == "__main__":
     

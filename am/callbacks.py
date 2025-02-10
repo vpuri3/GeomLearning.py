@@ -263,8 +263,8 @@ class TimeseriesCallback(Callback):
                 case_data = dataset[case_idx]
                 case_name = case_data[0].metadata['case_name']
 
-                if len(case_nums) > max_eval_cases:
-                    break
+                # if len(case_nums) > max_eval_cases:
+                #     break
 
                 case_nums.append(icase)
                 case_names.append(case_name)
@@ -278,9 +278,8 @@ class TimeseriesCallback(Callback):
                     case_dir = os.path.join(split_dir, f"{split}{str(icase).zfill(3)}-{ext}-{case_name}")
                     file_name = f'{os.path.basename(self.case_dir)}-{split}{str(icase).zfill(4)}-{ext}-{case_name}'
 
-                    # if self.final and icase < self.num_eval_cases:
+                    # if self.final and len(case_nums) < self.num_eval_cases:
                     #     visualize_timeseries_pyv(eval_data, case_dir, merge=True, name=file_name)
-                    # out_file = os.path.join(split_dir, f'{file_name}_stats.txt')
 
                     if ext == 'AR':
                         l2_ARs.append(l2s)
@@ -325,37 +324,59 @@ class TimeseriesCallback(Callback):
             df_r2_NR = hstack_dataframes_across_ranks(df_r2_NR, trainer)
             
             if trainer.LOCAL_RANK == 0:
-                print(f"Saving {split} statistics to {split_dir}")
-                df_l2_AR.to_csv(os.path.join(split_dir, f'l2_AR_stats.txt'), index=False)
-                df_r2_AR.to_csv(os.path.join(split_dir, f'r2_AR_stats.txt'), index=False)
-                df_l2_NR.to_csv(os.path.join(split_dir, f'l2_NR_stats.txt'), index=False)
-                df_r2_NR.to_csv(os.path.join(split_dir, f'r2_NR_stats.txt'), index=False)
+                print(f"Saving {split} statistics to {ckpt_dir}")
+                df_l2_AR.to_csv(os.path.join(ckpt_dir, f'l2_AR_stats_{split}.txt'), index=False)
+                df_r2_AR.to_csv(os.path.join(ckpt_dir, f'r2_AR_stats_{split}.txt'), index=False)
+                df_l2_NR.to_csv(os.path.join(ckpt_dir, f'l2_NR_stats_{split}.txt'), index=False)
+                df_r2_NR.to_csv(os.path.join(ckpt_dir, f'r2_NR_stats_{split}.txt'), index=False)
             
         if trainer.DDP:
             torch.distributed.barrier()
 
-        # # make plots
-        # r2_values = {'train': [], 'test': []}
-        # l2_values = {'train': [], 'test': []}
-        # for split in ['train', 'test']:
-        #     df_l2_AR = pd.read_csv(os.path.join(split_dir, f'l2_AR_stats.txt'))
-        #     df_r2_AR = pd.read_csv(os.path.join(split_dir, f'r2_AR_stats.txt'))
-        #     df_l2_NR = pd.read_csv(os.path.join(split_dir, f'l2_NR_stats.txt'))
-        #     df_r2_NR = pd.read_csv(os.path.join(split_dir, f'r2_NR_stats.txt'))
+        # make plots
+        for split in ['train', 'test']:
+            # df_l2_AR = pd.read_csv(os.path.join(ckpt_dir, f'l2_AR_stats_{split}.txt'))
+            # df_l2_NR = pd.read_csv(os.path.join(ckpt_dir, f'l2_NR_stats_{split}.txt'))
+            df_r2_AR = pd.read_csv(os.path.join(ckpt_dir, f'r2_AR_stats_{split}.txt'))
+            # df_r2_NR = pd.read_csv(os.path.join(ckpt_dir, f'r2_NR_stats_{split}.txt'))
 
-            # r2_values[split] = df_r2_AR['R-Square'].values
-            # l2_values[split] = df_l2_AR['MSE'].values
-
-        # if trainer.LOCAL_RANK == 0:
-        #     print(f"Plotting R-Squared boxplot to {ckpt_dir}/r2_boxplot.png")
-        #     r2_boxplot(r2_values, filename=os.path.join(ckpt_dir, 'r2_boxplot.png'))
-
+            if trainer.LOCAL_RANK == 0:
+                print(f"Saving R-Squared plots to {ckpt_dir}/r2_plot_{split}.png")
+                r2_timeseries(df_r2_AR, filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
 
         return
 
 #======================================================================#
 # Plotting functions
 #======================================================================#
+def r2_timeseries(df, filename=None, dpi=175,):
+    plt.figure(figsize=(8, 4), dpi=dpi)
+    plt.ylim(-1, 1)
+    
+    medians = df.median(axis=1)
+    q1 = df.quantile(0.25, axis=1)
+    q3 = df.quantile(0.75, axis=1)
+    tstep = np.arange(len(medians))
+    
+    plt.plot(tstep, medians, color='k', label='Median')
+    plt.fill_between(
+        tstep, q1, q3,
+        color='k', alpha=0.2,
+        label='Middle 50%',
+    )
+    
+    plt.xlabel('Time Step')
+    plt.ylabel('R-Squared')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Save plot if filename is provided
+    if filename is not None:
+        plt.savefig(filename, bbox_inches='tight')
+        plt.close()
+
+    return
+
 def r2_boxplot(
     vals,
     titles=dict(train="Training", test="Testing", od="Out-of-Dist."),
