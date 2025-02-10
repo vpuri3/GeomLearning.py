@@ -184,5 +184,8 @@ data/
 /analysis/mesh_aspect_ratios/
 /analysis/filtered/*.csv
 
+# Out
+/out/am/*/*/*.txt
+
 # Zip files
 *.zip

@@ -174,7 +174,7 @@ def train_finaltime(cfg, device):
     # MODEL
     #=================#
 
-    ci = 3
+    ci = 3 #+ cfg.sdf
     ce = 3
     co = cfg.disp + cfg.vmstr + cfg.temp
 
@@ -188,8 +188,7 @@ def train_finaltime(cfg, device):
             slice_num=64,
         )
     else:
-        if LOCAL_RANK == 0:
-            print(f"No model selected. Choose between GNN or TRA.")
+        print(f"No model selected. Choose between GNN or TRA.")
         raise NotImplementedError()
 
     #=================#
@@ -350,6 +349,9 @@ class Config:
     disp: bool  = True
     vmstr: bool = False
     temp: bool  = False
+    
+    # features
+    sdf: bool = False
 
     # model
     GNN: bool = False
@@ -372,7 +374,7 @@ class Config:
     # timeseries  dataset
     merge: bool = True
     mask: bool = True
-    blend: bool = True
+    blend: bool = False
     mask_bulk: bool = False
     interpolate: bool = True
 
