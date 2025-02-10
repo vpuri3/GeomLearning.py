@@ -1,5 +1,7 @@
 #
 import os
+
+from sympy import print_fcode
 import torch
 import torch_geometric as pyg
 import shutil
@@ -86,8 +88,8 @@ class Callback:
         if not self.final:
             if self.save_every is None:
                 self.save_every = trainer.stats_every
-            # if trainer.epoch == 0:
-            #     return
+            if trainer.epoch == 0:
+                return
             if (trainer.epoch % self.save_every) != 0:
                 return
         #------------------------#
@@ -131,15 +133,18 @@ class FinaltimeCallback(Callback):
                 continue
 
             if self.final:
-                vis_dir = os.path.join(ckpt_dir, f'vis_{split}')
-                os.makedirs(vis_dir, exist_ok=True)
+                split_dir = os.path.join(ckpt_dir, f'vis_{split}')
+                os.makedirs(split_dir, exist_ok=True)
             
             stats_file = os.path.join(ckpt_dir, f'{split}_stats.txt')
 
             # distribute cases across ranks
-            cases_per_rank = len(dataset) // trainer.WORLD_SIZE 
+            num_cases = len(dataset)
+            cases_per_rank = num_cases // trainer.WORLD_SIZE 
             icase0 = trainer.LOCAL_RANK * cases_per_rank
-            icase1 = (trainer.LOCAL_RANK + 1) * cases_per_rank if trainer.LOCAL_RANK != trainer.WORLD_SIZE - 1 else len(dataset)
+            icase1 = (trainer.LOCAL_RANK + 1) * cases_per_rank if trainer.LOCAL_RANK != trainer.WORLD_SIZE - 1 else num_cases
+
+            max_eval_cases = self.num_eval_cases // trainer.WORLD_SIZE
 
             case_nums = []
             case_names = []
@@ -147,7 +152,7 @@ class FinaltimeCallback(Callback):
             r2s = []
 
             if trainer.LOCAL_RANK == 0:
-                pbar = tqdm(total=len(dataset), desc=f"Evaluating {split} dataset...")
+                pbar = tqdm(total=num_cases, desc=f"Evaluating {split} dataset")
             
             for icase in range(icase0, icase1):
                 data = dataset[icase].to(device)
@@ -155,16 +160,16 @@ class FinaltimeCallback(Callback):
                 data.e = data.y - data.yh
                 data.yp = data.yh * transform.scale.to(device)
 
-                case_nums.append(str(icase).zfill(4))
+                case_nums.append(icase)
                 case_names.append(data.metadata['case_name'])
                 l2s.append(torch.nn.MSELoss()(data.yh, data.y).item())
                 r2s.append(mlutils.r2(data.yh, data.y))
 
-                if self.final and (icase < self.num_eval_cases):
+                if self.final and (len(case_nums) < max_eval_cases):
                     base_name = os.path.basename(self.case_dir)
                     case_name = data.metadata["case_name"]
-                    name = f'{base_name}-{split}{str(icase).zfill(4)}-{case_name}'
-                    out_file = os.path.join(vis_dir, name + '.vtu')
+                    file_name = f'{base_name}-{split}{str(icase).zfill(4)}-{case_name}'
+                    out_file = os.path.join(split_dir, file_name + '.vtu')
                     visualize_pyv(data, out_file)
 
                 del data
@@ -183,16 +188,7 @@ class FinaltimeCallback(Callback):
             })
             
             # gather dataframe across ranks
-            if trainer.DDP:
-                local_data = df.to_dict('records')
-                
-                # Gather data from all processes
-                gathered_data = [None] * trainer.WORLD_SIZE
-                torch.distributed.all_gather_object(gathered_data, local_data)
-                
-                # Flatten the list of lists and create final DataFrame
-                all_data = [item for sublist in gathered_data for item in sublist]
-                df = pd.DataFrame(all_data)
+            df = vstack_dataframes_across_ranks(df, trainer)
 
             if trainer.LOCAL_RANK == 0:
                 print(f"Saving {split} stats to {stats_file}")
@@ -209,7 +205,7 @@ class FinaltimeCallback(Callback):
 
         if trainer.LOCAL_RANK == 0:
             print(f"Plotting R-Squared boxplot to {ckpt_dir}/r2_boxplot.png")
-            plot_boxes(r2_values, filename=os.path.join(ckpt_dir, 'r2_boxplot.png'))
+            r2_boxplot(r2_values, filename=os.path.join(ckpt_dir, 'r2_boxplot.png'))
 
         return
 
@@ -233,47 +229,134 @@ class TimeseriesCallback(Callback):
             ['train', 'test'],
         ):
             if dataset is None:
-                print(f"No {split} dataset.")
+                if trainer.LOCAL_RANK == 0:
+                    print(f"No {split} dataset.")
                 continue
-            else:
-                print(f"Evaluating {split} dataset.")
-
-            if self.final:
-                vis_dir = os.path.join(ckpt_dir, f'vis_{split}')
-                os.makedirs(vis_dir, exist_ok=True)
             
-            C = min(self.num_eval_cases, len(dataset.case_files))
-            cases = [dataset[dataset.case_range(c)] for c in range(C)]
+            split_dir = os.path.join(ckpt_dir, f'vis_{split}')
 
-            for icase in tqdm(range(len(cases))):
-                case = cases[icase]
-                case_data = cases[icase]
-                ii = str(icase).zfill(4)
-    
+            if trainer.LOCAL_RANK == 0:
+                os.makedirs(split_dir, exist_ok=True)
+            
+            # distribute cases across ranks
+            num_cases = len(dataset.case_files)
+            cases_per_rank = num_cases // trainer.WORLD_SIZE 
+            icase0 = trainer.LOCAL_RANK * cases_per_rank
+            icase1 = (trainer.LOCAL_RANK + 1) * cases_per_rank if trainer.LOCAL_RANK != trainer.WORLD_SIZE - 1 else num_cases
+            
+            max_eval_cases = self.num_eval_cases // trainer.WORLD_SIZE
+
+            case_nums = []
+            case_names = []
+
+            l2_ARs = []
+            l2_NRs = []
+
+            r2_ARs = []
+            r2_NRs = []
+
+            if trainer.LOCAL_RANK == 0:
+                pbar = tqdm(total=num_cases, desc=f"Evaluating {split} dataset")
+            
+            for icase in range(icase0, icase1):
+                case_idx = dataset.case_range(icase)
+                case_data = dataset[case_idx]
+                case_name = case_data[0].metadata['case_name']
+
+                if len(case_nums) > max_eval_cases:
+                    break
+
+                case_nums.append(icase)
+                case_names.append(case_name)
+                
                 for (autoreg, ext) in zip([True, False], ['AR', 'NR']):
                     eval_data, l2s, r2s = march_case(
                         model, case_data, transform,
                         autoreg=autoreg, device=device, K=self.autoreg_start,
                     )
-    
-                    name = f'{os.path.basename(self.case_dir)}-{split}{ii}-{ext}'
-                    case_dir = os.path.join(ckpt_dir, name)
-                    if self.final:
-                        visualize_timeseries_pyv(eval_data, case_dir, merge=True, name=name)
-    
-                    out_file = os.path.join(ckpt_dir, f'{name}_stats.txt')
-                    with open(out_file, 'w') as f:
-                        f.write('Step\tMSE\tR-Square\n')
-                        for (k, (l2, r2)) in enumerate(zip(l2s, r2s)):
-                            f.write(f'{k}\t{l2s[k]:.8e}\t{r2s[k]}\n')
+
+                    case_dir = os.path.join(split_dir, f"{split}{str(icase).zfill(3)}-{ext}-{case_name}")
+                    file_name = f'{os.path.basename(self.case_dir)}-{split}{str(icase).zfill(4)}-{ext}-{case_name}'
+
+                    # if self.final and icase < self.num_eval_cases:
+                    #     visualize_timeseries_pyv(eval_data, case_dir, merge=True, name=file_name)
+                    # out_file = os.path.join(split_dir, f'{file_name}_stats.txt')
+
+                    if ext == 'AR':
+                        l2_ARs.append(l2s)
+                        r2_ARs.append(r2s)
+                    else:
+                        l2_NRs.append(l2s)
+                        r2_NRs.append(r2s)
 
                     del eval_data 
+
                 del case_data
+                
+                if trainer.LOCAL_RANK == 0:
+                    pbar.update(trainer.WORLD_SIZE)
+                    
+            if trainer.LOCAL_RANK == 0:
+                pbar.close()
+
+            # Convert list of stats arrays into a DataFrame where each row represents
+            # a time step and each column represents a case
+            df_l2_AR = pd.DataFrame(l2_ARs).transpose()
+            df_r2_AR = pd.DataFrame(r2_ARs).transpose()
+            df_l2_NR = pd.DataFrame(l2_NRs).transpose()
+            df_r2_NR = pd.DataFrame(r2_NRs).transpose()
+
+            # Assign case numbers as column names
+            df_l2_AR.columns = case_nums
+            df_r2_AR.columns = case_nums
+            df_l2_NR.columns = case_nums
+            df_r2_NR.columns = case_nums
+
+            # Assign step numbers as index
+            df_l2_AR.index.name = 'Step'
+            df_r2_AR.index.name = 'Step'
+            df_l2_NR.index.name = 'Step'
+            df_r2_NR.index.name = 'Step'
+
+            # create dataframe for each autoreg
+            df_l2_AR = hstack_dataframes_across_ranks(df_l2_AR, trainer)
+            df_r2_AR = hstack_dataframes_across_ranks(df_r2_AR, trainer)
+            df_l2_NR = hstack_dataframes_across_ranks(df_l2_NR, trainer)
+            df_r2_NR = hstack_dataframes_across_ranks(df_r2_NR, trainer)
+            
+            if trainer.LOCAL_RANK == 0:
+                print(f"Saving {split} statistics to {split_dir}")
+                df_l2_AR.to_csv(os.path.join(split_dir, f'l2_AR_stats.txt'), index=False)
+                df_r2_AR.to_csv(os.path.join(split_dir, f'r2_AR_stats.txt'), index=False)
+                df_l2_NR.to_csv(os.path.join(split_dir, f'l2_NR_stats.txt'), index=False)
+                df_r2_NR.to_csv(os.path.join(split_dir, f'r2_NR_stats.txt'), index=False)
+            
+        if trainer.DDP:
+            torch.distributed.barrier()
+
+        # # make plots
+        # r2_values = {'train': [], 'test': []}
+        # l2_values = {'train': [], 'test': []}
+        # for split in ['train', 'test']:
+        #     df_l2_AR = pd.read_csv(os.path.join(split_dir, f'l2_AR_stats.txt'))
+        #     df_r2_AR = pd.read_csv(os.path.join(split_dir, f'r2_AR_stats.txt'))
+        #     df_l2_NR = pd.read_csv(os.path.join(split_dir, f'l2_NR_stats.txt'))
+        #     df_r2_NR = pd.read_csv(os.path.join(split_dir, f'r2_NR_stats.txt'))
+
+            # r2_values[split] = df_r2_AR['R-Square'].values
+            # l2_values[split] = df_l2_AR['MSE'].values
+
+        # if trainer.LOCAL_RANK == 0:
+        #     print(f"Plotting R-Squared boxplot to {ckpt_dir}/r2_boxplot.png")
+        #     r2_boxplot(r2_values, filename=os.path.join(ckpt_dir, 'r2_boxplot.png'))
+
 
         return
 
 #======================================================================#
-def plot_boxes(
+# Plotting functions
+#======================================================================#
+def r2_boxplot(
     vals,
     titles=dict(train="Training", test="Testing", od="Out-of-Dist."),
     lims=[-1, 1],
@@ -302,5 +385,59 @@ def plot_boxes(
     plt.savefig(filename, bbox_inches = "tight")
 
     return
+
+#======================================================================#
+# Combine DataFrames across distributed processes
+#======================================================================#
+def hstack_dataframes_across_ranks(df: pd.DataFrame, trainer: mlutils.Trainer) -> pd.DataFrame:
+    """
+    Combine DataFrames across distributed processes horizontally by adding columns.
+    
+    Args:
+        df: Local DataFrame to combine
+        trainer: Trainer object containing distributed training info
+        
+    Returns:
+        Combined DataFrame with columns from all processes
+    """
+    if not trainer.DDP:
+        return df
+        
+    local_data = df.to_dict('list')  # Get columns as lists
+    
+    # Gather data from all processes
+    gathered_data = [None] * trainer.WORLD_SIZE
+    torch.distributed.all_gather_object(gathered_data, local_data)
+    
+    # Combine columns from all processes
+    combined_data = {}
+    for rank_data in gathered_data:
+        combined_data.update(rank_data)
+        
+    return pd.DataFrame(combined_data)
+
+def vstack_dataframes_across_ranks(df: pd.DataFrame, trainer: mlutils.Trainer) -> pd.DataFrame:
+    """
+    Combine DataFrames across distributed processes vertically by adding rows.
+    
+    Args:
+        df: Local DataFrame to combine
+        trainer: Trainer object containing distributed training info
+        
+    Returns:
+        Combined DataFrame from all processes
+    """
+    if not trainer.DDP:
+        return df
+        
+    local_data = df.to_dict('records')
+    
+    # Gather data from all processes
+    gathered_data = [None] * trainer.WORLD_SIZE
+    torch.distributed.all_gather_object(gathered_data, local_data)
+    
+    # Flatten the list of lists and create final DataFrame
+    all_data = [item for sublist in gathered_data for item in sublist]
+    return pd.DataFrame(all_data)
 
 #======================================================================#

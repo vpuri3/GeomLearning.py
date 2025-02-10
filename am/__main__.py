@@ -54,24 +54,28 @@ def train_timeseries(cfg, device):
     # DATA
     #=================#
 
-    DATADIR = os.path.join(DATADIR_TIMESERIES, r"data_0-100")
-
+    # read in exclusion list
+    exclude_list = os.path.join(PROJDIR, 'analysis', 'exclusion_list.txt')
+    exclude_list = [line.strip() for line in open(exclude_list, 'r').readlines()]
+    
     transform = am.TimeseriesDatasetTransform(
         disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=cfg.GNN,
         merge=cfg.merge, interpolate=cfg.interpolate, metadata=False,
     )
-    dataset = am.TimeseriesDataset(DATADIR, transform=transform, merge=cfg.merge)
+    DATADIRS = [os.path.join(DATADIR_TIMESERIES, DIR) for DIR in SUBDIRS]
+    # DATADIRS = DATADIRS[:2]
+    DATADIRS = DATADIRS[:5]
+    dataset = am.TimeseriesDataset(DATADIRS, merge=cfg.merge, exclude_list=exclude_list, transform=transform, verbose=LOCAL_RANK==0)
     _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
-
+    
     # # run small experiments
-    # N1 = 30
-    # N2 = 10
+    # N1, N2 = 30, 10
     # _data, data_ = am.split_timeseries_dataset(dataset, indices=[range(N1), range(N1,N1+N2)])
 
-    # # smaller still experiments (3 (worst), 5, 6, 8, 9)
-    # _data, = am.split_timeseries_dataset(dataset, indices=[[3,5,6,8,9]])
-    # data_ = None
-
+    if LOCAL_RANK == 0:
+        print(f"Loaded {len(dataset.case_files)} cases from {DATADIR_TIMESERIES}")
+        print(f"Split into {len(_data.case_files)} train and {len(data_.case_files)} test cases")
+    
     #=================#
     # MODEL
     #=================#
@@ -90,7 +94,7 @@ def train_timeseries(cfg, device):
             space_dim=ci, out_dim=co, fun_dim=0,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
-            # slice_num=32,
+            slice_num=64,
         )
     else:
         raise NotImplementedError()
@@ -101,32 +105,31 @@ def train_timeseries(cfg, device):
     # TRAIN
     #=================#
 
-    callback = am.TimeseriesCallback(case_dir, cfg.GNN, num_eval_cases=cfg.num_eval_cases, autoreg_start=cfg.autoreg_start)
     lossfun = torch.nn.MSELoss()
     batch_lossfun = am.MaskedLoss(cfg.mask)
+    callback = am.TimeseriesCallback(case_dir, cfg.GNN, num_eval_cases=cfg.num_eval_cases, autoreg_start=cfg.autoreg_start)
 
-    if cfg.train:
-        if cfg.epochs > 0:
-            # # v100-32 GB
-            # _batch_size = 4 if len(_data.case_files) > 2 else 1
-            # batch_size_ = _batch_size_ = 12
+    if cfg.train and cfg.epochs > 0:
+        # # v100-32 GB
+        # _batch_size = 4 if len(_data.case_files) > 2 else 1
+        # batch_size_ = _batch_size_ = 12
 
-            # RTX 2070-12 GB
-            _batch_size = 1
-            batch_size_ = _batch_size_ = 1
+        # RTX 2070-12 GB
+        _batch_size = 1
+        batch_size_ = _batch_size_ = 1
 
-            kw = dict(
-                device=device, gnn_loader=True, stats_every=cfg.epochs//10,
-                Opt='AdamW', weight_decay=cfg.weight_decay, lossfun=lossfun, epochs=cfg.epochs,
-                _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
-                batch_lossfun=batch_lossfun,
-            )
+        kw = dict(
+            device=device, gnn_loader=True, stats_every=cfg.epochs//5,
+            Opt='AdamW', weight_decay=cfg.weight_decay, lossfun=lossfun, epochs=cfg.epochs,
+            _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
+            batch_lossfun=batch_lossfun,
+        )
 
-            # kw = dict(lr=5e-4, **kw,)
-            kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
-            trainer = mlutils.Trainer(model, _data, data_, **kw)
-            trainer.add_callback('epoch_end', callback)
-            trainer.train()
+        # kw = dict(lr=5e-4, **kw,)
+        kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
+        trainer = mlutils.Trainer(model, _data, data_, **kw)
+        trainer.add_callback('epoch_end', callback)
+        trainer.train()
 
     #=================#
     # ANALYSIS
@@ -196,23 +199,22 @@ def train_finaltime(cfg, device):
     lossfun  = torch.nn.MSELoss()
     callback = am.FinaltimeCallback(case_dir, cfg.GNN, num_eval_cases=cfg.num_eval_cases)
 
-    if cfg.train:
-        if cfg.epochs > 0:
-            _batch_size  = 1
-            batch_size_  = 1
-            _batch_size_ = 1
+    if cfg.train and cfg.epochs > 0:
+        _batch_size  = 1
+        batch_size_  = 1
+        _batch_size_ = 1
 
-            kw = dict(
-                device=device, gnn_loader=True, stats_every=cfg.epochs//10,
-                Opt='AdamW', weight_decay=cfg.weight_decay, lossfun=lossfun, epochs=cfg.epochs,
-                _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_
-            )
+        kw = dict(
+            device=device, gnn_loader=True, stats_every=cfg.epochs//10,
+            Opt='AdamW', weight_decay=cfg.weight_decay, lossfun=lossfun, epochs=cfg.epochs,
+            _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_
+        )
 
-            # kw = dict(lr=5e-4, **kw,)
-            kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
-            trainer = mlutils.Trainer(model, _data, data_, **kw)
-            trainer.add_callback('epoch_end', callback)
-            trainer.train()
+        # kw = dict(lr=5e-4, **kw,)
+        kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
+        trainer = mlutils.Trainer(model, _data, data_, **kw)
+        trainer.add_callback('epoch_end', callback)
+        trainer.train()
 
     #=================#
     # ANALYSIS
@@ -294,17 +296,29 @@ def test_extraction():
 
 def do_extraction():
 
-    zip_file = os.path.join(DATADIR_RAW, "data_2000-2500.zip")
-    out_dir  = os.path.join(DATADIR_FINALTIME, "data_2000-2500")
-    am.extract_from_zip(zip_file, out_dir)
+    zip_file = os.path.join(DATADIR_RAW, "data_600-1000.zip")
+    out_dir  = os.path.join(DATADIR_FINALTIME, "data_600-1000")
+    am.extract_from_zip(zip_file, out_dir, timeseries=True)
 
-    zip_file = os.path.join(DATADIR_RAW, "data_2500-3000.zip")
-    out_dir  = os.path.join(DATADIR_FINALTIME, "data_2500-3000")
-    am.extract_from_zip(zip_file, out_dir)
+    # zip_file = os.path.join(DATADIR_RAW, "data_1000-1500.zip")
+    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_1000-1500")
+    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
 
-    zip_file = os.path.join(DATADIR_RAW, "data_3000-3500.zip")
-    out_dir  = os.path.join(DATADIR_FINALTIME, "data_3000-3500")
-    am.extract_from_zip(zip_file, out_dir)
+    # zip_file = os.path.join(DATADIR_RAW, "data_1500-2000.zip")
+    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_1500-2000")
+    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
+
+    # zip_file = os.path.join(DATADIR_RAW, "data_2000-2500.zip")
+    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_2000-2500")
+    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
+
+    # zip_file = os.path.join(DATADIR_RAW, "data_2500-3000.zip")
+    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_2500-3000")
+    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
+
+    # zip_file = os.path.join(DATADIR_RAW, "data_3000-3500.zip")
+    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_3000-3500")
+    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
 
     # zip_file = os.path.join(DATADIR_RAW, "data_0-100.zip")
     # out_dir  = os.path.join(DATADIR_FINALTIME, "dump")
@@ -317,7 +331,7 @@ def do_extraction():
 @dataclass
 class Config:
     '''
-    Train grah neural networks on time series AM data
+    Train neural networks on time series AM data
     '''
 
     # different modes
@@ -363,8 +377,8 @@ class Config:
     interpolate: bool = True
 
     # eval arguments
-    num_eval_cases: int = 20
-    autoreg_start: int = 10
+    num_eval_cases: int = 50
+    autoreg_start: int = 5
 
 if __name__ == "__main__":
     
@@ -423,13 +437,17 @@ if __name__ == "__main__":
     if cfg.eval:
         assert os.path.exists(case_dir)
         config_file = os.path.join(case_dir, 'config.yaml')
-        print(f'Loading config from {config_file}')
+        _cfg = cfg
+        if LOCAL_RANK == 0:
+            print(f'Loading config from {config_file}')
         with open(config_file, 'r') as f:
             cfg = yaml.safe_load(f)
 
         cfg = Config(**cfg)
         cfg.eval = True
         cfg.train = False
+        cfg.autoreg_start = _cfg.autoreg_start
+        cfg.num_eval_cases = _cfg.num_eval_cases
 
     if DISTRIBUTED:
         torch.distributed.barrier()

@@ -118,7 +118,7 @@ def timeseries_dataset(case_file: str):
     assert case_file.endswith('.pt'), f"got invalid file name {case_file}"
     case_name = os.path.basename(case_file)[:-3]
 
-    case = torch.load(case_file, weights_only=False, mmap_mode='r')
+    case = torch.load(case_file, weights_only=False, mmap=True)
     nsteps = len(case['verts'])
 
     dataset = []

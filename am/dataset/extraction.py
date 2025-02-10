@@ -250,13 +250,21 @@ def get_finaltime_results(casedir):
     verts, elems = get_vertices_from_geo(case_info["zip_path"], case_info["geo"], return_elements=True)
     N_verts = verts.shape[0]
 
-    result_types = dict(dis="disp", ept="strain", rcd="recoater_status", rct="recoater_clearance_percent", sd1="max_dir", sd2="mid_dir", sd3="min_dir",
-                        sig="cauchy_stress", sp1="max_stress", sp2="mid_stress", sp3="min_stress", svm="von_mises_stress", tmp="temp")
+    result_types = dict(
+        dis="disp", ept="strain", rcd="recoater_status", rct="recoater_clearance_percent",
+        sd1="max_dir", sd2="mid_dir", sd3="min_dir", sig="cauchy_stress", sp1="max_stress",
+        sp2="mid_stress", sp3="min_stress", svm="von_mises_stress", tmp="temp",
+    )
     result_nums = dict(dis=3, ept=6, rcd=1, rct=1, sd1=3, sd2=3, sd3=3, sig=6, sp1=1, sp2=1, sp3=1, svm=1, tmp=1)
 
     results = dict(verts=verts, elems=elems)
     for key in result_types:
-        result = get_values_from_ens(case_info["zip_path"], case_info["basefilename"] + key + ".ens",N_verts, result_nums[key])
+        result = get_values_from_ens(
+            case_info["zip_path"],
+            case_info["basefilename"] + key + ".ens",
+            N_verts,
+            result_nums[key],
+        )
         results[result_types[key]] = result.astype(np.float32)
 
     return results
@@ -264,13 +272,13 @@ def get_finaltime_results(casedir):
 def get_timeseries_results(casedir):
     case_info = get_case_info(casedir)
     if len(case_info) == 1:
-        return [case_info["error"],]
+        return [case_info["error"],] # Case failed
 
     results = collections.defaultdict(list) # initializes every item to []
     fields  = dict(dis=("disp", 3), svm=("von_mises_stress", 1), tmp=("temp", 1))
 
     for geo_file in case_info['geo_files']:
-        v, e = get_vertices_from_geo(geo_file, return_elements=True)
+        v, e = get_vertices_from_geo(case_info["zip_path"], case_info["geo"], return_elements=True)
         v = v.astype(np.float32)
         e = e.astype(np.int32)
         results['verts'].append(v) # [Nv, 3]
@@ -281,7 +289,12 @@ def get_timeseries_results(casedir):
         for key in fields:
             path = base_name + f'.{key}.ens'
             field, dim = fields[key]
-            val = get_values_from_ens(path, nv, dim)
+            val = get_values_from_ens(
+                case_info["zip_path"],
+                case_info["basefilename"] + key + ".ens",
+                nv,
+                dim
+            )
             val = val.astype(np.float32)
             results[field].append(val)
 

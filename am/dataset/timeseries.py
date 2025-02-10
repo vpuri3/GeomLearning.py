@@ -1,3 +1,4 @@
+#
 import torch
 import torch_geometric as pyg
 import torch.multiprocessing as mp
@@ -40,17 +41,27 @@ class TimeseriesDatasetTransform(DatasetTransform):
 
         return
 
-    def makefields(self, data):
+    def makefields(self, data, istep, scale=False):
         '''
         used in am.time_march
         '''
 
         xs = []
-        xs = [*xs, data.disp[:,2].reshape(-1,1)] if self.disp  else xs
-        xs = [*xs, data.vmstr.reshape(-1,1)    ] if self.vmstr else xs
-        xs = [*xs, data.temp.reshape(-1,1)     ] if self.temp  else xs
+        if self.merge:
+            xs = [*xs, data.disp[istep, :, 2].reshape(-1,1)] if self.disp  else xs
+            xs = [*xs, data.vmstr[istep, :].reshape(-1,1)  ] if self.vmstr else xs
+            xs = [*xs, data.temp[istep, :].reshape(-1,1)   ] if self.temp  else xs
+        else:
+            xs = [*xs, data.disp[:,2].reshape(-1,1)] if self.disp  else xs
+            xs = [*xs, data.vmstr.reshape(-1,1)    ] if self.vmstr else xs
+            xs = [*xs, data.temp.reshape(-1,1)     ] if self.temp  else xs
 
-        return torch.cat(xs, dim=-1) / self.scale.to(xs[0].device)
+        out = torch.cat(xs, dim=-1)
+        
+        if scale:
+            out = out / self.scale.to(xs[0].device).view(-1, 1)
+
+        return out
 
     @torch.no_grad()
     def interpolate_layer(self, u: torch.tensor, graph, istep: int, tol=1e-4):
@@ -216,13 +227,15 @@ class TimeseriesDatasetTransform(DatasetTransform):
 #======================================================================#
 class TimeseriesDataset(pyg.data.Dataset):
     def __init__(
-        self, root, transform=None, force_reload=False,
+        self, roots, transform=None, force_reload=False,
         merge=None, num_workers=None, exclude_list=None,
+        verbose=True,
     ):
         """
         Create dataset of time-series
 
         Arguments:
+        - `roots`: list of root directories containing case files
         - `merge`: return fields on graph made by merging all the timeseries
         meshes.
         """
@@ -232,31 +245,51 @@ class TimeseriesDataset(pyg.data.Dataset):
             self.num_workers = num_workers
 
         self.merge = merge
-        self.case_files = [c for c in sorted(os.listdir(root)) if c.endswith('.pt')]
-        if exclude_list is not None:
-            self.case_files = [c for c in self.case_files if c not in exclude_list]
+        self.roots = [roots] if isinstance(roots, str) else roots
+        
+        assert isinstance(self.roots, list)
 
-        with open(os.path.join(root, 'series.json')) as file:
-            time_step_dict = json.load(file)
+        # Collect case files from all roots
+        self.case_files = []
+        for root in self.roots:
+            cases = [os.path.join(root, c) for c in sorted(os.listdir(root)) if c.endswith('.pt')]
+            self.case_files.extend(cases)
+            
+        n0 = len(self.case_files)
+
+        if exclude_list is not None:
+            exclude_list = [e + '.pt' for e in exclude_list]
+            self.case_files = [c for c in self.case_files if os.path.basename(c) not in exclude_list]
+
+        n1 = len(self.case_files)
+        
+        if verbose:
+            print(f"Excluded {n0 - n1} / {n0} cases based on exclude_list.")
+
+        # Load time steps from all series.json files
+        time_step_dict = {}
+        for root in self.roots:
+            with open(os.path.join(root, 'series.json')) as file:
+                time_step_dict.update(json.load(file))
+                
         self.time_steps = torch.tensor(
-            [time_step_dict[case_file[:-3]] for case_file in self.case_files])
+            [time_step_dict[os.path.basename(case_file)[:-3]] for case_file in self.case_files])
         self.time_steps_cum = self.time_steps.cumsum(0)
 
-        super().__init__(root, transform, force_reload=force_reload)
+        super().__init__(transform=transform, force_reload=force_reload)
 
     @property
     def raw_paths(self):
-        return [os.path.join(self.root, case_file) for case_file in self.case_files]
+        return self.case_files
 
     @property
     def processed_paths(self):
-        proc_dir  = self.proc_dir()
-        os.makedirs(proc_dir, exist_ok=True)
-        return [os.path.join(proc_dir, case_file) for case_file in self.case_files]
-
-    def proc_dir(self):
-        proc_name = 'processed_merged' if self.merge else 'processed'
-        return os.path.join(self.root, proc_name)
+        processed_dirname = 'processed_merged' if self.merge else 'processed'
+        for root in self.roots:
+            os.makedirs(os.path.join(root, processed_dirname), exist_ok=True)
+        return [os.path.join(
+            os.path.dirname(case_file), processed_dirname, os.path.basename(case_file)
+        ) for case_file in self.case_files]
 
     def process(self):
         num_cases = len(self.case_files)
@@ -269,16 +302,16 @@ class TimeseriesDataset(pyg.data.Dataset):
         with mp.Pool(self.num_workers) as pool:
             list(tqdm(
                 pool.imap_unordered(self.process_single, icases), total=num_cases,
-                desc=f'Processing TimeseriesDataset in {self.root}',
+                desc=f'Processing TimeseriesDataset',
             ))
 
         return
 
     def process_single(self, icase):
         case_file = self.case_files[icase]
-        dataset = timeseries_dataset(self.raw_paths[icase])
+        dataset = timeseries_dataset(case_file)
         if self.merge:
-            graph = merge_timeseries(dataset, case_file[:-3])
+            graph = merge_timeseries(dataset, os.path.basename(case_file)[:-3])
             torch.save(graph, self.processed_paths[icase])
             del graph
         else:
@@ -313,7 +346,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         path = self.processed_paths[icase]
 
         # LOAD GRAPH
-        graph = torch.load(path, weights_only=False, mmap_mode='r')
+        graph = torch.load(path, weights_only=False, mmap=True)
 
         if not self.merge:
             graph = graph[time_step]

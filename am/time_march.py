@@ -28,9 +28,9 @@ def march_case(
     l2s = []
     r2s = []
 
-    for data in case_data:
+    for (istep, data) in enumerate(case_data):
         data = data.clone()
-        data.y = transform.makefields(data)
+        data.y = transform.makefields(data, istep, scale=True)
         data.e = torch.zeros_like(data.y)
         eval_data.append(data)
         l2s.append(0.)
@@ -44,7 +44,7 @@ def march_case(
             _data = _data.clone()
             _data.x[:, -nf:] = _data.y[:, -nf:]
 
-        target = transform.makefields(data)
+        target = transform.makefields(data, k, scale=True)
 
         if transform.interpolate:
             _data.x[:, -nf:] = transform.interpolate_layer(
