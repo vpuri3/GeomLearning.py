@@ -6,7 +6,7 @@ blend: true
 disp: true
 epochs: 100
 eval: false
-exp_name: tra_timeseries
+exp_name: tra_timeseries_interp
 extraction: false
 gnn_num_layers: 5
 gnn_width: 128
