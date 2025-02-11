@@ -34,7 +34,7 @@ class Callback:
         if self.final:
             ckpt_dir = os.path.join(self.case_dir, f'final')
         else:
-            nsave = trainer.epoch // trainer.stats_every
+            nsave = trainer.epoch // self.save_every
             ckpt_dir = os.path.join(self.case_dir, f'ckpt{str(nsave).zfill(2)}')
 
         if os.path.exists(ckpt_dir) and trainer.LOCAL_RANK == 0:
@@ -212,10 +212,10 @@ class FinaltimeCallback(Callback):
 #======================================================================#
 class TimeseriesCallback(Callback):
     def __init__(
-        self, case_dir: str, save_every=None, num_eval_cases=None,
+        self, case_dir: str, mesh: bool, save_every=None, num_eval_cases=None,
         autoreg_start=1,
     ):
-        super().__init__(case_dir, save_every ,num_eval_cases)
+        super().__init__(case_dir, mesh=mesh, save_every=save_every, num_eval_cases=num_eval_cases)
         self.autoreg_start = autoreg_start
 
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):

@@ -107,7 +107,7 @@ def train_timeseries(cfg, device):
 
     lossfun = torch.nn.MSELoss()
     batch_lossfun = am.MaskedLoss(cfg.mask)
-    callback = am.TimeseriesCallback(case_dir, cfg.GNN, num_eval_cases=cfg.num_eval_cases, autoreg_start=cfg.autoreg_start)
+    callback = am.TimeseriesCallback(case_dir, mesh=cfg.GNN, num_eval_cases=cfg.num_eval_cases, autoreg_start=cfg.autoreg_start)
 
     if cfg.train and cfg.epochs > 0:
         # # v100-32 GB
@@ -196,7 +196,7 @@ def train_finaltime(cfg, device):
     #=================#
 
     lossfun  = torch.nn.MSELoss()
-    callback = am.FinaltimeCallback(case_dir, cfg.GNN, num_eval_cases=cfg.num_eval_cases)
+    callback = am.FinaltimeCallback(case_dir, mesh=cfg.GNN, num_eval_cases=cfg.num_eval_cases)
 
     if cfg.train and cfg.epochs > 0:
         _batch_size  = 1
@@ -230,7 +230,12 @@ def vis_finaltime(cfg, max_cases=10):
 
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
-    for DIR in SUBDIRS:
+    # transform = am.FinaltimeDatasetTransform(
+    #     disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp,
+    #     sdf=cfg.sdf, mesh=True,
+    # )
+
+    for DIR in SUBDIRS[:1]:
         DATADIR = os.path.join(DATADIR_FINALTIME, DIR)
         dataset = am.FinaltimeDataset(DATADIR)
         vis_dir = os.path.join(case_dir, DIR)
@@ -389,7 +394,7 @@ if __name__ == "__main__":
     #===============#
 
     if not (cfg.analysis or cfg.extraction or cfg.visualization or cfg.train or cfg.eval):
-        print("No mode selected")
+        print("No mode selected. Select one of analysis, extraction, visualization, train, eval")
         exit()
 
     DISTRIBUTED = mlutils.is_torchrun()
