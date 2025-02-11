@@ -226,22 +226,32 @@ def train_finaltime(cfg, device):
     return
 
 #======================================================================#
-def vis_finaltime(cfg, max_cases=10):
+def vis_finaltime(cfg, force_reload=True, max_cases=50, num_workers=None):
 
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
+    # read in exclusion list
+    exclude_list = os.path.join(PROJDIR, 'analysis', 'exclusion_list.txt')
+    exclude_list = [line.strip() for line in open(exclude_list, 'r').readlines()]
+    
     # transform = am.FinaltimeDatasetTransform(
     #     disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp,
     #     sdf=cfg.sdf, mesh=True,
     # )
 
-    for DIR in SUBDIRS[:1]:
+    # SUBDIRS = SUBDIRS[:1]
+
+    for DIR in SUBDIRS:
         DATADIR = os.path.join(DATADIR_FINALTIME, DIR)
-        dataset = am.FinaltimeDataset(DATADIR)
+        dataset = am.FinaltimeDataset(
+            DATADIR,
+            exclude_list=exclude_list,
+            force_reload=force_reload,
+            num_workers=num_workers,
+        )
         vis_dir = os.path.join(case_dir, DIR)
         os.makedirs(vis_dir, exist_ok=False)
 
-        print(vis_dir)
         num_cases = min(len(dataset), max_cases)
 
         for icase in tqdm(range(num_cases)):
@@ -416,16 +426,9 @@ if __name__ == "__main__":
         do_extraction()
         exit()
 
-    if cfg.visualization:
-        if cfg.timeseries:
-            vis_timeseries(cfg)
-        else:
-            vis_finaltime(cfg)
-        exit()
-
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
-    if cfg.train:
+    if cfg.train or cfg.visualization: # create a new experiment directory
         if os.path.exists(case_dir):
             nd = len([dir for dir in os.listdir(CASEDIR) if dir.startswith(cfg.exp_name)])
             case_dir = case_dir + str(nd).zfill(2)
@@ -441,7 +444,7 @@ if __name__ == "__main__":
             with open(config_file, 'w') as f:
                 yaml.safe_dump(vars(cfg), f)
 
-    if cfg.eval:
+    if cfg.eval: # load config from experiment directory, then write to case_dir/final
         assert os.path.exists(case_dir)
         config_file = os.path.join(case_dir, 'config.yaml')
         _cfg = cfg
@@ -459,6 +462,14 @@ if __name__ == "__main__":
     if DISTRIBUTED:
         torch.distributed.barrier()
 
+    if cfg.visualization:
+        if cfg.timeseries:
+            vis_timeseries(cfg)
+        else:
+            vis_finaltime(cfg)
+        exit()
+
+    # train or eval
     if cfg.timeseries:
         train_timeseries(cfg, device)
     else:

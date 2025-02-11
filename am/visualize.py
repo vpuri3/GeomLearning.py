@@ -24,41 +24,36 @@ __all__ = [
 #======================================================================#
 # PyVista
 #======================================================================#
+def add_field(mesh, graph, mesh_field: str, graph_field: str, istep=None):
+    if istep is None:
+        mesh.point_data[mesh_field] = graph[graph_field].numpy(force=True)
+    else:
+        mesh.point_data[mesh_field] = graph[graph_field][istep].numpy(force=True)
+    return
+
+def try_add_field(mesh, graph, mesh_field: str, graph_field: str):
+    try:
+        mesh.point_data[mesh_field] = graph[graph_field].numpy(force=True)
+    except:
+        pass
+    return
+
 def visualize_pyv(graph, out_file=None):
     mesh = mesh_pyv(graph.pos, graph.elems)
-    mesh.point_data['disp'] = graph.disp.numpy(force=True)
-    mesh.point_data['temp'] = graph.temp.numpy(force=True)
-    mesh.point_data['vmstr'] = graph.vmstr.numpy(force=True)
 
-    try:
-        mesh.point_data['source_normalized'] = graph.x.numpy(force=True)
-    except:
-        pass
+    add_field(mesh, graph, 'disp', 'disp')
+    add_field(mesh, graph, 'temp', 'temp')
+    add_field(mesh, graph, 'vmstr', 'vmstr')
+    
+    # SDF
+    add_field(mesh, graph, 'dist', 'dist')
 
-    try:
-        mesh.point_data['target_normalized'] = graph.y.numpy(force=True)
-    except:
-        pass
-
-    try:
-        mesh.point_data['pred_normalized'] = graph.yh.numpy(force=True)
-    except:
-        pass
-
-    try:
-        mesh.point_data['error_normalized'] = graph.e.numpy(force=True)
-    except:
-        pass
-
-    try:
-        mesh.point_data['pred'] = graph.yp.numpy(force=True)
-    except:
-        pass
-
-    try:
-        mesh.point_data['mask'] = graph.mask.numpy(force=True)
-    except:
-        pass
+    try_add_field(mesh, graph, 'source_normalized', 'x')
+    try_add_field(mesh, graph, 'target_normalized', 'y')
+    try_add_field(mesh, graph, 'pred_normalized', 'yh')
+    try_add_field(mesh, graph, 'error_normalized', 'e')
+    try_add_field(mesh, graph, 'pred', 'yp')
+    try_add_field(mesh, graph, 'mask', 'mask')
 
     if out_file is not None:
         mesh.save(out_file)
@@ -77,48 +72,22 @@ def visualize_timeseries_pyv(dataset, out_dir, icase=None, merge=None, name=None
 
         if graph.disp.ndim == 3: # merge
             istep = graph.metadata['time_step']
-            mesh.point_data['disp']  = graph.disp[istep].numpy(force=True)
-            mesh.point_data['temp']  = graph.temp[istep].numpy(force=True)
-            mesh.point_data['vmstr'] = graph.vmstr[istep].numpy(force=True)
+            add_field(mesh, graph, 'disp', 'disp', istep)
+            add_field(mesh, graph, 'temp', 'temp', istep)
+            add_field(mesh, graph, 'vmstr', 'vmstr', istep)
         else: # == 2
-            mesh.point_data['disp']  = graph.disp.numpy(force=True)
-            mesh.point_data['temp']  = graph.temp.numpy(force=True)
-            mesh.point_data['vmstr'] = graph.vmstr.numpy(force=True)
+            add_field(mesh, graph, 'disp', 'disp')
+            add_field(mesh, graph, 'temp', 'temp')
+            add_field(mesh, graph, 'vmstr', 'vmstr')
 
-        try:
-            mesh.point_data['source_normalized'] = graph.x.numpy(force=True)
-        except:
-            pass
+        try_add_field(mesh, graph, 'source_normalized', 'x')
+        try_add_field(mesh, graph, 'target_normalized', 'y')
+        try_add_field(mesh, graph, 'pred_normalized', 'yh')
+        try_add_field(mesh, graph, 'error_normalized', 'e')
+        try_add_field(mesh, graph, 'pred', 'yp')
+        try_add_field(mesh, graph, 'mask', 'mask')
 
-        try:
-            mesh.point_data['target_normalized'] = graph.y.numpy(force=True)
-        except:
-            pass
-
-        try:
-            mesh.point_data['pred_normalized'] = graph.yh.numpy(force=True)
-        except:
-            pass
-
-        try:
-            mesh.point_data['error_normalized'] = graph.e.numpy(force=True)
-        except:
-            pass
-
-        try:
-            mesh.point_data['pred'] = graph.yp.numpy(force=True)
-        except:
-            pass
-
-        try:
-            mesh.point_data['mask'] = graph.mask.numpy(force=True)
-        except:
-            pass
-
-        try:
-            mesh.point_data['mask_bulk'] = graph.mask_bulk.numpy(force=True)
-        except:
-            pass
+        try_add_field(mesh, graph, 'mask_bulk', 'mask_bulk')
 
         mesh.save(os.path.join(out_dir, f'data{str(i).zfill(2)}.vtu'))
 

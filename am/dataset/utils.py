@@ -24,6 +24,8 @@ __all__ = [
     'compute_aspect_ratios',
 ]
 
+import am.dataset.sdf as sdf
+
 #======================================================================#
 # COMPOSITE DATASET
 #======================================================================#
@@ -102,6 +104,8 @@ def makegraph(data, case_name=None, time_steps=None):
         'zmax'       : zmax,       # list
         "time_steps" : time_steps, # int
     }
+    
+    dist = sdf.compute_distance_to_surface(verts, elems)
 
     # make graph
     graph = pyg.data.Data(
@@ -109,6 +113,7 @@ def makegraph(data, case_name=None, time_steps=None):
         edge_index=edge_index, elems=elems,           # connectivity
         temp=temp, disp=disp, vmstr=vmstr, pos=verts, # nodal fields
         edge_dxyz=edge_dxyz,                          # edge  fields
+        dist=dist,
     )
 
     return graph

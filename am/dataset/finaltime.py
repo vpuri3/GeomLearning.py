@@ -33,6 +33,9 @@ class FinaltimeDatasetTransform(DatasetTransform):
         xs = [pos,]
         ys = []
 
+        if self.sdf:
+            sdf = self.compute_sdf(pos, graph.elements)
+            xs.append(sdf)
         if self.disp:
             ys.append(disp)
         if self.vmstr:
@@ -92,7 +95,7 @@ class FinaltimeDataset(pyg.data.Dataset):
         with mp.Pool(self.num_workers) as pool:
             list(tqdm(
                 pool.imap_unordered(self.process_single, icases), total=num_cases,
-                desc=f'Processing FinaltimeDataset in {self.root}',
+                desc=f'Processing FinaltimeDataset in {os.path.basename(self.root)}',
             ))
 
         return

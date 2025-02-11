@@ -3,6 +3,7 @@ import torch_geometric as pyg
 import torch.multiprocessing as mp
 
 import os
+import numpy as np
 
 from .utils import makegraph
 
@@ -17,12 +18,14 @@ class DatasetTransform:
     def __init__(
         self,
         disp=True, vmstr=True, temp=True,
+        sdf=False,
         mesh=True, elems=False, orig=False, metadata=False,
     ):
         # fields
         self.disp  = disp
         self.vmstr = vmstr
         self.temp  = temp
+        self.sdf   = sdf
 
         self.mesh  = mesh
         self.elems = elems
@@ -86,6 +89,6 @@ class DatasetTransform:
         return data
 
     def __call__(self, graph):
-        pass
+        raise NotImplementedError()
 #======================================================================#
 #
