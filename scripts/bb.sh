@@ -2,7 +2,7 @@
 export CUDA_VISIBLE_DEVICES="1,2,3"
 
 # Transolver w/o interpolation
-torchrun --nproc-per-node gpu -m am --exp_name tra_steady_sdf \
+torchrun --nproc-per-node gpu -m am --exp_name tra_steady_sdf_scale_01 \
     --sdf true \
     --train true --timeseries false --TRA true --epochs 300 --weight_decay 1e-2
 

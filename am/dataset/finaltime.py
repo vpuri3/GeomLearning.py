@@ -31,7 +31,9 @@ class FinaltimeDatasetTransform(DatasetTransform):
         ys = []
 
         if self.sdf:
-            dist = graph.dist / (self.pos_scale / 10.)
+            # dist = graph.dist / (self.pos_scale / 1e+1)
+            dist = graph.dist / (self.pos_scale / 1e+0)
+            # dist = graph.dist / (self.pos_scale / 1e-1)
             xs.append(dist)
         if self.disp:
             ys.append(disp)
