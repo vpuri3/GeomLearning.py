@@ -21,9 +21,6 @@ __all__ = [
 class FinaltimeDatasetTransform(DatasetTransform):
     def __call__(self, graph):
 
-        N  = graph.pos.size(0)
-        md = graph.metadata
-
         pos, disp, vmstr, temp, edge_dxyz = self.normalize_fields(graph)
 
         # only consider z disp
@@ -34,8 +31,8 @@ class FinaltimeDatasetTransform(DatasetTransform):
         ys = []
 
         if self.sdf:
-            sdf = self.compute_sdf(pos, graph.elements)
-            xs.append(sdf)
+            dist = graph.dist / (self.pos_scale / 10.)
+            xs.append(dist)
         if self.disp:
             ys.append(disp)
         if self.vmstr:
@@ -47,7 +44,7 @@ class FinaltimeDatasetTransform(DatasetTransform):
 
         x = torch.cat(xs, dim=-1)
         y = torch.cat(ys, dim=-1)
-
+        
         edge_attr = edge_dxyz
         data = self.make_pyg_data(graph, edge_attr, x=x, y=y)
 

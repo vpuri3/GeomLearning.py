@@ -162,7 +162,7 @@ def train_finaltime(cfg, device):
         dataset = am.FinaltimeDataset(DATADIR, exclude_list=exclude_list)#, force_reload=True)
         datasets.append(dataset)
         
-    transform = am.FinaltimeDatasetTransform(disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=cfg.GNN)
+    transform = am.FinaltimeDatasetTransform(disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=cfg.GNN, sdf=cfg.sdf)
     dataset = am.CompositeDataset(*datasets, transform=transform)
     _data, data_ = torch.utils.data.random_split(dataset, [0.8, 0.2])
     
@@ -174,7 +174,7 @@ def train_finaltime(cfg, device):
     # MODEL
     #=================#
 
-    ci = 3 #+ cfg.sdf
+    ci = 3 + (cfg.sdf * 3)
     ce = 3
     co = cfg.disp + cfg.vmstr + cfg.temp
 

@@ -46,7 +46,7 @@ def visualize_pyv(graph, out_file=None):
     add_field(mesh, graph, 'vmstr', 'vmstr')
     
     # SDF
-    add_field(mesh, graph, 'dist', 'dist')
+    try_add_field(mesh, graph, 'dist', 'dist')
 
     try_add_field(mesh, graph, 'source_normalized', 'x')
     try_add_field(mesh, graph, 'target_normalized', 'y')

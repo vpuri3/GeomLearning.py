@@ -113,7 +113,7 @@ def makegraph(data, case_name=None, time_steps=None):
         edge_index=edge_index, elems=elems,           # connectivity
         temp=temp, disp=disp, vmstr=vmstr, pos=verts, # nodal fields
         edge_dxyz=edge_dxyz,                          # edge  fields
-        dist=dist,
+        dist=dist,                                    # SDF
     )
 
     return graph
