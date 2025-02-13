@@ -119,7 +119,7 @@ def train_timeseries(cfg, device):
         batch_size_ = _batch_size_ = 1
 
         kw = dict(
-            device=device, gnn_loader=True, stats_every=cfg.epochs//5,
+            device=device, gnn_loader=True, stats_every=cfg.epochs//10,
             Opt='AdamW', weight_decay=cfg.weight_decay, lossfun=lossfun, epochs=cfg.epochs,
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
             batch_lossfun=batch_lossfun,
@@ -239,9 +239,10 @@ def vis_finaltime(cfg, force_reload=True, max_cases=50, num_workers=None):
     #     sdf=cfg.sdf, mesh=True,
     # )
 
-    # SUBDIRS = SUBDIRS[:1]
+    num_workers = 1
 
     for DIR in SUBDIRS:
+    # for DIR in SUBDIRS[:1]:
         DATADIR = os.path.join(DATADIR_FINALTIME, DIR)
         dataset = am.FinaltimeDataset(
             DATADIR,
