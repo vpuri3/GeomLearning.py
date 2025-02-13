@@ -67,11 +67,11 @@ def omit_tjunction_faces(faces, pos):
         if not is_surface[i]:
             continue
             
-        # if truly a T-junction:
-        # Find faces within a distance based on face size
+        # Find faces within a distance based on expected center distance in a T-junction
+
+        tjt_center_dist = np.sqrt(L[i]**2 + W[i]**2) / 4
         # we are grabbing neighbors only for the large face at a T-junction
-        face_size = np.sqrt(L[i]**2 + W[i]**2) / 4
-        neighbors = tree.query_ball_point(center, r=face_size * 1.001)
+        neighbors = tree.query_ball_point(center, r=tjt_center_dist * 1.001)
         
         # Loop over neighbors of largest face at T-junction
         for j in neighbors:
@@ -88,10 +88,12 @@ def omit_tjunction_faces(faces, pos):
             face_center_disp = face_centers[j] - center
             face_center_dist = np.linalg.norm(face_center_disp)
             face_center_dirn = face_center_disp / face_center_dist
+
             if np.abs(face_center_dirn[0]) > 0.999 or np.abs(face_center_dirn[1]) > 0.999 or np.abs(face_center_dirn[2]) > 0.999:
                 continue
             
-            if face_center_dist < face_size * 0.999:
+            # if differs from exected tjt_center_dist then it is not a T-junction
+            if face_center_dist < tjt_center_dist * 0.999:
                 continue
             
             # these faces are T-junctions, not surface
