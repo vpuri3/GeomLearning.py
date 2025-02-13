@@ -52,6 +52,10 @@ def omit_tjunction_faces(faces, pos):
     face_normals = np.cross(v1, v2)
     face_normals /= np.linalg.norm(face_normals, axis=1, keepdims=True)
     
+    # face edge sizes
+    L = np.linalg.norm(pos[faces[:, 0]] - pos[faces[:, 1]], axis=1)
+    W = np.linalg.norm(pos[faces[:, 1]] - pos[faces[:, 2]], axis=1)
+    
     # exclude faces at T-Junctions
     tree = KDTree(face_centers)
 
@@ -63,10 +67,11 @@ def omit_tjunction_faces(faces, pos):
         if not is_surface[i]:
             continue
             
+        # if truly a T-junction:
         # Find faces within a distance based on face size
-        # since r_factor < 1, we are grabbing neighbors only for the large face at a T-junction
-        face_size = np.max(np.linalg.norm(pos[faces[i]] - center, axis=1))
-        neighbors = tree.query_ball_point(center, r=face_size * 0.75)
+        # we are grabbing neighbors only for the large face at a T-junction
+        face_size = np.sqrt(L[i]**2 + W[i]**2) / 4
+        neighbors = tree.query_ball_point(center, r=face_size * 1.001)
         
         # Loop over neighbors of largest face at T-junction
         for j in neighbors:
@@ -74,12 +79,24 @@ def omit_tjunction_faces(faces, pos):
                 continue
                 
             # Check if normals align
-            # ideally they should be opposite, but orientation is not guaranteed
-            dot = np.dot(normal, face_normals[j])
+            # ideally normals should be opposite, but orientation isn't guaranteed
+            if not np.abs(np.dot(normal, face_normals[j])) > 0.999:
+                continue
             
-            if np.abs(dot) > 0.99:
-                is_surface[i] = False
-                is_surface[j] = False
+            # get direction bw face centers
+            # if direction is axis-aligned, then continue
+            face_center_disp = face_centers[j] - center
+            face_center_dist = np.linalg.norm(face_center_disp)
+            face_center_dirn = face_center_disp / face_center_dist
+            if np.abs(face_center_dirn[0]) > 0.999 or np.abs(face_center_dirn[1]) > 0.999 or np.abs(face_center_dirn[2]) > 0.999:
+                continue
+            
+            if face_center_dist < face_size * 0.999:
+                continue
+            
+            # these faces are T-junctions, not surface
+            is_surface[i] = False
+            is_surface[j] = False
 
     return faces[is_surface]
 
@@ -88,7 +105,7 @@ def extract_surface_faces(pos, elems):
     Extract surface nodes from a 3D hexahedral mesh
     """
 
-    # Compute all faces
+    # Get all faces
     faces = make_faces(elems) # [Nfaces, 4]
     # Get unique faces. Do sorting to handle permutations
     _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
@@ -123,7 +140,7 @@ def create_surface_trimesh(pos, elems):
 
     return surface_mesh, surface_indices
 
-def surface_ray_intersect(surface_mesh, ray_origins, ray_direction):
+def surface_ray_intersect(surface_mesh, ray_origins, ray_direction, interior=False):
     """
     Ray cast to surface
     """
@@ -133,11 +150,22 @@ def surface_ray_intersect(surface_mesh, ray_origins, ray_direction):
     ray_directions = np.repeat(ray_direction.reshape(1,3), len(ray_origins), axis=0)
 
     # get nearest point on surface
-    intersect_locs, ray_indices, tri_indices = surface_mesh.ray.intersects_location(ray_origins, ray_directions)
+    intersect_locs, ray_indices, tri_indices = surface_mesh.ray.intersects_location(
+        ray_origins,
+        ray_directions,
+        multiple_hits=False,
+    )
+    
+    if interior:
+        assert len(intersect_locs) == len(ray_origins), f'Ray cast error: {len(intersect_locs)} != {len(ray_origins)}'
+        return intersect_locs
     
     # get ray intersection points
     intersect_locations = np.full((len(ray_origins), 3), -9999.)
     # intersect_locations = ray_origins.copy()
+    
+    # print(f"num query: {len(ray_origins)}")
+    # print(f"num hits : {len(intersect_locs)}")
     
     if len(intersect_locs) > 0:
         intersect_locations[ray_indices] = intersect_locs
@@ -164,27 +192,46 @@ def distance_to_surface(pos, elems):
     nearest_point, _, _ = surface_mesh.nearest.on_surface(pos)
     nearest_directions = nearest_point - pos
 
-    # get overhang distances
-    # intuition: how much material is under me before thin air?
-    # not correct at surface nodes
-    overhang_intersections = surface_ray_intersect(surface_mesh, pos, np.array([0., 0., -1.]))
-    
-    # done
-    overhang_distances = (pos[:,2] - overhang_intersections[:,2]).reshape(-1,1)
+    # # get overhang distances
+    # # intuition: how much material is under me before thin air?
+    # # not correct at surface nodes
+    # overhang_intersections = surface_ray_intersect(surface_mesh, pos, np.array([0., 0., -1.]))
+    # overhang_distances = (pos[:,2] - overhang_intersections[:,2]).reshape(-1,1)
 
     # for surface:
     # 1. Alternative: compute true distance to surface for interior nodes
-    # 1. get avg (IDW) of nearest interior neighbors for surface nodes
+    # 2. get value from nearest surface node and add difference in position
     
-    # # get surface mask
-    # surface_mask = np.zeros(len(pos), dtype=bool)
-    # surface_mask[surface_indices] = True
+    # get surface mask
+    surface_mask = np.zeros(len(pos), dtype=bool)
+    surface_mask[surface_indices] = True
+    
+    # get overhang distances for interior nodes
+    intersections_interior = surface_ray_intersect(
+        surface_mesh,
+        pos[~surface_mask],
+        np.array([0., 0., -1.]),
+        # interior=True,
+        interior=False,
+    )
+    overhang_distances_interior = pos[~surface_mask, 2] - intersections_interior[:, 2]
+    
+    # surface
+    # overhang_distances_surface = np.zeros(np.sum(surface_mask))
+    overhang_distances_surface = np.full((np.sum(surface_mask),), 9999.)
+    
+    # combine
+    overhang_distances = np.full((len(pos),), 0)
+    overhang_distances[surface_mask] = overhang_distances_surface
+    overhang_distances[~surface_mask] = overhang_distances_interior
+    overhang_distances = overhang_distances.reshape(-1,1)
 
+    #----------------------------------#
     return np.hstack([
         nearest_directions,
-        overhang_distances, # zero at surfaces?
+        overhang_distances,
+        surface_mask.reshape(-1,1),
     ])
-
 
 #======================================================================#
 #
