@@ -1,10 +1,11 @@
 #
-import torch
+import trimesh # also needs package rtree
 import numpy as np
 from scipy.spatial import KDTree
 
+
 __all__ = [
-    'compute_distance_to_surface',
+    'distance_to_surface',
 ]
 
 #======================================================================#
@@ -26,18 +27,24 @@ def make_faces(elems):
     faces = faces.reshape(-1, 4)
     return faces
 
-def extract_surface_nodes(pos, elems):
+def quads_to_triangles(faces):
     """
-    Extract surface nodes from a 3D hexahedral mesh
+    Convert quads to triangles
+    """
+    assert faces.ndim == 2 and faces.shape[1] == 4
+
+    triangles = np.vstack([
+        faces[:, [0, 1, 2]],
+        faces[:, [0, 2, 3]]
+    ])
+
+    return triangles
+
+def omit_tjunction_faces(faces, pos):
+    """
+    Omit faces at T-Junctions
     """
 
-    # Compute all faces
-    faces = make_faces(elems) # [Nfaces, 4]
-    # Get unique faces. Do sorting to handle permutations
-    _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
-    # Get indices of faces that appear exactly once
-    faces = faces[unique_indices[counts == 1]]
-    
     # face centers and normals
     face_centers = np.mean(pos[faces], axis=1)
     v1 = pos[faces[:, 1]] - pos[faces[:, 0]]
@@ -74,16 +81,28 @@ def extract_surface_nodes(pos, elems):
                 is_surface[i] = False
                 is_surface[j] = False
 
-    surface_faces = faces[is_surface]
-    surface_nodes = np.unique(surface_faces.reshape(-1))
-    surface_pos = pos[surface_nodes]
+    return faces[is_surface]
 
-    return surface_pos
+def extract_surface_faces(pos, elems):
+    """
+    Extract surface nodes from a 3D hexahedral mesh
+    """
+
+    # Compute all faces
+    faces = make_faces(elems) # [Nfaces, 4]
+    # Get unique faces. Do sorting to handle permutations
+    _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
+    # Get indices of faces that appear exactly once
+    unique_faces = faces[unique_indices[counts == 1]]
+    # omit faces at T-Junctions
+    surface_faces = omit_tjunction_faces(unique_faces, pos)
+
+    return surface_faces
 
 #======================================================================#
-def compute_distance_to_surface(pos, elems):
+def distance_to_surface(pos, elems):
     """
-    Compute direction vectors from each node to nearest surface point
+    Compute distance to surface
     Args:
         pos: (N, 3) array of node positions
         elems: (E, 8) array of hex element connectivity
@@ -95,20 +114,62 @@ def compute_distance_to_surface(pos, elems):
     elems = elems.numpy(force=True)
 
     # extract surface nodes
-    surface_pos = extract_surface_nodes(pos, elems)
-    # Build KDTree for surface pos
-    tree = KDTree(surface_pos) # reduce leafsize
-    # Find nearest surface points and their indices
-    distances, indices = tree.query(pos)
-    # Get the nearest surface points
-    nearest_points = surface_pos[indices]
-    # Compute direction vectors from nodes to nearest surface points
-    directions = nearest_points - pos
+    surface_faces = extract_surface_faces(pos, elems)
+
+    #-------------------------------#
+    # KDTree method
+    #-------------------------------#
+    # get surface nodes
+    surface_indices = np.unique(surface_faces.reshape(-1))
+    surface_pos = pos[surface_indices]
+
+    # # Build KDTree for surface pos
+    # tree = KDTree(surface_pos)
+    # # Find nearest surface points and their indices
+    # _, indices = tree.query(pos)
+    # # Get the nearest surface points
+    # nearest_points = surface_pos[indices]
+    # # Compute direction vectors from nodes to nearest surface points
+    # nearest_directions = nearest_points - pos
+    # return nearest_directions
+    #-------------------------------#
     
-    err = np.linalg.norm(directions, 2, axis=-1) - distances
-    assert np.max(err) < 1e-5, f"max error: {np.max(err)}, avg error: {np.mean(err)}"
+    # create triangles from surface faces
+    surface_triangles = quads_to_triangles(surface_faces)
+
+    # remap surface_triangles to only index surface nodes
+    vertex_remap = np.full(len(pos), -1, dtype=int)
+    vertex_remap[surface_indices] = np.arange(len(surface_indices))
+    surface_triangles = vertex_remap[surface_triangles]
+
+    # create trimesh object
+    surface_mesh = trimesh.Trimesh(vertices=surface_pos, faces=surface_triangles)
     
-    return torch.tensor(directions, dtype=torch.float)
+    # get nearest point on surface
+    nearest_point, _, _ = surface_mesh.nearest.on_surface(pos)
+    nearest_directions = nearest_point - pos
+
+    # # compute overhang size
+    # overhang_directions = np.zeros((len(pos), 3))
+    # overhang_directions[:, 2] = -1
+    # overhang_locs, _, _ = surface_mesh.ray.intersects_location(pos, overhang_directions)
+    
+    # # Initialize overhang_distances with large values (no intersection)
+    # overhang_distances = np.full(len(pos), 999.)
+    
+    # # For intersecting rays, compute distances
+    # if len(overhang_locs) > 0:
+    #     # Find which rays actually intersected
+    #     _, idx = surface_mesh.ray.intersects_id(pos, overhang_directions, return_locations=False)
+    #     # Compute distances for intersecting rays
+    #     overhang_distances[idx] = np.linalg.norm(overhang_locs - pos[idx], axis=-1)
+
+    return np.hstack([
+        nearest_directions,
+        # overhang_distances,
+    ])
+
+#======================================================================#
 
 #======================================================================#
 #

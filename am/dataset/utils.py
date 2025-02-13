@@ -105,7 +105,8 @@ def makegraph(data, case_name=None, time_steps=None):
         "time_steps" : time_steps, # int
     }
     
-    dist = sdf.compute_distance_to_surface(verts, elems)
+    dist = sdf.distance_to_surface(verts, elems)
+    dist = torch.tensor(dist, dtype=torch.float)
 
     # make graph
     graph = pyg.data.Data(
