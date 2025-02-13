@@ -99,6 +99,51 @@ def extract_surface_faces(pos, elems):
 
     return surface_faces
 
+def create_surface_trimesh(pos, elems):
+    """
+    Create a surface trimesh from a 3D hexahedral mesh
+    """
+    # extract surface nodes
+    surface_faces = extract_surface_faces(pos, elems)
+
+    # get surface nodes
+    surface_indices = np.unique(surface_faces.reshape(-1))
+    surface_pos = pos[surface_indices]
+    
+    # create triangles from surface faces
+    surface_triangles = quads_to_triangles(surface_faces)
+
+    # remap surface_triangles to only index surface nodes
+    vertex_remap = np.full(len(pos), -1, dtype=int)
+    vertex_remap[surface_indices] = np.arange(len(surface_indices))
+    surface_triangles = vertex_remap[surface_triangles]
+
+    # create trimesh object
+    surface_mesh = trimesh.Trimesh(vertices=surface_pos, faces=surface_triangles)
+
+    return surface_mesh, surface_indices
+
+def surface_ray_intersect(surface_mesh, ray_origins, ray_direction):
+    """
+    Ray cast to surface
+    """
+    assert ray_origins.ndim == 2 and ray_origins.shape[1] == 3
+    assert ray_direction.ndim == 1 and len(ray_direction) == 3
+
+    ray_directions = np.repeat(ray_direction.reshape(1,3), len(ray_origins), axis=0)
+
+    # get nearest point on surface
+    intersect_locs, ray_indices, tri_indices = surface_mesh.ray.intersects_location(ray_origins, ray_directions)
+    
+    # get ray intersection points
+    intersect_locations = np.full((len(ray_origins), 3), -9999.)
+    # intersect_locations = ray_origins.copy()
+    
+    if len(intersect_locs) > 0:
+        intersect_locations[ray_indices] = intersect_locs
+
+    return intersect_locations
+
 #======================================================================#
 def distance_to_surface(pos, elems):
     """
@@ -113,63 +158,33 @@ def distance_to_surface(pos, elems):
     pos = pos.numpy(force=True)
     elems = elems.numpy(force=True)
 
-    # extract surface nodes
-    surface_faces = extract_surface_faces(pos, elems)
+    surface_mesh, surface_indices = create_surface_trimesh(pos, elems)
 
-    #-------------------------------#
-    # KDTree method
-    #-------------------------------#
-    # get surface nodes
-    surface_indices = np.unique(surface_faces.reshape(-1))
-    surface_pos = pos[surface_indices]
-
-    # # Build KDTree for surface pos
-    # tree = KDTree(surface_pos)
-    # # Find nearest surface points and their indices
-    # _, indices = tree.query(pos)
-    # # Get the nearest surface points
-    # nearest_points = surface_pos[indices]
-    # # Compute direction vectors from nodes to nearest surface points
-    # nearest_directions = nearest_points - pos
-    # return nearest_directions
-    #-------------------------------#
-    
-    # create triangles from surface faces
-    surface_triangles = quads_to_triangles(surface_faces)
-
-    # remap surface_triangles to only index surface nodes
-    vertex_remap = np.full(len(pos), -1, dtype=int)
-    vertex_remap[surface_indices] = np.arange(len(surface_indices))
-    surface_triangles = vertex_remap[surface_triangles]
-
-    # create trimesh object
-    surface_mesh = trimesh.Trimesh(vertices=surface_pos, faces=surface_triangles)
-    
     # get nearest point on surface
     nearest_point, _, _ = surface_mesh.nearest.on_surface(pos)
     nearest_directions = nearest_point - pos
 
-    # # compute overhang size
-    # overhang_directions = np.zeros((len(pos), 3))
-    # overhang_directions[:, 2] = -1
-    # overhang_locs, _, _ = surface_mesh.ray.intersects_location(pos, overhang_directions)
+    # get overhang distances
+    # intuition: how much material is under me before thin air?
+    # not correct at surface nodes
+    overhang_intersections = surface_ray_intersect(surface_mesh, pos, np.array([0., 0., -1.]))
     
-    # # Initialize overhang_distances with large values (no intersection)
-    # overhang_distances = np.full(len(pos), 999.)
+    # done
+    overhang_distances = (pos[:,2] - overhang_intersections[:,2]).reshape(-1,1)
+
+    # for surface:
+    # 1. Alternative: compute true distance to surface for interior nodes
+    # 1. get avg (IDW) of nearest interior neighbors for surface nodes
     
-    # # For intersecting rays, compute distances
-    # if len(overhang_locs) > 0:
-    #     # Find which rays actually intersected
-    #     _, idx = surface_mesh.ray.intersects_id(pos, overhang_directions, return_locations=False)
-    #     # Compute distances for intersecting rays
-    #     overhang_distances[idx] = np.linalg.norm(overhang_locs - pos[idx], axis=-1)
+    # # get surface mask
+    # surface_mask = np.zeros(len(pos), dtype=bool)
+    # surface_mask[surface_indices] = True
 
     return np.hstack([
         nearest_directions,
-        # overhang_distances,
+        overhang_distances, # zero at surfaces?
     ])
 
-#======================================================================#
 
 #======================================================================#
 #
