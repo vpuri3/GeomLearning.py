@@ -103,42 +103,60 @@ def select_tjt_large(faces, pos):
 
     return is_tjt_large
 
-def create_point_hash(pos):
+class PointHash:
     """
-    Create a hash table for point coordinates using integer coordinates
-    Args:
-        pos: (N, 3) array of point coordinates
-    Returns:
-        point_hash: dictionary mapping tuple of rounded coordinates to indices
+    A class for hashing 3D point coordinates to indices using integer coordinates
     """
-    # Scale and round coordinates to integers
-    scale = 1e6  # adjust based on required precision
-    int_pos = np.round(pos * scale).astype(np.int64)
+    def __init__(self, pos, scale=1e6):
+        """
+        Initialize the PointHash with point coordinates
+        Args:
+            pos: (N, 3) array of point coordinates
+            scale: scaling factor for converting to integer coordinates
+        """
+        self.scale = scale
+        self._hash = self._create_hash(pos)
     
-    # Create hash using tuples of integer coordinates
-    point_hash = {tuple(coords): idx for idx, coords in enumerate(int_pos)}
-    return point_hash
-
-def check_point_existence(point_hash, point):
-    """
-    Check if a point exists in the hash table
-    Args:
-        point_hash: dictionary from create_point_hash
-        point: (3,) array of point coordinates
-    Returns:
-        index of point if exists, None otherwise
-    """
-    # Scale and round the point to match hash format
-    scale = 1e6  # must match scale used in create_point_hash
-    int_point = tuple(np.round(point * scale).astype(np.int64))
-    return point_hash.get(int_point, None)
+    def _create_hash(self, pos):
+        """
+        Create the internal hash table
+        Args:
+            pos: (N, 3) array of point coordinates
+        Returns:
+            Dictionary mapping tuple of rounded coordinates to indices
+        """
+        int_pos = np.round(pos * self.scale).astype(np.int64)
+        return {tuple(coords): idx for idx, coords in enumerate(int_pos)}
+    
+    def check_point_existence(self, point):
+        """
+        Check if a point exists in the hash table
+        Args:
+            point: (3,) array of point coordinates
+        Returns:
+            index of point if exists, None otherwise
+        """
+        int_point = tuple(np.round(point * self.scale).astype(np.int64))
+        return self._hash.get(int_point, None)
+    
+    def update_hash(self, point, index):
+        """
+        Update the hash with a new point and index
+        Args:
+            hash: PointHash object
+            point: (3,) array of point coordinates
+            index: integer index of the point
+        """
+        int_point = tuple(np.round(point * self.scale).astype(np.int64))
+        self._hash[int_point] = index
+        return
 
 def break_tjunctions(faces, pos, debug=None):
     """
     Break faces at T-Junctions
     """
     
-    hash = create_point_hash(pos)
+    hash = PointHash(pos)
 
     # get large faces at T-Junctions
     is_tjt_large = select_tjt_large(faces, pos)
@@ -149,7 +167,6 @@ def break_tjunctions(faces, pos, debug=None):
 
     # break face at T-Junction
     for face in faces[is_tjt_large]:
-
         # get positions
         p0, p1, p2, p3 = pos[face]
         p4 = np.mean(pos[face[[0, 1]]], axis=0) # get edge centers
@@ -161,27 +178,32 @@ def break_tjunctions(faces, pos, debug=None):
         # get indices
         i0, i1, i2, i3 = face
         # check if p4-p7 already exist in pos.
-        i4 = check_point_existence(hash, p4)
-        i5 = check_point_existence(hash, p5)
-        i6 = check_point_existence(hash, p6)
-        i7 = check_point_existence(hash, p7)
-        i8 = check_point_existence(hash, p8)
+        i4 = hash.check_point_existence(p4)
+        i5 = hash.check_point_existence(p5)
+        i6 = hash.check_point_existence(p6)
+        i7 = hash.check_point_existence(p7)
+        i8 = hash.check_point_existence(p8)
 
         if i4 is None:
             pos_new = np.vstack([pos_new, p4])
             i4 = len(pos_new) - 1
+            hash.update_hash(p4, i4)
         if i5 is None:
             pos_new = np.vstack([pos_new, p5])
             i5 = len(pos_new) - 1
+            hash.update_hash(p5, i5)
         if i6 is None:
             pos_new = np.vstack([pos_new, p6])
             i6 = len(pos_new) - 1
+            hash.update_hash(p6, i6)
         if i7 is None:
             pos_new = np.vstack([pos_new, p7])
             i7 = len(pos_new) - 1
+            hash.update_hash(p7, i7)
         if i8 is None:
             pos_new = np.vstack([pos_new, p8])
             i8 = len(pos_new) - 1
+            hash.update_hash(p8, i8)
     
         # get new faces
         faces_new = np.vstack([
@@ -288,6 +310,20 @@ def create_surface_trimesh(pos, elems, debug=None):
     _, unique_indices, counts = np.unique(np.sort(surface_faces, axis=1), axis=0, return_counts=True, return_index=True)
     surface_faces = surface_faces[unique_indices[counts == 1]]
 
+    # # Get all faces
+    # faces = make_faces(elems) # [Nfaces, 4]
+    # # Get unique faces. Do sorting to handle permutations
+    # _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
+    # faces = faces[unique_indices[counts == 1]]
+    # # Break all T-junctions
+    # pos_new, faces = break_tjunctions(faces, pos, debug=debug)
+    # # omit faces at internal T-Junctions
+    # faces = omit_internal_tjunctions(faces, pos_new)
+    # # Get unique faces. Do sorting to handle permutations
+    # _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
+    # faces = faces[unique_indices[counts == 1]]
+    # surface_faces = faces
+    
     ###
     # get surface triangles and nodes
     ###
