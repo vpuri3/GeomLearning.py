@@ -40,7 +40,164 @@ def quads_to_triangles(faces):
 
     return triangles
 
-def omit_tjunction_faces(faces, pos):
+#======================================================================#
+def select_tjt_large(faces, pos):
+    """
+    Select large faces at T-Junctions
+    """
+
+    # face centers and normals
+    face_centers = np.mean(pos[faces], axis=1)
+    v1 = pos[faces[:, 1]] - pos[faces[:, 0]]
+    v2 = pos[faces[:, 2]] - pos[faces[:, 0]]
+    face_normals = np.cross(v1, v2)
+    face_normals /= np.linalg.norm(face_normals, axis=1, keepdims=True)
+    
+    # face edge sizes
+    L = np.linalg.norm(pos[faces[:, 0]] - pos[faces[:, 1]], axis=1)
+    W = np.linalg.norm(pos[faces[:, 1]] - pos[faces[:, 2]], axis=1)
+    
+    # exclude faces at T-Junctions
+    tree = KDTree(face_centers)
+
+    # Create a mask for large faces at T-Junctions (initially all False)
+    is_tjt_large = np.zeros(len(faces), dtype=bool)
+    
+    # For each face, find nearby faces and check if they're opposite
+    for i, (center, normal) in enumerate(zip(face_centers, face_normals)):
+
+        # Find faces within a distance based on expected center distance in a T-junction
+        # we are grabbing neighbors only for the large face at a T-junction
+        tjt_center_dist = np.sqrt(L[i]**2 + W[i]**2) / 4
+        neighbors = tree.query_ball_point(center, r=tjt_center_dist * 1.001)
+        
+        # Loop over neighbors of largest face at T-junction
+        for j in neighbors:
+            if i == j or is_tjt_large[j]:
+                continue
+                
+            # Check if normals align
+            # ideally normals should be opposite, but orientation isn't guaranteed
+            if not np.abs(np.dot(normal, face_normals[j])) > 0.999:
+                continue
+            
+            face_center_disp = face_centers[j] - center
+            face_center_dist = np.linalg.norm(face_center_disp)
+
+            # if differs from exected tjt_center_dist then it is not a T-junction
+            if face_center_dist < tjt_center_dist * 0.999:
+                continue
+            
+            # get direction bw face centers
+            # if direction is axis-aligned, then continue
+            face_center_direction = face_center_disp / face_center_dist
+            if (
+                np.abs(face_center_direction[0]) > 0.999 or
+                np.abs(face_center_direction[1]) > 0.999 or
+                np.abs(face_center_direction[2]) > 0.999
+            ):
+                continue
+            
+            # if we are here, then face [i] is a large face at a T-junction
+            is_tjt_large[i] = True
+
+    return is_tjt_large
+
+def create_point_hash(pos):
+    """
+    Create a hash table for point coordinates using integer coordinates
+    Args:
+        pos: (N, 3) array of point coordinates
+    Returns:
+        point_hash: dictionary mapping tuple of rounded coordinates to indices
+    """
+    # Scale and round coordinates to integers
+    scale = 1e6  # adjust based on required precision
+    int_pos = np.round(pos * scale).astype(np.int64)
+    
+    # Create hash using tuples of integer coordinates
+    point_hash = {tuple(coords): idx for idx, coords in enumerate(int_pos)}
+    return point_hash
+
+def check_point_existence(point_hash, point):
+    """
+    Check if a point exists in the hash table
+    Args:
+        point_hash: dictionary from create_point_hash
+        point: (3,) array of point coordinates
+    Returns:
+        index of point if exists, None otherwise
+    """
+    # Scale and round the point to match hash format
+    scale = 1e6  # must match scale used in create_point_hash
+    int_point = tuple(np.round(point * scale).astype(np.int64))
+    return point_hash.get(int_point, None)
+
+def break_tjunctions(faces, pos, debug=None):
+    """
+    Break faces at T-Junctions
+    """
+    
+    hash = create_point_hash(pos)
+
+    # get large faces at T-Junctions
+    is_tjt_large = select_tjt_large(faces, pos)
+
+    # break faces at T-Junctions
+    faces_new = faces[~is_tjt_large]
+    pos_new = pos.copy()
+
+    # break face at T-Junction
+    for face in faces[is_tjt_large]:
+
+        # get positions
+        p0, p1, p2, p3 = pos[face]
+        p4 = np.mean(pos[face[[0, 1]]], axis=0) # get edge centers
+        p5 = np.mean(pos[face[[1, 2]]], axis=0)
+        p6 = np.mean(pos[face[[2, 3]]], axis=0)
+        p7 = np.mean(pos[face[[3, 0]]], axis=0)
+        p8 = np.mean(pos[face], axis=0) # get face center
+
+        # get indices
+        i0, i1, i2, i3 = face
+        # check if p4-p7 already exist in pos.
+        i4 = check_point_existence(hash, p4)
+        i5 = check_point_existence(hash, p5)
+        i6 = check_point_existence(hash, p6)
+        i7 = check_point_existence(hash, p7)
+        i8 = check_point_existence(hash, p8)
+
+        if i4 is None:
+            pos_new = np.vstack([pos_new, p4])
+            i4 = len(pos_new) - 1
+        if i5 is None:
+            pos_new = np.vstack([pos_new, p5])
+            i5 = len(pos_new) - 1
+        if i6 is None:
+            pos_new = np.vstack([pos_new, p6])
+            i6 = len(pos_new) - 1
+        if i7 is None:
+            pos_new = np.vstack([pos_new, p7])
+            i7 = len(pos_new) - 1
+        if i8 is None:
+            pos_new = np.vstack([pos_new, p8])
+            i8 = len(pos_new) - 1
+    
+        # get new faces
+        faces_new = np.vstack([
+            faces_new,
+            np.array([i0, i4, i8, i7]),
+            np.array([i4, i1, i5, i8]),
+            np.array([i8, i5, i2, i6]),
+            np.array([i7, i8, i6, i3]),
+        ])
+
+    if debug is not None:
+        print(f"break_tjunctions: added {len(faces_new) - len(faces)}/{len(faces)} faces, {len(pos_new) - len(pos)}/{len(pos)} nodes")
+    
+    return pos_new, faces_new
+
+def omit_internal_tjunctions(faces, pos, debug=None):
     """
     Omit faces at T-Junctions
     """
@@ -83,64 +240,80 @@ def omit_tjunction_faces(faces, pos):
             if not np.abs(np.dot(normal, face_normals[j])) > 0.999:
                 continue
             
-            # get direction bw face centers
-            # if direction is axis-aligned, then continue
             face_center_disp = face_centers[j] - center
             face_center_dist = np.linalg.norm(face_center_disp)
-            face_center_dirn = face_center_disp / face_center_dist
 
-            if np.abs(face_center_dirn[0]) > 0.999 or np.abs(face_center_dirn[1]) > 0.999 or np.abs(face_center_dirn[2]) > 0.999:
-                continue
-            
             # if differs from exected tjt_center_dist then it is not a T-junction
             if face_center_dist < tjt_center_dist * 0.999:
+                continue
+            
+            # get direction bw face centers
+            # if direction is axis-aligned, then continue
+            face_center_direction = face_center_disp / face_center_dist
+            if (
+                np.abs(face_center_direction[0]) > 0.999 or
+                np.abs(face_center_direction[1]) > 0.999 or
+                np.abs(face_center_direction[2]) > 0.999
+            ):
                 continue
             
             # these faces are T-junctions, not surface
             is_surface[i] = False
             is_surface[j] = False
 
+    if debug is not None:
+        print(f"omit_internal_tjunctions: omitted {np.sum(~is_surface)}/{len(faces)} faces")
+    
     return faces[is_surface]
 
-def extract_surface_faces(pos, elems):
-    """
-    Extract surface nodes from a 3D hexahedral mesh
-    """
-
-    # Get all faces
-    faces = make_faces(elems) # [Nfaces, 4]
-    # Get unique faces. Do sorting to handle permutations
-    _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
-    # Get indices of faces that appear exactly once
-    unique_faces = faces[unique_indices[counts == 1]]
-    # omit faces at T-Junctions
-    surface_faces = omit_tjunction_faces(unique_faces, pos)
-
-    return surface_faces
-
-def create_surface_trimesh(pos, elems):
+def create_surface_trimesh(pos, elems, debug=None):
     """
     Create a surface trimesh from a 3D hexahedral mesh
     """
-    # extract surface nodes
-    surface_faces = extract_surface_faces(pos, elems)
 
+    # debug = True
+
+    #---------------------------------------------#
+    # extract surface nodes
+    #---------------------------------------------#
+
+    # # Get all faces
+    # faces = make_faces(elems) # [Nfaces, 4]
+    # # Get unique faces. Do sorting to handle permutations
+    # _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
+    # unique_faces = faces[unique_indices[counts == 1]]
+    # # omit faces at internal T-Junctions
+    # surface_faces = omit_internal_tjunctions(unique_faces, pos)
+    # pos_new = pos
+
+    # Get all faces
+    faces = make_faces(elems) # [Nfaces, 4]
+    # Break all T-junctions
+    pos_new, faces = break_tjunctions(faces, pos, debug=debug)
+    # Get unique faces. Do sorting to handle permutations
+    _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
+    surface_faces = faces[unique_indices[counts == 1]]
+    # omit faces at internal T-Junctions
+    surface_faces = omit_internal_tjunctions(surface_faces, pos_new, debug=debug)
+
+    #---------------------------------------------#
     # get surface nodes
     surface_indices = np.unique(surface_faces.reshape(-1))
-    surface_pos = pos[surface_indices]
+    surface_pos = pos_new[surface_indices]
     
     # create triangles from surface faces
     surface_triangles = quads_to_triangles(surface_faces)
 
     # remap surface_triangles to only index surface nodes
-    vertex_remap = np.full(len(pos), -1, dtype=int)
+    vertex_remap = np.full(len(pos_new), -1, dtype=int)
     vertex_remap[surface_indices] = np.arange(len(surface_indices))
     surface_triangles = vertex_remap[surface_triangles]
 
     # create trimesh object
     surface_mesh = trimesh.Trimesh(vertices=surface_pos, faces=surface_triangles)
+    surface_indices = surface_indices[surface_indices < len(pos)]
 
-    return surface_mesh, surface_indices
+    return surface_mesh, surface_indices[surface_indices < len(pos)]
 
 def surface_ray_intersect(surface_mesh, ray_origins, ray_direction, interior=False):
     """
@@ -158,21 +331,17 @@ def surface_ray_intersect(surface_mesh, ray_origins, ray_direction, interior=Fal
         multiple_hits=False,
     )
     
-    if interior:
-        assert len(intersect_locs) == len(ray_origins), f'Ray cast error: {len(intersect_locs)} != {len(ray_origins)}'
+    if len(intersect_locs) < len(ray_origins):
+        print(f"In surface_ray_intersect:")
+        print(f"num query: {len(ray_origins)}")
+        print(f"num hits : {len(intersect_locs)}")
+    
+        intersect_locations = np.full((len(ray_origins), 3), np.nan)
+        if len(intersect_locs) > 0:
+            intersect_locations[ray_indices] = intersect_locs
+        return intersect_locations
+    else:
         return intersect_locs
-    
-    # get ray intersection points
-    intersect_locations = np.full((len(ray_origins), 3), -9999.)
-    # intersect_locations = ray_origins.copy()
-    
-    # print(f"num query: {len(ray_origins)}")
-    # print(f"num hits : {len(intersect_locs)}")
-    
-    if len(intersect_locs) > 0:
-        intersect_locations[ray_indices] = intersect_locs
-
-    return intersect_locations
 
 #======================================================================#
 def distance_to_surface(pos, elems):
@@ -198,7 +367,7 @@ def distance_to_surface(pos, elems):
     # # intuition: how much material is under me before thin air?
     # # not correct at surface nodes
     # overhang_intersections = surface_ray_intersect(surface_mesh, pos, np.array([0., 0., -1.]))
-    # overhang_distances = (pos[:,2] - overhang_intersections[:,2]).reshape(-1,1)
+    # overhang_distances = (pos[:,2] - overha_intersections[:,2]).reshape(-1,1)
 
     # for surface:
     # 1. Alternative: compute true distance to surface for interior nodes
@@ -208,30 +377,19 @@ def distance_to_surface(pos, elems):
     surface_mask = np.zeros(len(pos), dtype=bool)
     surface_mask[surface_indices] = True
     
-    # get overhang distances for interior nodes
-    intersections_interior = surface_ray_intersect(
-        surface_mesh,
-        pos[~surface_mask],
-        np.array([0., 0., -1.]),
-        # interior=True,
-        interior=False,
-    )
-    overhang_distances_interior = pos[~surface_mask, 2] - intersections_interior[:, 2]
+    # get overhang distances
+    intersections = surface_ray_intersect(surface_mesh, pos, np.array([0., 0., -1.]))
     
-    # surface
-    # overhang_distances_surface = np.zeros(np.sum(surface_mask))
-    overhang_distances_surface = np.full((np.sum(surface_mask),), 9999.)
+    isnan = np.isnan(intersections[:, 2])
     
-    # combine
-    overhang_distances = np.full((len(pos),), 0)
-    overhang_distances[surface_mask] = overhang_distances_surface
-    overhang_distances[~surface_mask] = overhang_distances_interior
-    overhang_distances = overhang_distances.reshape(-1,1)
+    # interpolate with intersection[~insnan]
+    # intersections[isnan] = 0
 
-    #----------------------------------#
+    overhang_distances = pos[:, 2] - intersections[:, 2]
+    
     return np.hstack([
         nearest_directions,
-        overhang_distances,
+        overhang_distances.reshape(-1,1),
         surface_mask.reshape(-1,1),
     ])
 
