@@ -271,51 +271,47 @@ def create_surface_trimesh(pos, elems, debug=None):
     Create a surface trimesh from a 3D hexahedral mesh
     """
 
-    # debug = True
-
-    #---------------------------------------------#
+    ###
     # extract surface nodes
-    #---------------------------------------------#
-
-    # # Get all faces
-    # faces = make_faces(elems) # [Nfaces, 4]
-    # # Get unique faces. Do sorting to handle permutations
-    # _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
-    # unique_faces = faces[unique_indices[counts == 1]]
-    # # omit faces at internal T-Junctions
-    # surface_faces = omit_internal_tjunctions(unique_faces, pos)
-    # pos_new = pos
+    ###
 
     # Get all faces
     faces = make_faces(elems) # [Nfaces, 4]
-    # Break all T-junctions
-    pos_new, faces = break_tjunctions(faces, pos, debug=debug)
     # Get unique faces. Do sorting to handle permutations
     _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
-    surface_faces = faces[unique_indices[counts == 1]]
+    unique_faces = faces[unique_indices[counts == 1]]
     # omit faces at internal T-Junctions
-    surface_faces = omit_internal_tjunctions(surface_faces, pos_new, debug=debug)
+    surface_faces = omit_internal_tjunctions(unique_faces, pos)
+    # Break remaining T-junctions
+    pos_new, surface_faces = break_tjunctions(surface_faces, pos, debug=debug)
+    # Get unique faces. Do sorting to handle permutations
+    _, unique_indices, counts = np.unique(np.sort(surface_faces, axis=1), axis=0, return_counts=True, return_index=True)
+    surface_faces = surface_faces[unique_indices[counts == 1]]
 
-    #---------------------------------------------#
-    # get surface nodes
+    ###
+    # get surface triangles and nodes
+    ###
+
+    # surface nodes
     surface_indices = np.unique(surface_faces.reshape(-1))
     surface_pos = pos_new[surface_indices]
     
-    # create triangles from surface faces
+    # surface triangles
     surface_triangles = quads_to_triangles(surface_faces)
-
     # remap surface_triangles to only index surface nodes
     vertex_remap = np.full(len(pos_new), -1, dtype=int)
     vertex_remap[surface_indices] = np.arange(len(surface_indices))
     surface_triangles = vertex_remap[surface_triangles]
 
+    ###
     # create trimesh object
+    ###
     surface_mesh = trimesh.Trimesh(vertices=surface_pos, faces=surface_triangles)
     surface_indices = surface_indices[surface_indices < len(pos)]
 
     return surface_mesh, surface_indices[surface_indices < len(pos)]
 
-def surface_ray_intersect(surface_mesh, ray_origins, ray_direction, interior=False):
+def surface_ray_intersect(surface_mesh, ray_origins, ray_direction, debug=None):
     """
     Ray cast to surface
     """
@@ -332,9 +328,10 @@ def surface_ray_intersect(surface_mesh, ray_origins, ray_direction, interior=Fal
     )
     
     if len(intersect_locs) < len(ray_origins):
-        print(f"In surface_ray_intersect:")
-        print(f"num query: {len(ray_origins)}")
-        print(f"num hits : {len(intersect_locs)}")
+        if debug is not None:
+            print(f"In surface_ray_intersect:")
+            print(f"num query: {len(ray_origins)}")
+            print(f"num hits : {len(intersect_locs)}")
     
         intersect_locations = np.full((len(ray_origins), 3), np.nan)
         if len(intersect_locs) > 0:
@@ -342,9 +339,46 @@ def surface_ray_intersect(surface_mesh, ray_origins, ray_direction, interior=Fal
         return intersect_locations
     else:
         return intersect_locs
+    
+def dist_to_surface_in_dir(direction, surface_mesh, surface_mask, pos, tree_interior=None, debug=None):
+    """
+    Compute distance to surface in a given direction
+    """
+    direction = direction / np.linalg.norm(direction)
+    
+    intersections_interior = surface_ray_intersect(surface_mesh, pos[~surface_mask], direction, debug=debug)
+    
+    # deal with missed intersections
+    isnan_interior = np.isnan(intersections_interior.sum(axis=1))
+    
+    if np.any(isnan_interior):
+        tree_interior_nan = KDTree(pos[~surface_mask][~isnan_interior])
+        _, nearest_indices_nan_interior = tree_interior_nan.query(pos[~surface_mask][isnan_interior], k=1)
+        difference_nan_interior = pos[~surface_mask][isnan_interior] - pos[~surface_mask][~isnan_interior][nearest_indices_nan_interior]
+        intersections_interior[isnan_interior] = intersections_interior[~isnan_interior][nearest_indices_nan_interior] + difference_nan_interior
+
+    # deal with surface
+    if tree_interior is None:
+        tree_interior = KDTree(pos[~surface_mask])
+    
+    _, nearest_indices_surface = tree_interior.query(pos[surface_mask], k=1)
+    difference_surface = pos[surface_mask] - pos[~surface_mask][nearest_indices_surface]
+    intersections_surface = intersections_interior[nearest_indices_surface] + difference_surface
+    
+    # assemble intersections array
+    intersections = np.zeros((len(pos), 3,))
+    intersections[~surface_mask] = intersections_interior
+    intersections[surface_mask] = intersections_surface
+
+    # compute distances
+    distances = np.abs(np.dot(pos - intersections, direction))
+    
+    assert not np.any(np.isnan(distances)), "dist_to_surface_in_dir: Found NaN values in distances array"
+
+    return distances
 
 #======================================================================#
-def distance_to_surface(pos, elems):
+def distance_to_surface(pos, elems, debug=None):
     """
     Compute distance to surface
     Args:
@@ -357,40 +391,42 @@ def distance_to_surface(pos, elems):
     pos = pos.numpy(force=True)
     elems = elems.numpy(force=True)
 
-    surface_mesh, surface_indices = create_surface_trimesh(pos, elems)
+    surface_mesh, surface_indices = create_surface_trimesh(pos, elems, debug=debug)
 
-    # get nearest point on surface
+    ###
+    # get SDF direction and magnitude
+    ###
     nearest_point, _, _ = surface_mesh.nearest.on_surface(pos)
-    nearest_directions = nearest_point - pos
+    sdf_direction = nearest_point - pos
+    sdf_magnitude = np.linalg.norm(sdf_direction, axis=1)
 
-    # # get overhang distances
-    # # intuition: how much material is under me before thin air?
-    # # not correct at surface nodes
-    # overhang_intersections = surface_ray_intersect(surface_mesh, pos, np.array([0., 0., -1.]))
-    # overhang_distances = (pos[:,2] - overha_intersections[:,2]).reshape(-1,1)
-
-    # for surface:
-    # 1. Alternative: compute true distance to surface for interior nodes
-    # 2. get value from nearest surface node and add difference in position
-    
+    ###
     # get surface mask
+    ###
     surface_mask = np.zeros(len(pos), dtype=bool)
     surface_mask[surface_indices] = True
     
-    # get overhang distances
-    intersections = surface_ray_intersect(surface_mesh, pos, np.array([0., 0., -1.]))
-    
-    isnan = np.isnan(intersections[:, 2])
-    
-    # interpolate with intersection[~insnan]
-    # intersections[isnan] = 0
+    ###
+    # misc
+    ###
+    tree_interior = None
+    tree_interior = KDTree(pos[~surface_mask])
 
-    overhang_distances = pos[:, 2] - intersections[:, 2]
+    # overhang_distances: how much material is under me before thin air?
+    overhang_distances = dist_to_surface_in_dir(
+        np.array([0., 0., -1.]),
+        surface_mesh,
+        surface_mask,
+        pos,
+        tree_interior=tree_interior,
+        debug=debug,
+    )
     
     return np.hstack([
-        nearest_directions,
-        overhang_distances.reshape(-1,1),
         surface_mask.reshape(-1,1),
+        sdf_magnitude.reshape(-1,1),
+        overhang_distances.reshape(-1,1),
+        sdf_direction,
     ])
 
 #======================================================================#
