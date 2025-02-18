@@ -107,16 +107,19 @@ class PointHash:
     """
     A class for hashing 3D point coordinates to indices using integer coordinates
     """
-    def __init__(self, pos, scale=1e6):
+    def __init__(self, pos, scale=None):
         """
         Initialize the PointHash with point coordinates
         Args:
             pos: (N, 3) array of point coordinates
             scale: scaling factor for converting to integer coordinates
         """
+        if scale is None:
+            scale = 1e6
+
         self.scale = scale
         self._hash = self._create_hash(pos)
-    
+        
     def _create_hash(self, pos):
         """
         Create the internal hash table
@@ -126,6 +129,11 @@ class PointHash:
             Dictionary mapping tuple of rounded coordinates to indices
         """
         int_pos = np.round(pos * self.scale).astype(np.int64)
+
+        # Check for collisions
+        if len(np.unique(int_pos, axis=0)) < len(pos):
+            raise ValueError(f"PointHash: scale = {self.scale} is too small: Collisions detected in hashing. Min/max scaled value: {np.min(int_pos)}/{np.max(int_pos)}")
+    
         return {tuple(coords): idx for idx, coords in enumerate(int_pos)}
     
     def check_point_existence(self, point):
@@ -156,7 +164,10 @@ def break_tjunctions(faces, pos, debug=None):
     Break faces at T-Junctions
     """
     
-    hash = PointHash(pos)
+    L = np.linalg.norm(pos[faces[:, 0]] - pos[faces[:, 1]], axis=1)
+    W = np.linalg.norm(pos[faces[:, 1]] - pos[faces[:, 2]], axis=1)
+    scale = 1 / np.min(np.hstack([L, W]))
+    hash = PointHash(pos, scale=scale * 10)
 
     # get large faces at T-Junctions
     is_tjt_large = select_tjt_large(faces, pos)
@@ -213,6 +224,8 @@ def break_tjunctions(faces, pos, debug=None):
             np.array([i8, i5, i2, i6]),
             np.array([i7, i8, i6, i3]),
         ])
+
+    assert len(faces_new) == len(faces[~is_tjt_large]) + 4 * np.sum(is_tjt_large)
 
     if debug is not None:
         print(f"break_tjunctions: added {len(faces_new) - len(faces)}/{len(faces)} faces, {len(pos_new) - len(pos)}/{len(pos)} nodes")
@@ -297,32 +310,32 @@ def create_surface_trimesh(pos, elems, debug=None):
     # extract surface nodes
     ###
 
-    # Get all faces
-    faces = make_faces(elems) # [Nfaces, 4]
-    # Get unique faces. Do sorting to handle permutations
-    _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
-    unique_faces = faces[unique_indices[counts == 1]]
-    # omit faces at internal T-Junctions
-    surface_faces = omit_internal_tjunctions(unique_faces, pos)
-    # Break remaining T-junctions
-    pos_new, surface_faces = break_tjunctions(surface_faces, pos, debug=debug)
-    # Get unique faces. Do sorting to handle permutations
-    _, unique_indices, counts = np.unique(np.sort(surface_faces, axis=1), axis=0, return_counts=True, return_index=True)
-    surface_faces = surface_faces[unique_indices[counts == 1]]
-
     # # Get all faces
     # faces = make_faces(elems) # [Nfaces, 4]
     # # Get unique faces. Do sorting to handle permutations
     # _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
-    # faces = faces[unique_indices[counts == 1]]
-    # # Break all T-junctions
-    # pos_new, faces = break_tjunctions(faces, pos, debug=debug)
+    # unique_faces = faces[unique_indices[counts == 1]]
     # # omit faces at internal T-Junctions
-    # faces = omit_internal_tjunctions(faces, pos_new)
+    # surface_faces = omit_internal_tjunctions(unique_faces, pos)
+    # # Break remaining T-junctions
+    # pos_new, surface_faces = break_tjunctions(surface_faces, pos, debug=debug)
     # # Get unique faces. Do sorting to handle permutations
-    # _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
-    # faces = faces[unique_indices[counts == 1]]
-    # surface_faces = faces
+    # _, unique_indices, counts = np.unique(np.sort(surface_faces, axis=1), axis=0, return_counts=True, return_index=True)
+    # surface_faces = surface_faces[unique_indices[counts == 1]]
+
+    # Get all faces
+    faces = make_faces(elems) # [Nfaces, 4]
+    # Get unique faces. Do sorting to handle permutations
+    _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
+    faces = faces[unique_indices[counts == 1]]
+    # Break all T-junctions
+    pos_new, faces = break_tjunctions(faces, pos, debug=debug)
+    # omit faces at internal T-Junctions
+    faces = omit_internal_tjunctions(faces, pos_new)
+    # Get unique faces. Do sorting to handle permutations
+    _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
+    faces = faces[unique_indices[counts == 1]]
+    surface_faces = faces
     
     ###
     # get surface triangles and nodes
