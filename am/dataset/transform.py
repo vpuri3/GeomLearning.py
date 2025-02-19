@@ -18,8 +18,7 @@ class DatasetTransform:
     def __init__(
         self,
         disp=True, vmstr=True, temp=True,
-        sdf=False,
-        mesh=True, elems=False, orig=False, metadata=False,
+        sdf=False, mesh=True, elems=False, orig=False, metadata=False,
     ):
         # fields
         self.disp  = disp
@@ -71,12 +70,13 @@ class DatasetTransform:
         return pos, disp, vmstr, temp, edge_dxyz
     
     def normalize_sdf_x(self, sdf_x):
-        # input: surface_mask (1), sdf_direction (3), sdf_magnitude (1), overhang_distances (1)
+        # input: surface_mask (1), sdf_direction (3), sdf_magnitude (1), distances (6)
         sdf_x = sdf_x[:, 1:].clone()
 
-        sdf_x[:, :3] = sdf_x[:, :3] / self.pos_scale
-        sdf_x[:,  3] = sdf_x[:,  3] / self.pos_scale.norm()
-        sdf_x[:,  4] = sdf_x[:,  4] / self.pos_scale[2]
+        sdf_x[:, :3] /= self.pos_scale
+        sdf_x[:, 3] /= self.pos_scale.norm()
+        sdf_x[:, 4:7] /= self.pos_scale
+        sdf_x[:, 7:10] /= self.pos_scale
 
         return sdf_x
 
@@ -100,5 +100,6 @@ class DatasetTransform:
 
     def __call__(self, graph):
         raise NotImplementedError()
+
 #======================================================================#
 #

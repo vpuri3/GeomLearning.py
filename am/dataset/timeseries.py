@@ -27,13 +27,13 @@ class TimeseriesDatasetTransform(DatasetTransform):
     def __init__(
         self,
         disp=True, vmstr=True, temp=True,
-        mesh=True, elems=False, orig=False,
-        metadata=False, merge=True, interpolate=True,
+        sdf=False, mesh=True, elems=False, orig=False, metadata=False,
+        merge=True, interpolate=True,
     ):
 
         super().__init__(
             disp=disp, vmstr=vmstr, temp=temp,
-            mesh=mesh, elems=elems, orig=orig, metadata=metadata,
+            sdf=sdf, mesh=mesh, elems=elems, orig=orig, metadata=metadata,
         )
 
         self.merge = merge
@@ -202,6 +202,9 @@ class TimeseriesDatasetTransform(DatasetTransform):
         xs = [pos, t, dt,]
         ys = []
 
+        if self.sdf:
+            sdf_x = self.normalize_sdf_x(graph.sdf_x)
+            xs.append(sdf_x)
         if self.disp:
             xs.append(disp_in)
             ys.append(disp_out)

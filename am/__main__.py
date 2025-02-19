@@ -59,18 +59,19 @@ def train_timeseries(cfg, device):
     exclude_list = [line.strip() for line in open(exclude_list, 'r').readlines()]
     
     transform = am.TimeseriesDatasetTransform(
-        disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=cfg.GNN,
-        merge=cfg.merge, interpolate=cfg.interpolate, metadata=False,
+        disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp,
+        sdf=cfg.sdf, mesh=cfg.GNN, metadata=False,
+        merge=cfg.merge, interpolate=cfg.interpolate,
     )
     DATADIRS = [os.path.join(DATADIR_TIMESERIES, DIR) for DIR in SUBDIRS]
     DATADIRS = DATADIRS[:5]
-    dataset = am.TimeseriesDataset(DATADIRS, merge=cfg.merge, exclude_list=exclude_list, transform=transform, verbose=LOCAL_RANK==0)
-    _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
+    dataset = am.TimeseriesDataset(
+        DATADIRS, merge=cfg.merge, exclude_list=exclude_list,
+        transform=transform, verbose=LOCAL_RANK==0,
+        force_reload=True,
+    )
+    _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2]) # indices=[range(N1), range(N1,N1+N2)]
     
-    # # run small experiments
-    # N1, N2 = 30, 10
-    # _data, data_ = am.split_timeseries_dataset(dataset, indices=[range(N1), range(N1,N1+N2)])
-
     if LOCAL_RANK == 0:
         print(f"Loaded {len(dataset.case_files)} cases from {DATADIR_TIMESERIES}")
         print(f"Split into {len(_data.case_files)} train and {len(data_.case_files)} test cases")
@@ -82,7 +83,7 @@ def train_timeseries(cfg, device):
     # TODO: add mask_bulk as input
     # TODO: modify mask_bulk parameters. make interface sharper
 
-    ci = 3 + 2 + cfg.disp + cfg.vmstr + cfg.temp # (x, y, z, t, dt, fields...)
+    ci = 3 + 2 + (cfg.disp + cfg.vmstr + cfg.temp) + (cfg.sdf * 10) # (x/y/z, t/dt, fields...)
     ce = 3
     co = cfg.disp + cfg.vmstr + cfg.temp
 
@@ -162,7 +163,10 @@ def train_finaltime(cfg, device):
         dataset = am.FinaltimeDataset(DATADIR, exclude_list=exclude_list)#, force_reload=True)
         datasets.append(dataset)
         
-    transform = am.FinaltimeDatasetTransform(disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp, mesh=cfg.GNN, sdf=cfg.sdf)
+    transform = am.FinaltimeDatasetTransform(
+        disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp,
+        sdf=cfg.sdf, mesh=cfg.GNN,
+    )
     dataset = am.CompositeDataset(*datasets, transform=transform)
     _data, data_ = torch.utils.data.random_split(dataset, [0.8, 0.2])
     
@@ -174,7 +178,7 @@ def train_finaltime(cfg, device):
     # MODEL
     #=================#
 
-    ci = 3 + (cfg.sdf * 3)
+    ci = 3 + (cfg.sdf * 10)
     ce = 3
     co = cfg.disp + cfg.vmstr + cfg.temp
 

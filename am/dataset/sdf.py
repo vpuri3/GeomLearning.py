@@ -77,6 +77,7 @@ def select_tjt_large(faces, pos):
         tjt_center_adj_dist = np.max([tjt_center_adj_dist1, tjt_center_adj_dist2])
 
         neighbors = tree.query_ball_point(center, r=tjt_center_adj_dist * 1.001)
+        # neighbors = tree.query_ball_point(center, r=tjt_center_f2f_dist * 1.001)
         
         # Loop over neighbors of largest face at T-junction
         for j in neighbors:
@@ -606,21 +607,31 @@ def sdf_features(
     ###
     tree_interior = KDTree(pos[~surface_mask])
 
-    # overhang_distances: how much material is under me before thin air?
-    overhang_distances = dist_to_surface_in_dir(
-        np.array([0., 0., -1.]),
-        surface_mesh,
-        surface_mask,
-        pos,
-        tree_interior=tree_interior,
-        debug=debug,
+    # get distance to surface in [-1/1, 0, 0], [0, -1/1, 0], [0, 0, -1/1]
+    directions = (
+        np.array([1., 0., 0.]),
+        np.array([0., 1., 0.]),
+        np.array([0., 0., 1.]),
     )
+    
+    distances = [] # -(X, Y, Z), (X, Y, Z)
+
+    for sign in [-1., 1.]:
+        for direction in directions:
+            direction = direction * sign
+            dist = dist_to_surface_in_dir(
+                direction, surface_mesh, surface_mask,
+                pos, tree_interior=tree_interior, debug=debug
+            ).reshape(-1,1)
+            distances.append(dist)
+
+    distances = np.hstack(distances) # [N, 6]
     
     return np.hstack([
         surface_mask.reshape(-1,1),
         sdf_direction,
         sdf_magnitude.reshape(-1,1),
-        overhang_distances.reshape(-1,1),
+        distances,
     ])
 
 #======================================================================#
