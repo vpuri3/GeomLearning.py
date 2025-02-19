@@ -31,9 +31,8 @@ class FinaltimeDatasetTransform(DatasetTransform):
         ys = []
 
         if self.sdf:
-            # dist = graph.dist / (self.pos_scale / 1e+1)
-            dist = graph.dist / (self.pos_scale / 1e+0)
-            xs.append(dist)
+            sdf_x = self.normalize_sdf_x(graph.sdf_x)
+            xs.append(sdf_x)
         if self.disp:
             ys.append(disp)
         if self.vmstr:
@@ -99,6 +98,7 @@ class FinaltimeDataset(pyg.data.Dataset):
         return
 
     def process_single(self, icase):
+        # print(f"{os.path.basename(self.raw_paths[icase])}")
         data = np.load(self.raw_paths[icase], mmap_mode='r')
         graph = makegraph(data, self.case_files[icase][:-4], 1)
         torch.save(graph, self.processed_paths[icase])

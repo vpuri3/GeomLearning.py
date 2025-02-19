@@ -239,10 +239,10 @@ def vis_finaltime(cfg, force_reload=True, max_cases=50, num_workers=None):
     #     sdf=cfg.sdf, mesh=True,
     # )
 
-    num_workers = 1
+    # num_workers = 1
 
-    for DIR in SUBDIRS:
     # for DIR in SUBDIRS[:1]:
+    for DIR in SUBDIRS:
         DATADIR = os.path.join(DATADIR_FINALTIME, DIR)
         dataset = am.FinaltimeDataset(
             DATADIR,
@@ -311,9 +311,13 @@ def test_extraction():
 
 def do_extraction():
 
-    zip_file = os.path.join(DATADIR_RAW, "data_600-1000.zip")
-    out_dir  = os.path.join(DATADIR_FINALTIME, "data_600-1000")
-    am.extract_from_zip(zip_file, out_dir, timeseries=True)
+    zip_file = os.path.join(DATADIR_RAW, "data_0-100.zip")
+    out_dir  = os.path.join(DATADIR_FINALTIME, "data_0-100")
+    am.extract_from_zip(zip_file, out_dir, timeseries=False)
+
+    # zip_file = os.path.join(DATADIR_RAW, "data_600-1000.zip")
+    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_600-1000")
+    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
 
     # zip_file = os.path.join(DATADIR_RAW, "data_1000-1500.zip")
     # out_dir  = os.path.join(DATADIR_FINALTIME, "data_1000-1500")

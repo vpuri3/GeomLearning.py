@@ -1,11 +1,13 @@
 #
+import os
+import pyvista as pv
 import trimesh # also needs package rtree
 import numpy as np
 from scipy.spatial import KDTree
 
 
 __all__ = [
-    'distance_to_surface',
+    'sdf_features',
 ]
 
 #======================================================================#
@@ -57,7 +59,6 @@ def select_tjt_large(faces, pos):
     L = np.linalg.norm(pos[faces[:, 0]] - pos[faces[:, 1]], axis=1)
     W = np.linalg.norm(pos[faces[:, 1]] - pos[faces[:, 2]], axis=1)
     
-    # exclude faces at T-Junctions
     tree = KDTree(face_centers)
 
     # Create a mask for large faces at T-Junctions (initially all False)
@@ -68,8 +69,14 @@ def select_tjt_large(faces, pos):
 
         # Find faces within a distance based on expected center distance in a T-junction
         # we are grabbing neighbors only for the large face at a T-junction
-        tjt_center_dist = np.sqrt(L[i]**2 + W[i]**2) / 4
-        neighbors = tree.query_ball_point(center, r=tjt_center_dist * 1.001)
+        tjt_center_f2f_dist = np.sqrt(L[i]**2 + W[i]**2) / 4
+
+        # expected distance between adjacent faces
+        tjt_center_adj_dist1 = np.sqrt(9*L[i]**2 + 1*W[i]**2) / 4
+        tjt_center_adj_dist2 = np.sqrt(1*L[i]**2 + 9*W[i]**2) / 4
+        tjt_center_adj_dist = np.max([tjt_center_adj_dist1, tjt_center_adj_dist2])
+
+        neighbors = tree.query_ball_point(center, r=tjt_center_adj_dist * 1.001)
         
         # Loop over neighbors of largest face at T-junction
         for j in neighbors:
@@ -84,8 +91,16 @@ def select_tjt_large(faces, pos):
             face_center_disp = face_centers[j] - center
             face_center_dist = np.linalg.norm(face_center_disp)
 
-            # if differs from exected tjt_center_dist then it is not a T-junction
-            if face_center_dist < tjt_center_dist * 0.999:
+            # if differs from expected
+            # tjt_center_f2f_dist or
+            # tjt_center_adj_dist1 or
+            # tjt_center_adj_dist2
+            # then it is not a T-junction
+            if (
+                not (tjt_center_f2f_dist  * 0.999 < face_center_dist < tjt_center_f2f_dist  * 1.001) and
+                not (tjt_center_adj_dist1 * 0.999 < face_center_dist < tjt_center_adj_dist1 * 1.001) and
+                not (tjt_center_adj_dist2 * 0.999 < face_center_dist < tjt_center_adj_dist2 * 1.001)
+            ):
                 continue
             
             # get direction bw face centers
@@ -100,7 +115,7 @@ def select_tjt_large(faces, pos):
             
             # if we are here, then face [i] is a large face at a T-junction
             is_tjt_large[i] = True
-
+            
     return is_tjt_large
 
 class PointHash:
@@ -166,8 +181,8 @@ def break_tjunctions(faces, pos, debug=None):
     
     L = np.linalg.norm(pos[faces[:, 0]] - pos[faces[:, 1]], axis=1)
     W = np.linalg.norm(pos[faces[:, 1]] - pos[faces[:, 2]], axis=1)
-    scale = 1 / np.min(np.hstack([L, W]))
-    hash = PointHash(pos, scale=scale * 10)
+    scale = 1 / np.min(np.vstack([L, W]))
+    hash = PointHash(pos, scale=scale * 2)
 
     # get large faces at T-Junctions
     is_tjt_large = select_tjt_large(faces, pos)
@@ -229,6 +244,13 @@ def break_tjunctions(faces, pos, debug=None):
 
     if debug is not None:
         print(f"break_tjunctions: added {len(faces_new) - len(faces)}/{len(faces)} faces, {len(pos_new) - len(pos)}/{len(pos)} nodes")
+        
+    # # ensure distance bw points is not too small
+    # tree = KDTree(pos_new)
+    # dists, idxs = tree.query(pos_new, k=2)
+    # dists = dists[:, 1:]
+    # idxs = idxs[:, 1:]
+    # assert np.min(dists) > 1e-4
     
     return pos_new, faces_new
 
@@ -261,9 +283,9 @@ def omit_internal_tjunctions(faces, pos, debug=None):
             
         # Find faces within a distance based on expected center distance in a T-junction
 
-        tjt_center_dist = np.sqrt(L[i]**2 + W[i]**2) / 4
+        tjt_center_f2f_dist = np.sqrt(L[i]**2 + W[i]**2) / 4
         # we are grabbing neighbors only for the large face at a T-junction
-        neighbors = tree.query_ball_point(center, r=tjt_center_dist * 1.001)
+        neighbors = tree.query_ball_point(center, r=tjt_center_f2f_dist * 1.001)
         
         # Loop over neighbors of largest face at T-junction
         for j in neighbors:
@@ -278,8 +300,8 @@ def omit_internal_tjunctions(faces, pos, debug=None):
             face_center_disp = face_centers[j] - center
             face_center_dist = np.linalg.norm(face_center_disp)
 
-            # if differs from exected tjt_center_dist then it is not a T-junction
-            if face_center_dist < tjt_center_dist * 0.999:
+            # if differs from exected tjt_center_f2f_dist then it is not a T-junction
+            if not (tjt_center_f2f_dist  * 0.999 < face_center_dist < tjt_center_f2f_dist  * 1.001):
                 continue
             
             # get direction bw face centers
@@ -301,7 +323,7 @@ def omit_internal_tjunctions(faces, pos, debug=None):
     
     return faces[is_surface]
 
-def create_surface_trimesh(pos, elems, debug=None):
+def create_surface_trimesh(pos, elems, case_name=None, debug=None):
     """
     Create a surface trimesh from a 3D hexahedral mesh
     """
@@ -309,19 +331,6 @@ def create_surface_trimesh(pos, elems, debug=None):
     ###
     # extract surface nodes
     ###
-
-    # # Get all faces
-    # faces = make_faces(elems) # [Nfaces, 4]
-    # # Get unique faces. Do sorting to handle permutations
-    # _, unique_indices, counts = np.unique(np.sort(faces, axis=1), axis=0, return_counts=True, return_index=True)
-    # unique_faces = faces[unique_indices[counts == 1]]
-    # # omit faces at internal T-Junctions
-    # surface_faces = omit_internal_tjunctions(unique_faces, pos)
-    # # Break remaining T-junctions
-    # pos_new, surface_faces = break_tjunctions(surface_faces, pos, debug=debug)
-    # # Get unique faces. Do sorting to handle permutations
-    # _, unique_indices, counts = np.unique(np.sort(surface_faces, axis=1), axis=0, return_counts=True, return_index=True)
-    # surface_faces = surface_faces[unique_indices[counts == 1]]
 
     # Get all faces
     faces = make_faces(elems) # [Nfaces, 4]
@@ -357,10 +366,82 @@ def create_surface_trimesh(pos, elems, debug=None):
     ###
     surface_mesh = trimesh.Trimesh(vertices=surface_pos, faces=surface_triangles)
     surface_indices = surface_indices[surface_indices < len(pos)]
+    
+    surface_mesh = repair_trimesh(surface_mesh, debug=debug, case_name=case_name)
 
-    return surface_mesh, surface_indices[surface_indices < len(pos)]
+    return surface_mesh, surface_indices
 
-def surface_ray_intersect(surface_mesh, ray_origins, ray_direction, debug=None):
+def repair_trimesh(mesh, debug=None, case_name=None):
+    mesh.remove_infinite_values()
+    mesh.remove_degenerate_faces()
+    mesh.remove_duplicate_faces()
+    mesh.remove_unreferenced_vertices()
+    mesh.merge_vertices()
+
+    trimesh.repair.fill_holes(mesh)
+    trimesh.repair.fix_normals(mesh)
+
+    mesh.process()
+
+    if debug is not None:
+        if case_name is not None:
+            print(f"\nSurface Mesh Health Check for {case_name}:")
+        else:
+            print("\nSurface Mesh Health Check:")
+
+        print(f"Watertight: {mesh.is_watertight}")
+        print(f"Degenerate faces: {np.sum(mesh.area_faces < 1e-6)}")
+        print(f"Watertight: {mesh.is_watertight}")
+        
+        # Get edge face count
+        if not mesh.is_watertight:
+            edge_face_count = mesh.edges_unique_inverse
+            unique, counts = np.unique(edge_face_count, return_counts=True)
+            normal_count = np.sum(counts == 2)
+            non_manifold_count = np.sum(counts > 2)
+            boundary_count = np.sum(counts == 1)
+            print(f"Normal edges: {normal_count}/{len(mesh.edges)}")
+            print(f"Non-manifold edges: {non_manifold_count}/{len(mesh.edges)}")
+            print(f"Boundary edges: {boundary_count}/{len(mesh.edges)}")
+
+    return mesh
+
+def save_surface_trimesh(surface_mesh, filename, edges=False):
+    """
+    Save a Trimesh object to VTK format with edge_face_count as a feature
+    
+    Args:
+        surface_mesh (trimesh.Trimesh): The mesh to save
+        filename (str): Output VTK filename
+    """
+    # Convert Trimesh to PyVista mesh
+    pv_mesh = pv.wrap(surface_mesh)
+    pv_mesh.save(filename)
+    
+    if edges:
+        # Calculate edge_face_count
+        edge_face_count = surface_mesh.edges_unique_inverse
+        unique, counts = np.unique(edge_face_count, return_counts=True)
+
+        # Create edge_face_count feature array for all edges
+        edge_face_count_feature = np.zeros(len(surface_mesh.edges))
+        for edge_idx, count in zip(unique, counts):
+            # Assign the count to all edges with the same edges_unique_inverse value
+            edge_face_count_feature[edge_face_count == edge_idx] = count
+        
+        # Create a PyVista PolyData object for edges
+        edge_mesh = pv.PolyData()
+        edge_mesh.points = surface_mesh.vertices
+        edge_mesh.lines = np.column_stack(
+            [np.full(len(surface_mesh.edges), 2), surface_mesh.edges]
+        )
+        edge_mesh['EdgeFaceCount'] = edge_face_count_feature
+        edge_mesh.save(filename.replace(".vtk", "_edges.vtk"))
+    
+    return  
+
+#======================================================================#
+def surface_ray_intersect_trimesh(surface_mesh, ray_origins, ray_direction, debug=None):
     """
     Ray cast to surface
     """
@@ -378,7 +459,7 @@ def surface_ray_intersect(surface_mesh, ray_origins, ray_direction, debug=None):
     
     if len(intersect_locs) < len(ray_origins):
         if debug is not None:
-            print(f"In surface_ray_intersect:")
+            print(f"In surface_ray_intersect_trimesh:")
             print(f"num query: {len(ray_origins)}")
             print(f"num hits : {len(intersect_locs)}")
     
@@ -389,31 +470,81 @@ def surface_ray_intersect(surface_mesh, ray_origins, ray_direction, debug=None):
     else:
         return intersect_locs
     
+def surface_ray_intersect_open3d(surface_mesh, ray_origins, ray_direction, debug=None):
+    """
+    Ray cast to surface
+    """
+    import open3d as o3d
+
+    assert ray_origins.ndim == 2 and ray_origins.shape[1] == 3
+    assert ray_direction.ndim == 1 and len(ray_direction) == 3
+
+    # Convert trimesh to Open3D TriangleMesh
+    o3d_mesh = o3d.geometry.TriangleMesh()
+    o3d_mesh.vertices = o3d.utility.Vector3dVector(surface_mesh.vertices)
+    o3d_mesh.triangles = o3d.utility.Vector3iVector(surface_mesh.faces)
+    
+    # Create rays
+    ray_directions = np.repeat(ray_direction.reshape(1,3), len(ray_origins), axis=0)
+    rays = np.hstack([ray_origins, ray_directions])
+    
+    # Perform ray intersection
+    scene = o3d.t.geometry.RaycastingScene()
+    # Convert vertices to float32 and faces to uint32 before passing to Open3D
+    vertices_float32 = surface_mesh.vertices.astype(np.float32)
+    faces_uint32 = surface_mesh.faces.astype(np.uint32)
+    scene.add_triangles(o3d.core.Tensor.from_numpy(vertices_float32),
+                        o3d.core.Tensor.from_numpy(faces_uint32))
+    
+    ans = scene.cast_rays(o3d.core.Tensor.from_numpy(rays.astype(np.float32)))
+    
+    # Process results
+    hit = ans['t_hit'].numpy() != np.inf
+    intersect_locs = ray_origins + ray_directions * ans['t_hit'].numpy().reshape(-1,1)
+    
+    if np.sum(hit) < len(ray_origins):
+        if debug is not None:
+            print(f"In surface_ray_intersect_open3d:")
+            print(f"num query: {len(ray_origins)}")
+            print(f"num hits : {np.sum(hit)}")
+    
+        intersect_locations = np.full((len(ray_origins), 3), np.nan)
+        intersect_locations[hit] = intersect_locs[hit]
+        return intersect_locations
+    else:
+        return intersect_locs
+
+def interpolate_missed_intersections(pos, mask, intersections, tree=None):
+    """
+    Fill missed intersections
+    """
+    if tree is None:
+        tree = KDTree(pos[~mask])
+    
+    _, nearest_indices = tree.query(pos[mask], k=1)
+    difference = pos[mask] - pos[~mask][nearest_indices]
+    return intersections[nearest_indices] + difference
+
 def dist_to_surface_in_dir(direction, surface_mesh, surface_mask, pos, tree_interior=None, debug=None):
     """
     Compute distance to surface in a given direction
     """
     direction = direction / np.linalg.norm(direction)
     
-    intersections_interior = surface_ray_intersect(surface_mesh, pos[~surface_mask], direction, debug=debug)
-    
+    # intersections_interior = surface_ray_intersect_trimesh(surface_mesh, pos[~surface_mask], direction, debug=debug)
+    intersections_interior = surface_ray_intersect_open3d(surface_mesh, pos[~surface_mask], direction, debug=debug)
+
     # deal with missed intersections
     isnan_interior = np.isnan(intersections_interior.sum(axis=1))
-    
     if np.any(isnan_interior):
-        tree_interior_nan = KDTree(pos[~surface_mask][~isnan_interior])
-        _, nearest_indices_nan_interior = tree_interior_nan.query(pos[~surface_mask][isnan_interior], k=1)
-        difference_nan_interior = pos[~surface_mask][isnan_interior] - pos[~surface_mask][~isnan_interior][nearest_indices_nan_interior]
-        intersections_interior[isnan_interior] = intersections_interior[~isnan_interior][nearest_indices_nan_interior] + difference_nan_interior
+        intersections_interior_nan = interpolate_missed_intersections(
+            pos[~surface_mask], isnan_interior, intersections_interior[~isnan_interior])
+        intersections_interior[isnan_interior] = intersections_interior_nan
 
     # deal with surface
-    if tree_interior is None:
-        tree_interior = KDTree(pos[~surface_mask])
-    
-    _, nearest_indices_surface = tree_interior.query(pos[surface_mask], k=1)
-    difference_surface = pos[surface_mask] - pos[~surface_mask][nearest_indices_surface]
-    intersections_surface = intersections_interior[nearest_indices_surface] + difference_surface
-    
+    intersections_surface = interpolate_missed_intersections(
+        pos, surface_mask, intersections_interior, tree=tree_interior)
+
     # assemble intersections array
     intersections = np.zeros((len(pos), 3,))
     intersections[~surface_mask] = intersections_interior
@@ -422,12 +553,15 @@ def dist_to_surface_in_dir(direction, surface_mesh, surface_mask, pos, tree_inte
     # compute distances
     distances = np.abs(np.dot(pos - intersections, direction))
     
-    assert not np.any(np.isnan(distances)), "dist_to_surface_in_dir: Found NaN values in distances array"
-
     return distances
 
 #======================================================================#
-def distance_to_surface(pos, elems, debug=None):
+def sdf_features(
+    pos, elems,
+    surf_verts=None, surf_faces=None,
+    case_name=None,
+    debug=None,
+):
     """
     Compute distance to surface
     Args:
@@ -437,10 +571,22 @@ def distance_to_surface(pos, elems, debug=None):
         directions: (N, 3) array of direction vectors (x, y, z components)
     """
 
-    pos = pos.numpy(force=True)
-    elems = elems.numpy(force=True)
+    surface_mesh, surface_indices = create_surface_trimesh(pos, elems, case_name=case_name, debug=debug)
+    
+    if (surf_verts is not None) and (surf_faces is not None):
+        surf_mesh = trimesh.Trimesh(vertices=surf_verts, faces=surf_faces)
+        surf_mesh = repair_trimesh(surf_mesh, debug=debug, case_name=case_name)
+    else:
+        surf_mesh = None
 
-    surface_mesh, surface_indices = create_surface_trimesh(pos, elems, debug=debug)
+    # save_surface_mesh = True
+    # if save_surface_mesh:
+    #     save_dir = os.path.join('out', 'am', 'exp', 'surface_mesh')
+    #     os.makedirs(save_dir, exist_ok=True)
+    #     filename1 = os.path.join(save_dir, f'{case_name}_dev.vtk')
+    #     filename2 = os.path.join(save_dir, f'{case_name}_stl.vtk')
+    #     save_surface_trimesh(surface_mesh, filename1, edges=True)
+    #     save_surface_trimesh(surf_mesh   , filename2, edges=True)
 
     ###
     # get SDF direction and magnitude
@@ -458,7 +604,6 @@ def distance_to_surface(pos, elems, debug=None):
     ###
     # misc
     ###
-    tree_interior = None
     tree_interior = KDTree(pos[~surface_mask])
 
     # overhang_distances: how much material is under me before thin air?
@@ -473,9 +618,9 @@ def distance_to_surface(pos, elems, debug=None):
     
     return np.hstack([
         surface_mask.reshape(-1,1),
+        sdf_direction,
         sdf_magnitude.reshape(-1,1),
         overhang_distances.reshape(-1,1),
-        sdf_direction,
     ])
 
 #======================================================================#

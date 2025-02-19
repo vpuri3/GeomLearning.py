@@ -69,6 +69,16 @@ class DatasetTransform:
         temp  = graph.temp  / self.temp_scale
         edge_dxyz = graph.edge_dxyz / self.pos_scale
         return pos, disp, vmstr, temp, edge_dxyz
+    
+    def normalize_sdf_x(self, sdf_x):
+        # input: surface_mask (1), sdf_direction (3), sdf_magnitude (1), overhang_distances (1)
+        sdf_x = sdf_x[:, 1:].clone()
+
+        sdf_x[:, :3] = sdf_x[:, :3] / self.pos_scale
+        sdf_x[:,  3] = sdf_x[:,  3] / self.pos_scale.norm()
+        sdf_x[:,  4] = sdf_x[:,  4] / self.pos_scale[2]
+
+        return sdf_x
 
     def make_pyg_data(self, graph, edge_attr, **kw):
         data = pyg.data.Data(**kw)

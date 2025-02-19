@@ -105,8 +105,13 @@ def makegraph(data, case_name=None, time_steps=None):
         "time_steps" : time_steps, # int
     }
     
-    dist = sdf.distance_to_surface(verts, elems)
-    dist = torch.tensor(dist, dtype=torch.float)
+    sdf_x = sdf.sdf_features(
+        verts.numpy(force=True), elems.numpy(force=True),
+        surf_verts=data.get('stl_verts', None),
+        surf_faces=data.get('stl_faces', None),
+        case_name=case_name,
+    )
+    sdf_x = torch.tensor(sdf_x, dtype=torch.float)
 
     # make graph
     graph = pyg.data.Data(
@@ -114,7 +119,7 @@ def makegraph(data, case_name=None, time_steps=None):
         edge_index=edge_index, elems=elems,           # connectivity
         temp=temp, disp=disp, vmstr=vmstr, pos=verts, # nodal fields
         edge_dxyz=edge_dxyz,                          # edge  fields
-        dist=dist,                                    # SDF
+        sdf_x=sdf_x,                                  # SDF features
     )
 
     return graph

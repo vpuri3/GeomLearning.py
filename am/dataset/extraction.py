@@ -12,6 +12,7 @@ import struct
 import zipfile
 import shutil
 import collections
+import io
 
 __all__ = [
     'extract_zips',
@@ -140,6 +141,18 @@ def get_values_from_ens(zip_path, internal_path, num_nodes, dim):
 # grab results
 #=================================#
 
+def get_stl_mesh(zip_path, stl_path):
+    import trimesh
+
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        with zip_ref.open(stl_path) as f:
+            # Read the file content into a BytesIO object
+            file_content = io.BytesIO(f.read())
+            # Load the mesh from the BytesIO object
+            mesh = trimesh.load(file_content, file_type='stl')
+
+    return mesh.vertices, mesh.faces
+
 def get_case_info(casedir):
     # Split the path into zip file and internal path
     if '.zip/' in casedir:
@@ -230,10 +243,14 @@ def get_case_info(casedir):
             #     dis_path = base_name + '.dis.ens'
             #     assert os.path.exists(dis_path), f"Base file {dis_path} not found."
             #     base_names.append(base_name)
+            
+            # grab part stl file
+            stl_path = f"{internal_path}/test.stl"
 
             return dict(
                 zip_path=zip_path,
                 internal_path=internal_path,
+                stl_path=stl_path,
                 geo=geo_file, 
                 basefilename=basefilename,
                 geo_files=geo_files, 
@@ -266,6 +283,10 @@ def get_finaltime_results(casedir):
             result_nums[key],
         )
         results[result_types[key]] = result.astype(np.float32)
+        
+    stl_verts, stl_faces = get_stl_mesh(case_info["zip_path"], case_info["stl_path"])
+    results["stl_verts"] = stl_verts.astype(np.float32)
+    results["stl_faces"] = stl_faces.astype(np.int32)
 
     return results
 
@@ -297,6 +318,10 @@ def get_timeseries_results(casedir):
             )
             val = val.astype(np.float32)
             results[field].append(val)
+
+    stl_verts, stl_faces = get_stl_mesh(case_info["zip_path"], case_info["stl_path"])
+    results["stl_verts"] = stl_verts.astype(np.float32)
+    results["stl_faces"] = stl_faces.astype(np.int32)
 
     return results
 
