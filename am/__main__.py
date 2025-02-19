@@ -68,7 +68,7 @@ def train_timeseries(cfg, device):
     dataset = am.TimeseriesDataset(
         DATADIRS, merge=cfg.merge, exclude_list=exclude_list,
         transform=transform, verbose=LOCAL_RANK==0,
-        force_reload=True,
+        # force_reload=True,
     )
     _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2]) # indices=[range(N1), range(N1,N1+N2)]
     

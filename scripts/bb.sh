@@ -1,10 +1,10 @@
 #
-export CUDA_VISIBLE_DEVICES="1,2,3,4"
+export CUDA_VISIBLE_DEVICES="1,2,3"
 
 # steady state with SDF
 torchrun --nproc-per-node gpu -m am --exp_name tra_steady_sdf \
     --sdf true \
-    --train true --timeseries false --TRA true --epochs 400 --weight_decay 1e-2
+    --train true --timeseries false --TRA true --epochs 500 --weight_decay 1e-2
 
 # # Transolver w/o interpolation
 # torchrun --nproc-per-node gpu -m am --exp_name tra_timeseries_weight_decay_0p01 \
