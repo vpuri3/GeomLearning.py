@@ -12,14 +12,14 @@ import am
 import mlutils
 from am.dataset.filtering import save_dataset_statistics, compute_filtered_dataset_statistics, compute_dataset_statistics
 
-#===============#
-PROJDIR      = '/home/vedantpu/.julia/dev/GeomLearning.py'
-DATADIR_BASE = '/home/shared/'
-#===============#
+# #===============#
+# PROJDIR      = '/home/vedantpu/.julia/dev/GeomLearning.py'
+# DATADIR_BASE = '/home/shared/'
+# #===============#
 
 #===============#
-# PROJDIR = '/ocean/projects/.../vedantpu/GeomLearning.py'
-# DATADIR_BASE = 'data/'
+PROJDIR = "/ocean/projects/eng170006p/vpuri1/GeomLearning.py"
+DATADIR_BASE = 'data/'
 #===============#
 
 DATADIR_RAW        = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_raw')
@@ -94,7 +94,7 @@ def train_timeseries(cfg, device):
             space_dim=ci, out_dim=co, fun_dim=0,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
-            slice_num=64,
+            slice_num=cfg.tra_num_slices,
         )
     else:
         print(f"No model selected. Choose between GNN or TRA.")
@@ -189,7 +189,7 @@ def train_finaltime(cfg, device):
             space_dim=ci, out_dim=co, fun_dim=0,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
-            slice_num=64,
+            slice_num=cfg.tra_num_slices,
         )
     else:
         print(f"No model selected. Choose between GNN or TRA.")
@@ -390,6 +390,7 @@ class Config:
     tra_num_layers: int = 5
     tra_num_heads: int = 8
     tra_mlp_ratio: float = 2.0
+    tra_num_slices: int = 64
 
     # training arguments
     epochs: int = 100
