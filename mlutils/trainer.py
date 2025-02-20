@@ -341,6 +341,7 @@ class Trainer:
             batch_iterator = tqdm(
                 self._loader,
                 bar_format='{desc}{n_fmt}/{total_fmt} {bar}[{rate_fmt}]',
+                ncols=100,
             )
         else:
             batch_iterator = self._loader

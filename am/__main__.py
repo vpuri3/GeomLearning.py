@@ -101,7 +101,7 @@ def train_timeseries(cfg, device):
         raise NotImplementedError()
 
     model = am.MaskedModel(model, mask=cfg.mask, mask_bulk=cfg.mask_bulk)
-
+    
     #=================#
     # TRAIN
     #=================#
@@ -130,6 +130,10 @@ def train_timeseries(cfg, device):
         kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
         trainer = mlutils.Trainer(model, _data, data_, **kw)
         trainer.add_callback('epoch_end', callback)
+
+        if cfg.restart_file is not None:
+            trainer.load(cfg.restart_file)
+
         trainer.train()
 
     #=================#
@@ -238,13 +242,6 @@ def vis_finaltime(cfg, force_reload=True, max_cases=50, num_workers=None):
     exclude_list = os.path.join(PROJDIR, 'analysis', 'exclusion_list.txt')
     exclude_list = [line.strip() for line in open(exclude_list, 'r').readlines()]
     
-    # transform = am.FinaltimeDatasetTransform(
-    #     disp=cfg.disp, vmstr=cfg.vmstr, temp=cfg.temp,
-    #     sdf=cfg.sdf, mesh=True,
-    # )
-
-    # num_workers = 1
-
     # for DIR in SUBDIRS[:1]:
     for DIR in SUBDIRS:
         DATADIR = os.path.join(DATADIR_FINALTIME, DIR)
@@ -269,20 +266,29 @@ def vis_finaltime(cfg, force_reload=True, max_cases=50, num_workers=None):
     return
 
 #======================================================================#
-def vis_timeseries(cfg, max_cases=10):
+def vis_timeseries(cfg, force_reload=True, max_cases=10, num_workers=None):
 
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
-    for (idir, DIR) in enumerate(SUBDIRS):
-        DATADIR  = os.path.join(DATADIR_TIMESERIES, DIR)
-        dataset  = am.TimeseriesDataset(DATADIR, merge=cfg.merge)
-        vis_dir  = os.path.join(case_dir, DIR)
+    # read in exclusion list
+    exclude_list = os.path.join(PROJDIR, 'analysis', 'exclusion_list.txt')
+    exclude_list = [line.strip() for line in open(exclude_list, 'r').readlines()]
     
-        case_names = [f[:-3] for f in os.listdir(DATADIR) if f.endswith(".pt")]
-        num_cases = len(case_names)
+    # for DIR in SUBDIRS[:1]:
+    for DIR in SUBDIRS[:10]:
+        DATADIR = os.path.join(DATADIR_TIMESERIES, DIR)
+        dataset = am.TimeseriesDataset(
+            DATADIR,
+            merge=cfg.merge,
+            exclude_list=exclude_list,
+            num_workers=num_workers,
+            force_reload=True
+        )
+        vis_dir = os.path.join(case_dir, DIR)
+        os.makedirs(vis_dir, exist_ok=False)
     
-        print(vis_dir)
-        num_cases = min(num_cases, max_cases)
+        case_names = [os.path.basename(f)[:-3] for f in dataset.case_files]
+        num_cases  = min(len(case_names), max_cases)
 
         for icase in tqdm(range(num_cases)):
             case_name = case_names[icase]
@@ -314,10 +320,15 @@ def test_extraction():
     return
 
 def do_extraction():
+    
+    for DIR in SUBDIRS[5:10]:
+        zip_file = os.path.join(DATADIR_RAW, DIR + ".zip")
+        out_dir  = os.path.join(DATADIR_FINALTIME, DIR)
+        am.extract_from_zip(zip_file, out_dir, timeseries=True)
 
-    zip_file = os.path.join(DATADIR_RAW, "data_0-100.zip")
-    out_dir  = os.path.join(DATADIR_FINALTIME, "data_0-100")
-    am.extract_from_zip(zip_file, out_dir, timeseries=False)
+    # zip_file = os.path.join(DATADIR_RAW, "data_0-100.zip")
+    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_0-100")
+    # am.extract_from_zip(zip_file, out_dir, timeseries=False)
 
     # zip_file = os.path.join(DATADIR_RAW, "data_600-1000.zip")
     # out_dir  = os.path.join(DATADIR_FINALTIME, "data_600-1000")
@@ -364,6 +375,7 @@ class Config:
     train: bool = False
     eval: bool = False
     timeseries: bool = False
+    restart_file: str = None
 
     # case configuration
     exp_name: str = 'exp'
@@ -438,11 +450,12 @@ if __name__ == "__main__":
 
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
-    if cfg.train or cfg.visualization: # create a new experiment directory
+    # create a new experiment directory
+    if cfg.train or cfg.visualization:
         if os.path.exists(case_dir):
             nd = len([dir for dir in os.listdir(CASEDIR) if dir.startswith(cfg.exp_name)])
-            case_dir = case_dir + str(nd).zfill(2)
-            cfg.exp_name = cfg.exp_name + str(nd).zfill(2)
+            cfg.exp_name = cfg.exp_name + '_' + str(nd).zfill(2)
+            case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
         if DISTRIBUTED:
             torch.distributed.barrier()
@@ -454,7 +467,8 @@ if __name__ == "__main__":
             with open(config_file, 'w') as f:
                 yaml.safe_dump(vars(cfg), f)
 
-    if cfg.eval: # load config from experiment directory, then write to case_dir/final
+    # load config from experiment directory
+    if cfg.eval:
         assert os.path.exists(case_dir)
         config_file = os.path.join(case_dir, 'config.yaml')
         _cfg = cfg

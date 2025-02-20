@@ -333,9 +333,11 @@ class TimeseriesDataset(pyg.data.Dataset):
             assert i1-i0 == self.time_steps[case]
             return range(i0, i1)
         else: # str
-            if not case.endswith('.pt'):
-                case = case + '.pt'
-            icase = self.case_files.index(case)
+            for icase, case_file in enumerate(self.case_files):
+                if case in case_file:
+                    break
+            else:
+                raise ValueError(f"Case '{case}' not found in case_files.")
             return self.case_range(icase)
 
     def get(self, idx):
