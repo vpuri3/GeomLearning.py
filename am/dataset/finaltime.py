@@ -93,6 +93,7 @@ class FinaltimeDataset(pyg.data.Dataset):
             list(tqdm(
                 pool.imap_unordered(self.process_single, icases), total=num_cases,
                 desc=f'Processing FinaltimeDataset in {os.path.basename(self.root)}',
+                ncols=80,
             ))
 
         return
