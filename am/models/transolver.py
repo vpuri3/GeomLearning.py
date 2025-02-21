@@ -66,6 +66,7 @@ class PhysicsAttention(nn.Module):
         # IDEAS:
         # - Gimble softmax with temperature = 1 + self.temperature_project(x) (Transolver)
         # - Make query dependent on x? Is that possible? Would it have the right dimension?
+        # - How does this constrast with attention encodings? See Latent diffusion transformer for point cloud generation paper.
 
         ### (2) Attention among slice tokens
         q_slice_token = self.to_q(slice_token)
