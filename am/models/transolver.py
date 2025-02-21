@@ -151,6 +151,16 @@ class Transolver_block(nn.Module):
         else:
             return fx
 
+ # Transolver(
+ #   n_hidden=256,
+ #   n_layers=8,
+ #   space_dim=7,
+ #   fun_dim=0,
+ #   out_dim=4,
+ #   mlp_ratio=2,
+ #   n_head=8,
+ #   slice_num=32,
+ # )
 
 class Transolver(nn.Module):
     def __init__(self,
