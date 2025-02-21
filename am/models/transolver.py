@@ -46,14 +46,26 @@ class PhysicsAttention(nn.Module):
         B, N, C = x.shape
 
         ### (1) Slice
-        fx_mid = self.in_project_fx(x).reshape(B, N, self.heads, self.dim_head) \
-            .permute(0, 2, 1, 3).contiguous()  # B H N C
-        x_mid = self.in_project_x(x).reshape(B, N, self.heads, self.dim_head) \
-            .permute(0, 2, 1, 3).contiguous()  # B H N C
+        # VALUE
+        fx_mid = self.in_project_fx(x).reshape(B, N, self.heads, self.dim_head).permute(0, 2, 1, 3).contiguous() # B H N C
+        # KEY
+        x_mid = self.in_project_x(x).reshape(B, N, self.heads, self.dim_head).permute(0, 2, 1, 3).contiguous()   # B H N C
+
+        # QUERY = weights of self.in_project_slice (dim_head, slice_num)
+        #
+        # ATTN_WEIGHTS = SLICE_WEIGHTS = softmax(K * Q)
+        # SOFTMAX is happening along (-1) query direction.
+        # PERCEIVER IO (https://arxiv.org/pdf/2107.14795) did it in (-2) direction
+        
         slice_weights = self.softmax(self.in_project_slice(x_mid) / self.temperature)  # B H N G
         slice_norm = slice_weights.sum(2)  # B H G
+        # V * ATTN_WEIGHTS
         slice_token = torch.einsum("bhnc,bhng->bhgc", fx_mid, slice_weights)
         slice_token = slice_token / ((slice_norm + 1e-5)[:, :, :, None].repeat(1, 1, 1, self.dim_head))
+
+        # IDEAS:
+        # - Gimble softmax with temperature = 1 + self.temperature_project(x) (Transolver)
+        # - Make query dependent on x? Is that possible? Would it have the right dimension?
 
         ### (2) Attention among slice tokens
         q_slice_token = self.to_q(slice_token)
