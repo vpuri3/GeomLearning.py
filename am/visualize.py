@@ -31,11 +31,17 @@ def add_field(mesh, graph, mesh_field: str, graph_field: str, istep=None):
         mesh.point_data[mesh_field] = graph[graph_field][istep].numpy(force=True)
     return
 
-def try_add_field(mesh, graph, mesh_field: str, graph_field: str):
-    try:
-        mesh.point_data[mesh_field] = graph[graph_field].numpy(force=True)
-    except:
-        pass
+def try_add_field(mesh, graph, mesh_field: str, graph_field: str, istep=None):
+    if istep is None:
+        try:
+            mesh.point_data[mesh_field] = graph[graph_field].numpy(force=True)
+        except:
+            pass
+    else:
+        try:
+            mesh.point_data[mesh_field] = graph[graph_field][istep].numpy(force=True)
+        except:
+            pass
     return
 
 def visualize_pyv(graph, out_file=None):
@@ -44,9 +50,8 @@ def visualize_pyv(graph, out_file=None):
     add_field(mesh, graph, 'disp', 'disp')
     add_field(mesh, graph, 'temp', 'temp')
     add_field(mesh, graph, 'vmstr', 'vmstr')
-    
-    # SDF
-    try_add_field(mesh, graph, 'dist', 'dist')
+
+    try_add_field(mesh, graph, 'sdf_x', 'sdf_x')
 
     try_add_field(mesh, graph, 'source_normalized', 'x')
     try_add_field(mesh, graph, 'target_normalized', 'y')
@@ -75,10 +80,12 @@ def visualize_timeseries_pyv(dataset, out_dir, icase=None, merge=None, name=None
             add_field(mesh, graph, 'disp', 'disp', istep)
             add_field(mesh, graph, 'temp', 'temp', istep)
             add_field(mesh, graph, 'vmstr', 'vmstr', istep)
+            try_add_field(mesh, graph, 'sdf_x', 'sdf_x', istep)
         else: # == 2
             add_field(mesh, graph, 'disp', 'disp')
             add_field(mesh, graph, 'temp', 'temp')
             add_field(mesh, graph, 'vmstr', 'vmstr')
+            try_add_field(mesh, graph, 'sdf_x', 'sdf_x')
 
         try_add_field(mesh, graph, 'source_normalized', 'x')
         try_add_field(mesh, graph, 'target_normalized', 'y')
