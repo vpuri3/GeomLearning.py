@@ -46,7 +46,7 @@ CASEDIR = os.path.join('.', 'out', 'am')
 #======================================================================#
 def train_timeseries(cfg, device):
     DISTRIBUTED = mlutils.is_torchrun()
-    LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
+    GLOBAL_RANK = int(os.environ['RANK']) if DISTRIBUTED else 0
 
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
@@ -67,12 +67,12 @@ def train_timeseries(cfg, device):
     DATADIRS = DATADIRS[:5]
     dataset = am.TimeseriesDataset(
         DATADIRS, merge=cfg.merge, exclude_list=exclude_list,
-        transform=transform, verbose=LOCAL_RANK==0,
+        transform=transform, verbose=GLOBAL_RANK==0,
         # force_reload=True,
     )
     _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2]) # indices=[range(N1), range(N1,N1+N2)]
     
-    if LOCAL_RANK == 0:
+    if GLOBAL_RANK == 0:
         print(f"Loaded {len(dataset.case_files)} cases from {DATADIR_TIMESERIES}")
         print(f"Split into {len(_data.case_files)} train and {len(data_.case_files)} test cases")
     
@@ -149,7 +149,7 @@ def train_timeseries(cfg, device):
 #======================================================================#
 def train_finaltime(cfg, device):
     DISTRIBUTED = mlutils.is_torchrun()
-    LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
+    GLOBAL_RANK = int(os.environ['RANK']) if DISTRIBUTED else 0
 
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
     
@@ -174,7 +174,7 @@ def train_finaltime(cfg, device):
     dataset = am.CompositeDataset(*datasets, transform=transform)
     _data, data_ = torch.utils.data.random_split(dataset, [0.8, 0.2])
     
-    if LOCAL_RANK == 0:
+    if GLOBAL_RANK == 0:
         print(f"Loaded {len(dataset)} cases from {DATADIR_FINALTIME}")
         print(f"Split into {len(_data)} train and {len(data_)} test cases")
     
@@ -256,7 +256,7 @@ def vis_finaltime(cfg, force_reload=True, max_cases=50, num_workers=None):
 
         num_cases = min(len(dataset), max_cases)
 
-        for icase in tqdm(range(num_cases)):
+        for icase in tqdm(range(num_cases), ncols=80):
             data = dataset[icase]
             ii = str(icase).zfill(3)
             case_name = data.metadata['case_name']
@@ -273,16 +273,16 @@ def vis_timeseries(cfg, force_reload=True, max_cases=10, num_workers=None):
     # read in exclusion list
     exclude_list = os.path.join(PROJDIR, 'analysis', 'exclusion_list.txt')
     exclude_list = [line.strip() for line in open(exclude_list, 'r').readlines()]
-    
+
     # for DIR in SUBDIRS[:1]:
-    for DIR in SUBDIRS[:10]:
+    for DIR in SUBDIRS[5:10]:
         DATADIR = os.path.join(DATADIR_TIMESERIES, DIR)
         dataset = am.TimeseriesDataset(
             DATADIR,
             merge=cfg.merge,
             exclude_list=exclude_list,
             num_workers=num_workers,
-            force_reload=True
+            force_reload=force_reload,
         )
         vis_dir = os.path.join(case_dir, DIR)
         os.makedirs(vis_dir, exist_ok=False)
@@ -290,7 +290,7 @@ def vis_timeseries(cfg, force_reload=True, max_cases=10, num_workers=None):
         case_names = [os.path.basename(f)[:-3] for f in dataset.case_files]
         num_cases  = min(len(case_names), max_cases)
 
-        for icase in tqdm(range(num_cases)):
+        for icase in tqdm(range(num_cases), ncols=80):
             case_name = case_names[icase]
             idx_case  = dataset.case_range(case_name)
             case_data = dataset[idx_case]
@@ -321,10 +321,15 @@ def test_extraction():
 
 def do_extraction():
     
-    for DIR in SUBDIRS[5:10]:
-        zip_file = os.path.join(DATADIR_RAW, DIR + ".zip")
-        out_dir  = os.path.join(DATADIR_FINALTIME, DIR)
-        am.extract_from_zip(zip_file, out_dir, timeseries=True)
+    # for DIR in SUBDIRS[5:10]:
+    #     zip_file = os.path.join(DATADIR_RAW, DIR + ".zip")
+    #     out_dir  = os.path.join(DATADIR_TIMESERIES, DIR)
+    #     am.extract_from_zip(zip_file, out_dir, timeseries=True)
+
+    # DIR = 'data_500-600'
+    # zip_file = os.path.join(DATADIR_RAW, DIR + ".zip")
+    # out_dir  = os.path.join(DATADIR_FINALTIME, DIR)
+    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
 
     # zip_file = os.path.join(DATADIR_RAW, "data_0-100.zip")
     # out_dir  = os.path.join(DATADIR_FINALTIME, "data_0-100")
@@ -430,7 +435,7 @@ if __name__ == "__main__":
         exit()
 
     DISTRIBUTED = mlutils.is_torchrun()
-    LOCAL_RANK = int(os.environ['LOCAL_RANK']) if DISTRIBUTED else 0
+    GLOBAL_RANK = int(os.environ['RANK']) if DISTRIBUTED else 0
     device = mlutils.select_device()
 
     #===============#
@@ -438,7 +443,7 @@ if __name__ == "__main__":
     #===============#
 
     if cfg.analysis:
-        if LOCAL_RANK == 0:
+        if GLOBAL_RANK == 0:
             am.compute_dataset_statistics(PROJDIR, DATADIR_FINALTIME, SUBDIRS)
             am.make_exclusion_list(PROJDIR)
             am.compute_filtered_dataset_statistics(PROJDIR)
@@ -460,7 +465,7 @@ if __name__ == "__main__":
         if DISTRIBUTED:
             torch.distributed.barrier()
 
-        if LOCAL_RANK == 0:
+        if GLOBAL_RANK == 0:
             os.makedirs(case_dir)
             config_file = os.path.join(case_dir, 'config.yaml')
             print(f'Saving config to {config_file}')
@@ -472,7 +477,7 @@ if __name__ == "__main__":
         assert os.path.exists(case_dir)
         config_file = os.path.join(case_dir, 'config.yaml')
         _cfg = cfg
-        if LOCAL_RANK == 0:
+        if GLOBAL_RANK == 0:
             print(f'Loading config from {config_file}')
         with open(config_file, 'r') as f:
             cfg = yaml.safe_load(f)

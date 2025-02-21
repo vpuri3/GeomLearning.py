@@ -37,7 +37,7 @@ class Callback:
             nsave = trainer.epoch // self.save_every
             ckpt_dir = os.path.join(self.case_dir, f'ckpt{str(nsave).zfill(2)}')
 
-        if os.path.exists(ckpt_dir) and trainer.LOCAL_RANK == 0:
+        if os.path.exists(ckpt_dir) and trainer.GLOBAL_RANK == 0:
             print(f"Removing {ckpt_dir}")
             shutil.rmtree(ckpt_dir)
 
@@ -46,7 +46,7 @@ class Callback:
     def load(self, trainer: mlutils.Trainer):
         ckpt_dirs = [dir for dir in os.listdir(self.case_dir) if dir.startswith('ckpt')]
         if len(ckpt_dirs) == 0:
-            if trainer.LOCAL_RANK == 0:
+            if trainer.GLOBAL_RANK == 0:
                 print(f'No checkpoint found in {self.case_dir}. starting from scrach.')
             return
         load_dir = sorted(ckpt_dirs)[-1]
@@ -96,7 +96,7 @@ class Callback:
 
         # save model
         ckpt_dir = self.get_ckpt_dir(trainer)
-        if trainer.LOCAL_RANK == 0:
+        if trainer.GLOBAL_RANK == 0:
             print(f"saving checkpoint to {ckpt_dir}")
             os.makedirs(ckpt_dir, exist_ok=True)
             trainer.save(os.path.join(ckpt_dir, 'model.pt'))
@@ -128,7 +128,7 @@ class FinaltimeCallback(Callback):
             ['train', 'test'],
         ):
             if dataset is None:
-                if trainer.LOCAL_RANK == 0:
+                if trainer.GLOBAL_RANK == 0:
                     print(f"No {split} dataset.")
                 continue
 
@@ -141,8 +141,8 @@ class FinaltimeCallback(Callback):
             # distribute cases across ranks
             num_cases = len(dataset)
             cases_per_rank = num_cases // trainer.WORLD_SIZE 
-            icase0 = trainer.LOCAL_RANK * cases_per_rank
-            icase1 = (trainer.LOCAL_RANK + 1) * cases_per_rank if trainer.LOCAL_RANK != trainer.WORLD_SIZE - 1 else num_cases
+            icase0 = trainer.GLOBAL_RANK * cases_per_rank
+            icase1 = (trainer.GLOBAL_RANK + 1) * cases_per_rank if trainer.GLOBAL_RANK != trainer.WORLD_SIZE - 1 else num_cases
 
             max_eval_cases = self.num_eval_cases // trainer.WORLD_SIZE
 
@@ -151,8 +151,8 @@ class FinaltimeCallback(Callback):
             l2s = []
             r2s = []
 
-            if trainer.LOCAL_RANK == 0:
-                pbar = tqdm(total=num_cases, desc=f"Evaluating {split} dataset")
+            if trainer.GLOBAL_RANK == 0:
+                pbar = tqdm(total=num_cases, desc=f"Evaluating {split} dataset", ncols=80)
             
             for icase in range(icase0, icase1):
                 data = dataset[icase].to(device)
@@ -174,10 +174,10 @@ class FinaltimeCallback(Callback):
 
                 del data
                 
-                if trainer.LOCAL_RANK == 0:
+                if trainer.GLOBAL_RANK == 0:
                     pbar.update(trainer.WORLD_SIZE)
             
-            if trainer.LOCAL_RANK == 0:
+            if trainer.GLOBAL_RANK == 0:
                 pbar.close()
 
             df = pd.DataFrame({
@@ -190,7 +190,7 @@ class FinaltimeCallback(Callback):
             # gather dataframe across ranks
             df = vstack_dataframes_across_ranks(df, trainer)
 
-            if trainer.LOCAL_RANK == 0:
+            if trainer.GLOBAL_RANK == 0:
                 print(f"Saving {split} stats to {stats_file}")
                 df.to_csv(stats_file, index=False)
         
@@ -203,7 +203,7 @@ class FinaltimeCallback(Callback):
             df = pd.read_csv(stats_file)
             r2_values[split] = df['R-Square'].values
 
-        if trainer.LOCAL_RANK == 0:
+        if trainer.GLOBAL_RANK == 0:
             print(f"Plotting R-Squared boxplot to {ckpt_dir}/r2_boxplot.png")
             r2_boxplot(r2_values, filename=os.path.join(ckpt_dir, 'r2_boxplot.png'))
 
@@ -229,20 +229,20 @@ class TimeseriesCallback(Callback):
             ['train', 'test'],
         ):
             if dataset is None:
-                if trainer.LOCAL_RANK == 0:
+                if trainer.GLOBAL_RANK == 0:
                     print(f"No {split} dataset.")
                 continue
             
             split_dir = os.path.join(ckpt_dir, f'vis_{split}')
 
-            if trainer.LOCAL_RANK == 0:
+            if trainer.GLOBAL_RANK == 0:
                 os.makedirs(split_dir, exist_ok=True)
             
             # distribute cases across ranks
             num_cases = len(dataset.case_files)
             cases_per_rank = num_cases // trainer.WORLD_SIZE 
-            icase0 = trainer.LOCAL_RANK * cases_per_rank
-            icase1 = (trainer.LOCAL_RANK + 1) * cases_per_rank if trainer.LOCAL_RANK != trainer.WORLD_SIZE - 1 else num_cases
+            icase0 = trainer.GLOBAL_RANK * cases_per_rank
+            icase1 = (trainer.GLOBAL_RANK + 1) * cases_per_rank if trainer.GLOBAL_RANK != trainer.WORLD_SIZE - 1 else num_cases
             
             max_eval_cases = self.num_eval_cases // trainer.WORLD_SIZE
 
@@ -255,7 +255,7 @@ class TimeseriesCallback(Callback):
             r2_ARs = []
             r2_NRs = []
 
-            if trainer.LOCAL_RANK == 0:
+            if trainer.GLOBAL_RANK == 0:
                 pbar = tqdm(total=num_cases, desc=f"Evaluating {split} dataset")
             
             for icase in range(icase0, icase1):
@@ -292,10 +292,10 @@ class TimeseriesCallback(Callback):
 
                 del case_data
                 
-                if trainer.LOCAL_RANK == 0:
+                if trainer.GLOBAL_RANK == 0:
                     pbar.update(trainer.WORLD_SIZE)
                     
-            if trainer.LOCAL_RANK == 0:
+            if trainer.GLOBAL_RANK == 0:
                 pbar.close()
 
             # Convert list of stats arrays into a DataFrame where each row represents
@@ -323,7 +323,7 @@ class TimeseriesCallback(Callback):
             df_l2_NR = hstack_dataframes_across_ranks(df_l2_NR, trainer)
             df_r2_NR = hstack_dataframes_across_ranks(df_r2_NR, trainer)
             
-            if trainer.LOCAL_RANK == 0:
+            if trainer.GLOBAL_RANK == 0:
                 print(f"Saving {split} statistics to {ckpt_dir}")
                 df_l2_AR.to_csv(os.path.join(ckpt_dir, f'l2_AR_stats_{split}.txt'), index=False)
                 df_r2_AR.to_csv(os.path.join(ckpt_dir, f'r2_AR_stats_{split}.txt'), index=False)
@@ -340,7 +340,7 @@ class TimeseriesCallback(Callback):
             df_r2_AR = pd.read_csv(os.path.join(ckpt_dir, f'r2_AR_stats_{split}.txt'))
             # df_r2_NR = pd.read_csv(os.path.join(ckpt_dir, f'r2_NR_stats_{split}.txt'))
 
-            if trainer.LOCAL_RANK == 0:
+            if trainer.GLOBAL_RANK == 0:
                 print(f"Saving R-Squared plots to {ckpt_dir}/r2_plot_{split}.png")
                 r2_timeseries(df_r2_AR, filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
 

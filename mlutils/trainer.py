@@ -110,7 +110,7 @@ class Trainer:
         # MODEL
         ###
 
-        if self.verbose and (self.LOCAL_RANK == 0):
+        if self.verbose and (self.GLOBAL_RANK == 0):
             print(f"Moving model with {num_parameters(model)} parameters to device {device}")
 
         self.model = model.to(device)
@@ -179,7 +179,7 @@ class Trainer:
             "lossfun" : str(self.lossfun),
         }
 
-        if verbose and print_config and (self.LOCAL_RANK == 0):
+        if verbose and print_config and (self.GLOBAL_RANK == 0):
             print(model)
             print(f"Trainer config:")
             for (k, v) in config.items():
@@ -212,7 +212,7 @@ class Trainer:
     #------------------------#
 
     def save(self, save_path: str): # call only if device==0
-        if self.LOCAL_RANK != 0:
+        if self.GLOBAL_RANK != 0:
             return
 
         snapshot = dict()
@@ -227,7 +227,7 @@ class Trainer:
         return
 
     def load(self, load_path: str):
-        if self.LOCAL_RANK == 0:
+        if self.GLOBAL_RANK == 0:
             print(f"Loading checkpoint {load_path}")
 
         snapshot = torch.load(load_path, weights_only=False)
@@ -284,7 +284,7 @@ class Trainer:
         # Printing
         ###
 
-        if self.verbose and self.print_config and self.LOCAL_RANK == 0:
+        if self.verbose and self.print_config and self.GLOBAL_RANK == 0:
             print(f"Number of training samples: {len(self._data)}")
             if self.data_ is not None:
                 print(f"Number of test samples: {len(self.data_)}")
@@ -335,13 +335,13 @@ class Trainer:
         if self.DDP:
             self._loader.sampler.set_epoch(self.epoch)
 
-        print_batch = self.verbose and (self.LOCAL_RANK == 0) and self.print_batch # and (len(self._loader) > 1)
+        print_batch = self.verbose and (self.GLOBAL_RANK == 0) and self.print_batch # and (len(self._loader) > 1)
 
         if print_batch:
             batch_iterator = tqdm(
                 self._loader,
                 bar_format='{desc}{n_fmt}/{total_fmt} {bar}[{rate_fmt}]',
-                ncols=100,
+                ncols=80,
             )
         else:
             batch_iterator = self._loader
@@ -427,7 +427,7 @@ class Trainer:
             loss_, stats_ = _loss, _stats
 
         # printing
-        if self.print_epoch and self.verbose and (self.LOCAL_RANK == 0):
+        if self.print_epoch and self.verbose and (self.GLOBAL_RANK == 0):
             msg = f"[Epoch {self.epoch} / {self.epochs}] "
             if self.loader_ is not None:
                 msg += f"TRAIN LOSS: {_loss:.6e} | TEST LOSS: {loss_:.6e}"

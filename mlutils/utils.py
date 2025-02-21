@@ -90,26 +90,25 @@ def is_torchrun():
     required_env_vars = ['LOCAL_RANK', 'RANK', 'WORLD_SIZE', 'MASTER_ADDR', 'MASTER_PORT']
     return all(var in os.environ for var in required_env_vars)
 
-def dist_setup(rank=None, world_size=None):
+def dist_setup():
     backend = dist_backend()
     if backend != 'nccl':
         print(f'using {backend} backend for torch.distributed.')
 
     if is_torchrun():
-        assert rank is None
-        assert world_size is None
+        GLOBAL_RANK = int(os.environ["RANK"])
+        LOCAL_RANK = int(os.environ["LOCAL_RANK"])
+        WORLD_SIZE = int(os.environ["WORLD_SIZE"])
 
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-        dist.init_process_group(backend=backend)
+        torch.cuda.set_device(LOCAL_RANK)
+        dist.init_process_group(
+            backend=backend,
+            rank=GLOBAL_RANK,
+            world_size=WORLD_SIZE,
+            device_id=torch.device(LOCAL_RANK),
+        )
     else:
         pass
-        # assert rank is not None
-        # assert world_size is not None
-        #
-        # os.environ["MASTER_ADDR"] = "localhost"
-        # os.environ["MASTER_PORT"] = "29500"
-        # torch.cuda.set_device(rank)
-        # dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
 
     return
 
