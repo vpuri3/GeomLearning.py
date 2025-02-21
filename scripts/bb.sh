@@ -1,33 +1,29 @@
 #
 export CUDA_VISIBLE_DEVICES="1,2,3"
 
-# restart from checkpoint
-# torchrun --nproc-per-node gpu -m am --config out/am/{EXP_NAME}/config.yaml \ --epochs 100
+# # restart from checkpoint
+# EXP_NAME=""
+# torchrun \
+#     --nproc-per-node gpu \
+#     -m am \
+#     --config out/am/{EXP_NAME}/config.yaml \
+#     --epochs 100
 
-# timeseries with SDF
-torchrun --nproc-per-node gpu -m am --exp_name tra_timeseries_sdf \
+EXP_NAME="tra_timeseries_sdf_layers_5_width_128_slices_64_wd_0p01_heads_8"
+
+torchrun \
+    --nproc-per-node gpu \
+    -m am \
+    --exp_name ${EXP_NAME} \
+    --train true \
+    --epochs 500 \
+    --timeseries true \
     --sdf true \
-    --train true --timeseries true --TRA true --epochs 500 --weight_decay 1e-2
-
-# # steady state with SDF
-# torchrun --nproc-per-node gpu -m am --exp_name tra_steady_sdf \
-#     --sdf true \
-#     --train true --timeseries false --TRA true --epochs 500 --weight_decay 1e-2
-
-# # Transolver w/o interpolation
-# torchrun --nproc-per-node gpu -m am --exp_name tra_timeseries_weight_decay_0p01 \
-#     --mask true --blend false --interpolate false \
-#     --train true --timeseries true --TRA true --weight_decay 1e-2 \
-#     --epochs 200
-
-# # Baseline Transolver
-# torchrun --nproc-per-node gpu -m am --exp_name tra_timeseries_baseline \
-#     --mask false --blend false --interpolate false \
-#     --train true --timeseries true --TRA true --weight_decay 1e-2
-
-# # Baseline MeshGNN
-# torchrun --nproc-per-node gpu -m am --exp_name gnn_timeseries_baseline \
-#     --mask false --blend false --interpolate false \
-#     --train true --timeseries true --GNN true --weight_decay 1e-3
+    --TRA true \
+    --tra_width 128 \
+    --tra_num_heads 8 \
+    --tra_num_slices 64 \
+    --tra_num_layers 5 \
+    --weight_decay 1e-2
 
 #
