@@ -43,6 +43,12 @@ class Trainer:
 
         Opt=None,
         Schedule=None,
+        
+        # OneCycleLR schedule
+        one_cycle_pct_start=0.3,        # % of cycle spent increasing LR. Default: 0.3
+        one_cycle_div_factor=25,        # initial_lr = max_lr/div_factor. Default: 25
+        one_cycle_final_div_factor=1e4, # min_lr = initial_lr/final_div_factor Default: 1e4
+        one_cycle_three_phase=False,    # first two phases will be symmetrical about pct_start third phase: initial_lr -> initial_lr/final_div_factor
 
         lossfun=None,
         batch_lossfun=None,
@@ -150,16 +156,25 @@ class Trainer:
 
         if Schedule == "OneCycleLR":
             bsize = self._batch_size * dist.get_world_size() if self.DISTRIBUTED else self._batch_size
-            total_steps = epochs * (len(_data) // bsize + 1)
-            self.schedule = optim.lr_scheduler.OneCycleLR(self.opt, max_lr=lr, total_steps=total_steps)
+            steps_per_epoch = len(_data) // bsize + 1
+            self.schedule = optim.lr_scheduler.OneCycleLR(
+                self.opt,
+                max_lr=lr,
+                epochs=epochs,
+                steps_per_epoch=steps_per_epoch,
+                pct_start=one_cycle_pct_start,
+                div_factor=one_cycle_div_factor,
+                final_div_factor=one_cycle_final_div_factor,
+                three_phase=one_cycle_three_phase,
+            )
         elif Schedule == "CosineAnnealingLR":
-            niters = epochs * len(_loader)
+            niters = epochs * len(self._loader)
             self.schedule = optim.lr_scheduler.CosineAnnealingLR(self.opt, niters)
         elif Schedule is None:
             self.schedule = optim.lr_scheduler.ConstantLR(self.opt, factor=1.0, total_iters=1e10)
         else:
             raise NotImplementedError()
-
+        
         self.config = {
             "device" : device,
             "gnn_loader" : self.gnn_loader,
@@ -222,6 +237,8 @@ class Trainer:
         else:
             snapshot['model_state'] = self.model.state_dict()
         snapshot['opt'] = self.opt
+        snapshot['schedule'] = None if (self.schedule is None) else self.schedule.state_dict()
+
         torch.save(snapshot, save_path)
 
         return
@@ -233,13 +250,18 @@ class Trainer:
         snapshot = torch.load(load_path, weights_only=False)
 
         self.epoch = snapshot['epoch']
+        
         if self.DDP:
             self.model.module.load_state_dict(snapshot['model_state'])
             self.model.module.to(self.device)
         else:
             self.model.load_state_dict(snapshot['model_state'])
             self.model.to(self.device)
+
         self.opt = snapshot['opt']
+        self.schedule.load_state_dict(snapshot['schedule'])
+        # if isinstance(self.schedule, optim.lr_scheduler.OneCycleLR):
+        #     self.schedule.last_epoch = self.epoch
 
     #------------------------#
     # DATALOADER
@@ -322,10 +344,9 @@ class Trainer:
 
             self.trigger_callbacks("epoch_start")
             self.train_epoch()
-            self.trigger_callbacks("epoch_end")
-
             if (self.epoch % self.stats_every) == 0:
-                (_l, _s), (l_, s_) = self.statistics()
+                self.statistics()
+            self.trigger_callbacks("epoch_end")
 
         return
 
@@ -439,7 +460,14 @@ class Trainer:
                 else:
                     msg += f"STATS: {_stats}"
             print(msg)
+            
+        self.stat_vals = {
+            "train_loss" : _loss,
+            "test_loss" : loss_,
+            "train_stats" : _stats,
+            "test_stats" : stats_,
+        }
 
-        return (_loss, _stats), (loss_, stats_)
+        return
 #======================================================================#
 #

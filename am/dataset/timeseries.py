@@ -106,22 +106,10 @@ class TimeseriesDatasetTransform(DatasetTransform):
         first_step = istep == 0
         last_step  = (istep + 1) == nsteps
 
-        #
-        # TODO:
-        #    dz = zmax[istep+1] - zmax[istep]
-        #
+        # TODO: dz = zmax[istep+1] - zmax[istep]
         # use dz to decide the interface width such that
         # interface fully encompasses one layer and ends at the next.
         # input to GNN should not have sharp discontinuity
-
-        #
-        # OBSERVATION:
-        #
-        # large errors concentrated in regions with bottleneck
-        # like a contracting / expanding nozzle
-        #
-        # what to do about it?
-        #
 
         # interface mask
         if not last_step:
@@ -364,7 +352,9 @@ class TimeseriesDataset(pyg.data.Dataset):
             dt = 0.
             t  = 1.
         else:
-            dt = 1 / (time_steps - 1)
+            T = 1.
+            # T = graph.metadata['z_max'][-1] / 60.
+            dt = T / (time_steps - 1)
             t  = time_step * dt
 
         graph.metadata['t_val']     = t

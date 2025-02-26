@@ -1,7 +1,7 @@
 #
 import os
+import json
 
-from sympy import print_fcode
 import torch
 import torch_geometric as pyg
 import shutil
@@ -343,6 +343,11 @@ class TimeseriesCallback(Callback):
             if trainer.GLOBAL_RANK == 0:
                 print(f"Saving R-Squared plots to {ckpt_dir}/r2_plot_{split}.png")
                 r2_timeseries(df_r2_AR, filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
+                
+        if trainer.GLOBAL_RANK == 0:
+            print(f"Saving stats to {ckpt_dir}/stats.json")
+            with open(os.path.join(ckpt_dir, 'stats.json'), 'w') as f:
+                json.dump(trainer.stat_vals, f)
 
         return
 

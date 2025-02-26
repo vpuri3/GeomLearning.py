@@ -12,15 +12,15 @@ import am
 import mlutils
 from am.dataset.filtering import save_dataset_statistics, compute_filtered_dataset_statistics, compute_dataset_statistics
 
-# #===============#
-# PROJDIR      = '/home/vedantpu/.julia/dev/GeomLearning.py'
-# DATADIR_BASE = '/home/shared/'
-# #===============#
+#===============#
+PROJDIR      = '/home/vedantpu/.julia/dev/GeomLearning.py'
+DATADIR_BASE = '/mnt/hdd1/vedantpu/data/'
+#===============#
 
-#===============#
-PROJDIR = "/ocean/projects/eng170006p/vpuri1/GeomLearning.py"
-DATADIR_BASE = 'data/'
-#===============#
+# #===============#
+# PROJDIR = "/ocean/projects/eng170006p/vpuri1/GeomLearning.py"
+# DATADIR_BASE = 'data/'
+# #===============#
 
 DATADIR_RAW        = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_raw')
 DATADIR_TIMESERIES = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_timeseries')
@@ -125,9 +125,20 @@ def train_timeseries(cfg, device):
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
             batch_lossfun=batch_lossfun,
         )
-
+        
+        # scheduler
         # kw = dict(lr=5e-4, **kw,)
-        kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
+        # kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
+        kw = dict(
+            Schedule="OneCycleLR",
+            lr=1e-3,
+            # one_cycle_pct_start=0.3,
+            # one_cycle_div_factor=25,
+            # one_cycle_final_div_factor=1e4,
+            one_cycle_three_phase=True,
+            **kw,
+        )
+
         trainer = mlutils.Trainer(model, _data, data_, **kw)
         trainer.add_callback('epoch_end', callback)
 
@@ -266,7 +277,7 @@ def vis_finaltime(cfg, force_reload=True, max_cases=50, num_workers=None):
     return
 
 #======================================================================#
-def vis_timeseries(cfg, force_reload=True, max_cases=10, num_workers=None):
+def vis_timeseries(cfg, force_reload=False, max_cases=50, num_workers=None):
 
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
@@ -275,7 +286,7 @@ def vis_timeseries(cfg, force_reload=True, max_cases=10, num_workers=None):
     exclude_list = [line.strip() for line in open(exclude_list, 'r').readlines()]
 
     # for DIR in SUBDIRS[:1]:
-    for DIR in SUBDIRS[5:10]:
+    for DIR in SUBDIRS[:10]:
         DATADIR = os.path.join(DATADIR_TIMESERIES, DIR)
         dataset = am.TimeseriesDataset(
             DATADIR,

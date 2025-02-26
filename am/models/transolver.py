@@ -4,7 +4,6 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from timm.layers import trunc_normal_
-# from timm.models.layers import trunc_normal_ # 
 from einops import rearrange, repeat
 
 __all__ = [
@@ -42,14 +41,13 @@ class PhysicsAttention(nn.Module):
         )
 
     def forward(self, x):
-        # B N C
         B, N, C = x.shape
 
         ### (1) Slice
-        # VALUE
-        fx_mid = self.in_project_fx(x).reshape(B, N, self.heads, self.dim_head).permute(0, 2, 1, 3).contiguous() # B H N C
-        # KEY
-        x_mid = self.in_project_x(x).reshape(B, N, self.heads, self.dim_head).permute(0, 2, 1, 3).contiguous()   # B H N C
+        # VALUE (B H N C)
+        fx_mid = self.in_project_fx(x).reshape(B, N, self.heads, self.dim_head).permute(0, 2, 1, 3).contiguous()
+        # KEY (B H N C)
+        x_mid = self.in_project_x(x).reshape(B, N, self.heads, self.dim_head).permute(0, 2, 1, 3).contiguous()
 
         # QUERY = weights of self.in_project_slice (dim_head, slice_num)
         #
@@ -64,9 +62,20 @@ class PhysicsAttention(nn.Module):
         slice_token = slice_token / ((slice_norm + 1e-5)[:, :, :, None].repeat(1, 1, 1, self.dim_head))
 
         # IDEAS:
-        # - Gimble softmax with temperature = 1 + self.temperature_project(x) (Transolver)
+        # - Transolver++: Gimble softmax with temperature = 1 + self.temperature_project(x) (Transolver)
+        # - Transolver++: remove fx_mid and use x_mid for both key and value
         # - Make query dependent on x? Is that possible? Would it have the right dimension?
         # - How does this constrast with attention encodings? See Latent diffusion transformer for point cloud generation paper.
+        # - Pass in X/Y/Z coordinates to every transolver block and concatenate to the input.
+
+        # - AdaLayerNorm (DiT, https://arxiv.org/abs/2302.07459) like conditioning on t, dt, process paramters
+        # - can we accomplish bulk masking with the conditioning idea?
+        # - that is make conditioning focus more on top layers
+        # - solution: allow the slice weights to be conditioned on t, dt
+        
+        # - mess with training schedule: OneCycleLR(max_Lr=1e-1, pct_start=0.1), weight_decay=0
+        # - Do ReZero (https://proceedings.mlr.press/v161/bachlechner21a/bachlechner21a.pdf)
+        #   in Transolver_block
 
         ### (2) Attention among slice tokens
         q_slice_token = self.to_q(slice_token)
@@ -86,6 +95,7 @@ class PhysicsAttention(nn.Module):
         ### (3) Deslice
         out_x = torch.einsum("bhgc,bhng->bhnc", out_slice_token, slice_weights)
         out_x = rearrange(out_x, 'b h n d -> b n (h d)')
+
         return self.to_out(out_x)
 
 
