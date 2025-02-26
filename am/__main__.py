@@ -70,7 +70,9 @@ def train_timeseries(cfg, device):
         transform=transform, verbose=GLOBAL_RANK==0,
         # force_reload=True,
     )
-    _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2]) # indices=[range(N1), range(N1,N1+N2)]
+
+    # _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
+    _data, data_, _ = am.split_timeseries_dataset(dataset, split=[0.2, 0.2, 0.6])
     
     if GLOBAL_RANK == 0:
         print(f"Loaded {len(dataset.case_files)} cases from {DATADIR_TIMESERIES}")
@@ -79,9 +81,6 @@ def train_timeseries(cfg, device):
     #=================#
     # MODEL
     #=================#
-
-    # TODO: add mask_bulk as input
-    # TODO: modify mask_bulk parameters. make interface sharper
 
     ci = 3 + 2 + (cfg.disp + cfg.vmstr + cfg.temp) + (cfg.sdf * 10) # (x/y/z, t/dt, fields...)
     ce = 3
@@ -106,38 +105,32 @@ def train_timeseries(cfg, device):
     # TRAIN
     #=================#
 
-    lossfun = torch.nn.MSELoss()
     batch_lossfun = am.MaskedLoss(cfg.mask)
     callback = am.TimeseriesCallback(case_dir, mesh=cfg.GNN, num_eval_cases=cfg.num_eval_cases, autoreg_start=cfg.autoreg_start)
 
     if cfg.train and cfg.epochs > 0:
-        # # v100-32 GB
-        # _batch_size = 4 if len(_data.case_files) > 2 else 1
-        # batch_size_ = _batch_size_ = 12
 
-        # RTX 2070-12 GB
-        _batch_size = 1
-        batch_size_ = _batch_size_ = 1
+        _batch_size = batch_size_ = _batch_size_ = 1
 
         kw = dict(
             device=device, gnn_loader=True, stats_every=cfg.epochs//10,
-            Opt='AdamW', weight_decay=cfg.weight_decay, lossfun=lossfun, epochs=cfg.epochs,
+            Opt='AdamW', weight_decay=cfg.weight_decay, epochs=cfg.epochs,
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
             batch_lossfun=batch_lossfun,
         )
         
         # scheduler
         # kw = dict(lr=5e-4, **kw,)
-        # kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
-        kw = dict(
-            Schedule="OneCycleLR",
-            lr=1e-3,
-            # one_cycle_pct_start=0.3,
-            # one_cycle_div_factor=25,
-            # one_cycle_final_div_factor=1e4,
-            one_cycle_three_phase=True,
-            **kw,
-        )
+        # kw = dict(
+        #     Schedule="OneCycleLR",
+        #     lr=1e-3,
+        #     # one_cycle_pct_start=0.3,
+        #     # one_cycle_div_factor=25,
+        #     # one_cycle_final_div_factor=1e4,
+        #     one_cycle_three_phase=True,
+        #     **kw,
+        # )
+        kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
 
         trainer = mlutils.Trainer(model, _data, data_, **kw)
         trainer.add_callback('epoch_end', callback)

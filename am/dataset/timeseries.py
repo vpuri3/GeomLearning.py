@@ -100,23 +100,17 @@ class TimeseriesDatasetTransform(DatasetTransform):
 
         N  = graph.pos.size(0)
         md = graph.metadata
-        istep  = md['time_step']
+        istep  = md['time_step'] # zero indexed
         nsteps = md['time_steps']
 
         first_step = istep == 0
         last_step  = (istep + 1) == nsteps
-
-        # TODO: dz = zmax[istep+1] - zmax[istep]
-        # use dz to decide the interface width such that
-        # interface fully encompasses one layer and ends at the next.
-        # input to GNN should not have sharp discontinuity
-
-        # interface mask
+        
+        # interface mask (hide inactive layers)
         if not last_step:
-            zmax = md['zmax'][istep+1]
-            mask = graph.pos[:,2] <= (zmax + tol)
+            zm = md['zmax'][istep+1]
+            mask = graph.pos[:,2] <= (zm + tol)
         else:
-            zmax = md['zmax'][-1]
             mask = torch.full((N,), True)
 
         # bulk mask
@@ -126,17 +120,19 @@ class TimeseriesDatasetTransform(DatasetTransform):
         zz = (graph.pos[:, 2] - zi + 20 * dz) / (self.pos_scale[2] / 10)
         mask_bulk = fmin + (1 + torch.tanh(zz)) * (1 - fmin) / 2
 
-        # fmin = 0.1
-        # zi = md['zmax'][istep]
-        # zz = (graph.pos[:,2] - zi + 10) / (self.pos_scale[2] * 10)
-        # mask_bulk = fmin + (1 + torch.tanh(zz)) * (1 - fmin) / 2
-
         # normalize fields
         pos, disp, vmstr, temp, edge_dxyz = self.normalize_fields(graph)
 
         # time
-        t  = torch.full((N, 1), graph.metadata['t_val'])
-        dt = torch.full((N, 1), graph.metadata['dt_val'])
+        if nsteps == 1:
+            t, dt = 1., 0.
+        else:
+            T = md['zmax'][-1] / self.pos_scale[2]
+            dt_val = T / (nsteps - 1)
+            t_val = istep * dt_val
+        
+        t  = torch.full((N, 1), t_val)
+        dt = torch.full((N, 1), dt_val)
 
         # fields (works for merged=True)
         if self.merge:
@@ -174,17 +170,7 @@ class TimeseriesDatasetTransform(DatasetTransform):
                 temp_out = torch.zeros((N, 1))
         else:
             # look back
-            if not first_step:
-                pass
-
-            disp_in  = torch.zeros((N, 1))
-            disp_out = torch.zeros((N, 1))
-
-            vmstr_in  = torch.zeros((N, 1))
-            vmstr_out = torch.zeros((N, 1))
-
-            temp_in  = torch.zeros((N, 1))
-            temp_out = torch.zeros((N, 1))
+            raise NotImplementedError("TimeseriesTransform not implemented for merge=False")
 
         # features / labels
         xs = [pos, t, dt,]
@@ -209,7 +195,14 @@ class TimeseriesDatasetTransform(DatasetTransform):
         y = torch.cat(ys, dim=-1)
 
         edge_attr = edge_dxyz
-        data = self.make_pyg_data(graph, edge_attr, x=x, y=y, t=t, mask=mask, mask_bulk=mask_bulk,)
+        data = self.make_pyg_data(
+            graph,
+            edge_attr,
+            x=x, y=y, t=t, dt=dt,
+            t_val=t_val, dt_val=dt_val,
+            mask=mask,
+            mask_bulk=mask_bulk,
+        )
 
         return data
 
@@ -336,29 +329,15 @@ class TimeseriesDataset(pyg.data.Dataset):
         time_step  = idx - nprev
         time_steps = self.time_steps[icase]
 
-        # GET PATH
+        # get graph
         path = self.processed_paths[icase]
-
-        # LOAD GRAPH
         graph = torch.load(path, weights_only=False, mmap=True)
-
         if not self.merge:
             graph = graph[time_step]
 
-        # WRITE ACTIVE TIME-STEP (zero indexed)
-        assert time_steps == graph.metadata['time_steps'] > 0
+        assert time_steps == graph.metadata['time_steps'] == len(graph.metadata['zmax']) > 0
 
-        if time_steps == 1:
-            dt = 0.
-            t  = 1.
-        else:
-            T = 1.
-            # T = graph.metadata['z_max'][-1] / 60.
-            dt = T / (time_steps - 1)
-            t  = time_step * dt
-
-        graph.metadata['t_val']     = t
-        graph.metadata['dt_val']    = dt
+        # write time step to graph (zero indexed)
         graph.metadata['time_step'] = time_step
 
         return graph

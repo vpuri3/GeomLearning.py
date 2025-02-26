@@ -10,6 +10,13 @@ __all__ = [
 
 #======================================================================#
 class MaskedLoss(torch.nn.Module):
+    """
+    Loss function that:
+    1.  masks out predictions made at the final step because
+        next step prediction doesn't make any sense there.
+    2.  Computes batch loss over the active elements of the graph,
+        i.e., regions where batch.mask == True.
+    """
     def __init__(self, mask: bool):
         super().__init__()
 
@@ -20,11 +27,11 @@ class MaskedLoss(torch.nn.Module):
     def forward(self, model, batch):
         yh = model(batch)
 
-        # zero out predictions made at the final step
-        # because next step prediction doesn't make any sense there
+        # (1)
         last_step_mask = (batch.t <= 1. - self.tol).view(-1, 1)
         yh = yh * last_step_mask
 
+        # (2)
         # assume mask has been applied to target and prediction 
         if self.mask:
             mask = batch.mask.view(-1,1)
@@ -37,6 +44,10 @@ class MaskedLoss(torch.nn.Module):
 
 #======================================================================#
 class MaskedModel(nn.Module):
+    """
+    Model that masks out predictions made at the final step
+    because next step prediction doesn't make any sense there.
+    """
     def __init__(self, model, mask=True, mask_bulk=False):
         super().__init__()
         self.mask = mask
@@ -47,7 +58,7 @@ class MaskedModel(nn.Module):
     def reduce_graph(self, graph):
 
         if hasattr(graph, 'edge_index'):
-            if graph.edge_index == None:
+            if graph.edge_index is None:
                 return graph
         else:
             return graph
@@ -60,7 +71,7 @@ class MaskedModel(nn.Module):
             x=graph.x, edge_index=edge_index, edge_attr=edge_attr,
         )
 
-    def forward(self, graph, tol=1e-6):
+    def forward(self, graph):
 
         if self.mask:
             mask = graph.mask.view(-1, 1)
