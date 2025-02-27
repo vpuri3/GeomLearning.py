@@ -1,0 +1,19 @@
+#
+# mlutils
+torch
+tqdm
+
+# am
+jsonargparse
+torch_scatter
+torch_geometric
+timm # PyTorch Image Models
+einops
+scipy
+pandas
+seaborn
+pyvista
+matplotlib
+trimesh
+rtree # needed for trimesh
+open3d
