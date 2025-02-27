@@ -1,10 +1,7 @@
 #
 import os
-import pyvista as pv
-import trimesh # also needs package rtree
 import numpy as np
-from scipy.spatial import KDTree
-
+import scipy
 
 __all__ = [
     'sdf_features',
@@ -59,7 +56,7 @@ def select_tjt_large(faces, pos):
     L = np.linalg.norm(pos[faces[:, 0]] - pos[faces[:, 1]], axis=1)
     W = np.linalg.norm(pos[faces[:, 1]] - pos[faces[:, 2]], axis=1)
     
-    tree = KDTree(face_centers)
+    tree = scipy.spatial.KDTree(face_centers)
 
     # Create a mask for large faces at T-Junctions (initially all False)
     is_tjt_large = np.zeros(len(faces), dtype=bool)
@@ -247,7 +244,7 @@ def break_tjunctions(faces, pos, debug=None):
         print(f"break_tjunctions: added {len(faces_new) - len(faces)}/{len(faces)} faces, {len(pos_new) - len(pos)}/{len(pos)} nodes")
         
     # # ensure distance bw points is not too small
-    # tree = KDTree(pos_new)
+    # tree = scipy.spatial.KDTree(pos_new)
     # dists, idxs = tree.query(pos_new, k=2)
     # dists = dists[:, 1:]
     # idxs = idxs[:, 1:]
@@ -272,7 +269,7 @@ def omit_internal_tjunctions(faces, pos, debug=None):
     W = np.linalg.norm(pos[faces[:, 1]] - pos[faces[:, 2]], axis=1)
     
     # exclude faces at T-Junctions
-    tree = KDTree(face_centers)
+    tree = scipy.spatial.KDTree(face_centers)
 
     # Create a mask for surface faces (initially all True)
     is_surface = np.ones(len(faces), dtype=bool)
@@ -329,6 +326,8 @@ def create_surface_trimesh(pos, elems, case_name=None, debug=None):
     Create a surface trimesh from a 3D hexahedral mesh
     """
 
+    import trimesh # needs package rtree
+
     ###
     # extract surface nodes
     ###
@@ -373,6 +372,8 @@ def create_surface_trimesh(pos, elems, case_name=None, debug=None):
     return surface_mesh, surface_indices
 
 def repair_trimesh(mesh, debug=None, case_name=None):
+    import trimesh
+
     mesh.remove_infinite_values()
     mesh.remove_degenerate_faces()
     mesh.remove_duplicate_faces()
@@ -415,6 +416,8 @@ def save_surface_trimesh(surface_mesh, filename, edges=False):
         surface_mesh (trimesh.Trimesh): The mesh to save
         filename (str): Output VTK filename
     """
+    import pyvista as pv
+
     # Convert Trimesh to PyVista mesh
     pv_mesh = pv.wrap(surface_mesh)
     pv_mesh.save(filename)
@@ -446,6 +449,8 @@ def surface_ray_intersect_trimesh(surface_mesh, ray_origins, ray_direction, debu
     """
     Ray cast to surface
     """
+    import trimesh # needs package rtree
+
     assert ray_origins.ndim == 2 and ray_origins.shape[1] == 3
     assert ray_direction.ndim == 1 and len(ray_direction) == 3
 
@@ -520,7 +525,7 @@ def interpolate_missed_intersections(pos, mask, intersections, tree=None):
     Fill missed intersections
     """
     if tree is None:
-        tree = KDTree(pos[~mask])
+        tree = scipy.spatial.KDTree(pos[~mask])
     
     _, nearest_indices = tree.query(pos[mask], k=1)
     difference = pos[mask] - pos[~mask][nearest_indices]
@@ -605,7 +610,7 @@ def sdf_features(
     ###
     # misc
     ###
-    tree_interior = KDTree(pos[~surface_mask])
+    tree_interior = scipy.spatial.KDTree(pos[~surface_mask])
 
     # get distance to surface in [-1/1, 0, 0], [0, -1/1, 0], [0, 0, -1/1]
     directions = (
