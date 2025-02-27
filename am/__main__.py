@@ -13,9 +13,14 @@ import mlutils
 from am.dataset.filtering import save_dataset_statistics, compute_filtered_dataset_statistics, compute_dataset_statistics
 
 #===============#
-PROJDIR      = '/home/vedantpu/.julia/dev/GeomLearning.py'
-DATADIR_BASE = '/mnt/hdd1/vedantpu/data/'
+PROJDIR      = '/home/vedantpu/GeomLearning.py'
+DATADIR_BASE = '/home/vedantpu/GeomLearning.py/data/'
 #===============#
+
+# #===============#
+# PROJDIR      = '/home/vedantpu/.julia/dev/GeomLearning.py'
+# DATADIR_BASE = '/mnt/hdd1/vedantpu/data/'
+# #===============#
 
 # #===============#
 # PROJDIR = "/ocean/projects/eng170006p/vpuri1/GeomLearning.py"
@@ -72,7 +77,7 @@ def train_timeseries(cfg, device):
     )
 
     # _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
-    _data, data_, _ = am.split_timeseries_dataset(dataset, split=[0.2, 0.2, 0.6])
+    _data, data_, _ = am.split_timeseries_dataset(dataset, split=[0.2, 0.05, 0.75])
     
     if GLOBAL_RANK == 0:
         print(f"Loaded {len(dataset.case_files)} cases from {DATADIR_TIMESERIES}")
@@ -144,6 +149,8 @@ def train_timeseries(cfg, device):
     # ANALYSIS
     #=================#
 
+    if device != 'cpu' and device != torch.device('cpu'):
+        torch.cuda.empty_cache()
     trainer = mlutils.Trainer(model, _data, data_, device=device)
     callback.load(trainer)
     callback(trainer, final=True)
@@ -231,6 +238,8 @@ def train_finaltime(cfg, device):
     # ANALYSIS
     #=================#
 
+    if device != 'cpu' and device != torch.device('cpu'):
+        torch.cuda.empty_cache()
     trainer = mlutils.Trainer(model, _data, data_, device=device)
     callback.load(trainer)
     callback(trainer, final=True)
@@ -324,49 +333,14 @@ def test_extraction():
     return
 
 def do_extraction():
-    
-    # for DIR in SUBDIRS[5:10]:
-    #     zip_file = os.path.join(DATADIR_RAW, DIR + ".zip")
-    #     out_dir  = os.path.join(DATADIR_TIMESERIES, DIR)
-    #     am.extract_from_zip(zip_file, out_dir, timeseries=True)
+    for DIR in SUBDIRS[5:10]:
+        zip_file = os.path.join(DATADIR_RAW, DIR + ".zip")
 
-    # DIR = 'data_500-600'
-    # zip_file = os.path.join(DATADIR_RAW, DIR + ".zip")
-    # out_dir  = os.path.join(DATADIR_FINALTIME, DIR)
-    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
+        out_dir  = os.path.join(DATADIR_TIMESERIES, DIR)
+        am.extract_from_zip(zip_file, out_dir, timeseries=True)
 
-    # zip_file = os.path.join(DATADIR_RAW, "data_0-100.zip")
-    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_0-100")
-    # am.extract_from_zip(zip_file, out_dir, timeseries=False)
-
-    # zip_file = os.path.join(DATADIR_RAW, "data_600-1000.zip")
-    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_600-1000")
-    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
-
-    # zip_file = os.path.join(DATADIR_RAW, "data_1000-1500.zip")
-    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_1000-1500")
-    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
-
-    # zip_file = os.path.join(DATADIR_RAW, "data_1500-2000.zip")
-    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_1500-2000")
-    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
-
-    # zip_file = os.path.join(DATADIR_RAW, "data_2000-2500.zip")
-    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_2000-2500")
-    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
-
-    # zip_file = os.path.join(DATADIR_RAW, "data_2500-3000.zip")
-    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_2500-3000")
-    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
-
-    # zip_file = os.path.join(DATADIR_RAW, "data_3000-3500.zip")
-    # out_dir  = os.path.join(DATADIR_FINALTIME, "data_3000-3500")
-    # am.extract_from_zip(zip_file, out_dir, timeseries=True)
-
-    # zip_file = os.path.join(DATADIR_RAW, "data_0-100.zip")
-    # out_dir  = os.path.join(DATADIR_FINALTIME, "dump")
-    # am.extract_from_zip(zip_file, out_dir)
-    # # am.extract_from_zip(zip_file, out_dir, timeseries=True)
+        # out_dir  = os.path.join(DATADIR_FINALTIME, DIR)
+        # am.extract_from_zip(zip_file, out_dir, timeseries=False)
 
     return
 
@@ -422,7 +396,7 @@ class Config:
     mask: bool = True
     blend: bool = False
     mask_bulk: bool = False
-    interpolate: bool = True
+    interpolate: bool = False
 
     # eval arguments
     num_eval_cases: int = 50
