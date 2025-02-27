@@ -31,7 +31,23 @@ __all__ = [
     "eval_model",
     "eval_gnn",
     "autoregressive_rollout",
+
+    # versioning hell
+    'to_numpy',
+    'torch_version_lteq'
 ]
+
+#=======================================================================#
+def to_numpy(t: torch.Tensor):
+    '''
+    Torch 1.10 compatible equivalent of `t.numpy(force=True)`.
+    '''
+    return t.detach().cpu().resolve_conj().resolve_neg().numpy()
+
+def torch_version_lteq(version: str):
+    import pkg_resources
+    VERSION = pkg_resources.get_distribution("torch").version
+    return pkg_resources.parse_version(VERSION) <= pkg_resources.parse_version(version)
 
 #=======================================================================#
 def set_seed(seed = 0):
@@ -101,12 +117,20 @@ def dist_setup():
         WORLD_SIZE = int(os.environ["WORLD_SIZE"])
 
         torch.cuda.set_device(LOCAL_RANK)
-        dist.init_process_group(
-            backend=backend,
-            rank=GLOBAL_RANK,
-            world_size=WORLD_SIZE,
-            device_id=torch.device(LOCAL_RANK),
-        )
+
+        if torch_version_lteq('2'): # not sure about version
+            dist.init_process_group(
+                backend,
+                rank=GLOBAL_RANK,
+                world_size=WORLD_SIZE,
+            )
+        else:
+            dist.init_process_group(
+                backend=backend,
+                rank=GLOBAL_RANK,
+                world_size=WORLD_SIZE,
+                device_id=torch.device(LOCAL_RANK),
+            )
     else:
         pass
 
