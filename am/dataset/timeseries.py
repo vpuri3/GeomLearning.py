@@ -11,6 +11,7 @@ import copy
 import json
 from typing import Union
 
+from mlutils.utils import (to_numpy, torch_version_lteq)
 from .utils import (timeseries_dataset, merge_timeseries)
 from .transform import DatasetTransform
 
@@ -28,7 +29,7 @@ class TimeseriesDatasetTransform(DatasetTransform):
         self,
         disp=True, vmstr=True, temp=True,
         sdf=False, mesh=True, elems=False, orig=False, metadata=False,
-        merge=True, interpolate=True,
+        merge=True, interpolate=False,
     ):
 
         super().__init__(
@@ -88,6 +89,13 @@ class TimeseriesDatasetTransform(DatasetTransform):
             graph.pos[idx0].numpy(force=True),
             u[idx0].numpy(force=True),
             graph.pos[idx1].numpy(force=True),
+            method='nearest',
+        )
+
+        out = scipy.interpolate.griddata(
+            to_numpy(graph.pos[idx0]),
+            to_numpy(u[idx0]),
+            to_numpy(graph.pos[idx1]),
             method='nearest',
         )
 
@@ -260,7 +268,10 @@ class TimeseriesDataset(pyg.data.Dataset):
             [time_step_dict[os.path.basename(case_file)[:-3]] for case_file in self.case_files])
         self.time_steps_cum = self.time_steps.cumsum(0)
 
-        super().__init__(transform=transform, force_reload=force_reload)
+        if torch_version_lteq('2.4.0'):
+            super().__init__(transform=transform)
+        else:
+            super().__init__(transform=transform, force_reload=force_reload)
 
     @property
     def raw_paths(self):
@@ -274,6 +285,22 @@ class TimeseriesDataset(pyg.data.Dataset):
         return [os.path.join(
             os.path.dirname(case_file), processed_dirname, os.path.basename(case_file)
         ) for case_file in self.case_files]
+
+    #-------------------#
+    # OLD PYG VERSION
+    #-------------------#
+    @property
+    def processed_dir(self):
+        return os.path.join(self.roots[0], 'processed')
+
+    @property
+    def processed_file_names(self):
+        return self.processed_paths()
+
+    @property
+    def raw_file_names(self):
+        return self.raw_paths()
+    #-------------------#
 
     def process(self):
         num_cases = len(self.case_files)
@@ -324,14 +351,20 @@ class TimeseriesDataset(pyg.data.Dataset):
 
     def get(self, idx):
         # get case and time step
-        icase = torch.argwhere(idx < self.time_steps_cum)[0].item()
+        # icase = torch.argwhere(idx < self.time_steps_cum)[0].item() # not 1.10 compatible
+        icase = torch.nonzero(idx < self.time_steps_cum)[0].item()
         nprev = 0 if icase == 0 else self.time_steps_cum[icase-1].item()
         time_step  = idx - nprev
         time_steps = self.time_steps[icase]
 
         # get graph
         path = self.processed_paths[icase]
-        graph = torch.load(path, weights_only=False, mmap=True)
+
+        if torch_version_lteq('2.4.0'):
+            graph = torch.load(path)
+        else:
+            graph = torch.load(path, weights_only=False, mmap=True)
+
         if not self.merge:
             graph = graph[time_step]
 
@@ -346,10 +379,16 @@ class TimeseriesDataset(pyg.data.Dataset):
 # SPLIT TIMESERIES DATASET
 #======================================================================#
 def split_timeseries_dataset(dataset, split=None, indices=None):
+    if split is None and indices is None:
+        raise ValueError('split_timeseries_dataset: pass in either indices or split')
+
     num_cases = len(dataset.case_files)
 
     if indices is None:
-        indices = torch.utils.data.random_split(range(num_cases), split)
+        indices = [int(s * num_cases) for s in split]
+        indices[-1] += num_cases - sum(indices)
+
+    indices = torch.utils.data.random_split(range(num_cases), indices)
 
     num_split = len(indices)
 

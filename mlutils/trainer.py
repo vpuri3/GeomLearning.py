@@ -460,7 +460,7 @@ class Trainer:
                 else:
                     msg += f"STATS: {_stats}"
             print(msg)
-            
+
         self.stat_vals = {
             "train_loss" : _loss,
             "test_loss" : loss_,

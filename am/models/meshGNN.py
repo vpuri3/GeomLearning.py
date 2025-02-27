@@ -2,7 +2,6 @@
 import torch
 from torch import nn
 
-import torch_scatter
 import torch_geometric as pyg
 from torch_geometric.nn import MessagePassing
 
@@ -101,6 +100,9 @@ class MeshGraphLayer(MessagePassing):
         return ye
 
     def aggregate(self, ye, edge_index, dim_size=None):
+
+        import torch_scatter
+
         node_dim = 0
         msg = torch_scatter.scatter(
             ye, edge_index[0,:], dim=node_dim,

@@ -309,7 +309,7 @@ def compute_aspect_ratios(pos, elems):
         # Calculate lengths of all edges
         lengths = [np.linalg.norm(pos[i] - pos[j]) for (i,j) in edges]
         aspect_ratios.append(max(lengths)/min(lengths))
-    
+
     return np.array(aspect_ratios)
 
 #======================================================================#
