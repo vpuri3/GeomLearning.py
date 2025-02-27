@@ -77,7 +77,7 @@ class Callback:
             transform.orig = val
             transform.elems = val
             transform.metadata = val
-
+            
         return
 
     @torch.no_grad()
@@ -101,9 +101,15 @@ class Callback:
             os.makedirs(ckpt_dir, exist_ok=True)
             trainer.save(os.path.join(ckpt_dir, 'model.pt'))
 
+        # save stats
+        if trainer.GLOBAL_RANK == 0:
+            print(f"Saving stats to {ckpt_dir}/stats.json")
+            with open(os.path.join(ckpt_dir, 'stats.json'), 'w') as f:
+                json.dump(trainer.stat_vals, f)
+
         # update data transform
         self.modify_dataset_transform(trainer, True)
-
+        
         # evaluate model
         self.evaluate(trainer, ckpt_dir)
 
@@ -263,9 +269,6 @@ class TimeseriesCallback(Callback):
                 case_data = dataset[case_idx]
                 case_name = case_data[0].metadata['case_name']
 
-                # if len(case_nums) > max_eval_cases:
-                #     break
-
                 case_nums.append(icase)
                 case_names.append(case_name)
                 
@@ -344,11 +347,6 @@ class TimeseriesCallback(Callback):
                 print(f"Saving R-Squared plots to {ckpt_dir}/r2_plot_{split}.png")
                 r2_timeseries(df_r2_AR, filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
                 
-        if trainer.GLOBAL_RANK == 0:
-            print(f"Saving stats to {ckpt_dir}/stats.json")
-            with open(os.path.join(ckpt_dir, 'stats.json'), 'w') as f:
-                json.dump(trainer.stat_vals, f)
-
         return
 
 #======================================================================#

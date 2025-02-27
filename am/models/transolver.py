@@ -273,11 +273,14 @@ class Transolver(nn.Module):
 
     def forward(self, data):
         x = data.x.unsqueeze(0) # space dim [B=1, N, C]
-        t = data.t_val
-        d = data.dt_val
-        
+
         assert x.ndim == 3, "x must be [N, C], that is batch size must be 1"
+
+        if data.get('t_val', None) is None or data.get('dt_val', None) is None:
+            raise RuntimeError(f't or d is None in {data}')
         
+        t = data.t_val.item()
+        d = data.dt_val.item()
         t = torch.tensor([t], dtype=x.dtype, device=x.device).unsqueeze(0) # [B=1, 1]
         d = torch.tensor([d], dtype=x.dtype, device=x.device).unsqueeze(0) # [B=1, 1]
 

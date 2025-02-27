@@ -32,7 +32,6 @@ class MaskedLoss(torch.nn.Module):
         yh = yh * last_step_mask
 
         # (2)
-        # assume mask has been applied to target and prediction 
         if self.mask:
             mask = batch.mask.view(-1,1)
             denom = mask.sum() * batch.y.size(1)
@@ -68,7 +67,9 @@ class MaskedModel(nn.Module):
         )
 
         return pyg.data.Data(
-            x=graph.x, edge_index=edge_index, edge_attr=edge_attr,
+            **{k: graph[k] for k in graph.keys() if k != 'edge_index' and k != 'edge_attr'},
+            edge_index=edge_index,
+            edge_attr=edge_attr,
         )
 
     def forward(self, graph):

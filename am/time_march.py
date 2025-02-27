@@ -39,7 +39,7 @@ def march_case(
     for k in range(K, len(eval_data)):
         _data = eval_data[k-1].to(device) # given (k-1)-th step
         data  = eval_data[k  ].to(device) # predict k-th step
-
+        
         if autoreg:
             _data = _data.clone()
             _data.x[:, -nf:] = _data.y[:, -nf:]
