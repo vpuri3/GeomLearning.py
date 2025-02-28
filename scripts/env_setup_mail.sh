@@ -18,6 +18,7 @@ pip install torch-geometric==2.2.0 # (2.2.3)
 pip install https://data.pyg.org/whl/torch-1.10.0%2Bcu113/torch_sparse-0.6.13-cp39-cp39-linux_x86_64.whl
 pip install https://data.pyg.org/whl/torch-1.10.0%2Bcu113/torch_scatter-2.0.9-cp39-cp39-linux_x86_64.whl
 
+pip install ipython
 pip install tqdm jsonargparse timm einops
 pip install scipy pandas seaborn pyvista matplotlib # trimesh rtree
 
