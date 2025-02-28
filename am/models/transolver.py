@@ -1,6 +1,5 @@
 #
 # https://github.com/thuml/Transolver/blob/main/Car-Design-ShapeNetCar/models/Transolver.py
-import math
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -11,62 +10,9 @@ __all__ = [
     "Transolver",
 ]
 
-ACTIVATION = {
-    'gelu': nn.GELU,
-    'tanh': nn.Tanh,
-    'sigmoid': nn.Sigmoid,
-    'relu': nn.ReLU,
-    'leaky_relu': nn.LeakyReLU(0.1),
-    'softplus': nn.Softplus,
-    'ELU': nn.ELU,
-    'silu': nn.SiLU,
-}
+ACTIVATION = {'gelu': nn.GELU, 'tanh': nn.Tanh, 'sigmoid': nn.Sigmoid, 'relu': nn.ReLU, 'leaky_relu': nn.LeakyReLU(0.1),
+              'softplus': nn.Softplus, 'ELU': nn.ELU, 'silu': nn.SiLU}
 
-#======================================================================#
-# Embeddings
-#======================================================================#
-class TimeEmbedding(nn.Module):
-    """
-    Embeds scalar timesteps into vector representations.
-    """
-    def __init__(self, hidden_size, frequency_embedding_size=256):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(frequency_embedding_size, hidden_size, bias=True),
-            nn.SiLU(),
-            nn.Linear(hidden_size, hidden_size, bias=True),
-        )
-        self.frequency_embedding_size = frequency_embedding_size
-
-    @staticmethod
-    def timestep_embedding(t, dim, max_period=10000):
-        """
-        Create sinusoidal timestep embeddings.
-        :param t: a 1-D Tensor of N indices, one per batch element.
-                          These may be fractional.
-        :param dim: the dimension of the output.
-        :param max_period: controls the minimum frequency of the embeddings.
-        :return: an (N, D) Tensor of positional embeddings.
-        """
-        # https://github.com/openai/glide-text2im/blob/main/glide_text2im/nn.py
-        half = dim // 2
-        freqs = torch.exp(
-            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
-        ).to(device=t.device)
-        args = t[:, None].float() * freqs[None]
-        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
-        if dim % 2:
-            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
-        return embedding
-
-    def forward(self, t):
-        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
-        t_emb = self.mlp(t_freq)
-        return t_emb
-
-#======================================================================#
-# PHYSICS ATTENTION
-#======================================================================#
 class PhysicsAttention(nn.Module):
     def __init__(self, dim, heads=8, dim_head=64, dropout=0., slice_num=64):
         super().__init__()
@@ -113,23 +59,6 @@ class PhysicsAttention(nn.Module):
         slice_token = torch.einsum("bhnc,bhng->bhgc", fx_mid, slice_weights)
         slice_token = slice_token / ((slice_norm + 1e-5)[:, :, :, None].repeat(1, 1, 1, self.dim_head))
 
-        # IDEAS:
-        # - Transolver++: Gimble softmax with temperature = 1 + self.temperature_project(x) (Transolver)
-        # - Transolver++: remove fx_mid and use x_mid for both key and value
-        # - Make query dependent on x? Is that possible? Would it have the right dimension?
-        # - How does this constrast with attention encodings? See Latent diffusion transformer for point cloud generation paper.
-        # - Pass in X/Y/Z coordinates to every transolver block and concatenate to the input.
-
-        # - AdaLayerNorm (DiT, https://arxiv.org/abs/2302.07459) like conditioning on t, dt, process paramters
-        # - can we accomplish bulk masking with the conditioning idea?
-        # - that is make conditioning focus more on top layers
-        # - solution: allow the slice weights to be conditioned on t, dt
-        
-        # - Constant training schedule (lr = 1e-4, weight_decay = 1e-4)
-        # - mess with training schedule: OneCycleLR(max_Lr=1e-1, pct_start=0.1), weight_decay=0
-        # - Do ReZero (https://proceedings.mlr.press/v161/bachlechner21a/bachlechner21a.pdf)
-        #   in Transolver_block
-
         ### (2) Attention among slice tokens
         q_slice_token = self.to_q(slice_token)
         k_slice_token = self.to_k(slice_token)
@@ -139,21 +68,13 @@ class PhysicsAttention(nn.Module):
         attn = self.dropout(attn)
         out_slice_token = torch.matmul(attn, v_slice_token)  # B H G D
 
-        # out_slice_token = F.scaled_dot_product_attention( # [B H, G, D]
-        #     q_slice_token, k_slice_token, v_slice_token,
-        #     # dropout_p=self.dropout,
-        #     # scale=self.scale,
-        # )
-
         ### (3) Deslice
         out_x = torch.einsum("bhgc,bhng->bhnc", out_slice_token, slice_weights)
         out_x = rearrange(out_x, 'b h n d -> b n (h d)')
 
         return self.to_out(out_x)
 
-#======================================================================#
-# MLP BLOCK
-#======================================================================#
+
 class MLP(nn.Module):
     def __init__(self, n_input, n_hidden, n_output,
                  n_layers=1, act='gelu', res=True):
@@ -163,7 +84,6 @@ class MLP(nn.Module):
             act = ACTIVATION[act]
         else:
             raise NotImplementedError
-
         self.n_input  = n_input
         self.n_hidden = n_hidden
         self.n_output = n_output
@@ -183,9 +103,7 @@ class MLP(nn.Module):
         x = self.linear_post(x)
         return x
 
-#======================================================================#
-# TRANSOLVER
-#======================================================================#
+
 class Transolver_block(nn.Module):
     """Transformer encoder block."""
 
@@ -221,42 +139,36 @@ class Transolver_block(nn.Module):
 
 class Transolver(nn.Module):
     def __init__(self,
-        space_dim=1,
-        n_layers=5,
-        n_hidden=256,
-        dropout=0,
-        n_head=8,
-        act='gelu',
-        mlp_ratio=1,
-        fun_dim=1,
-        out_dim=1,
-        slice_num=32,
-    ):
+                 space_dim=1,
+                 n_layers=5,
+                 n_hidden=256,
+                 dropout=0,
+                 n_head=8,
+                 act='gelu',
+                 mlp_ratio=1,
+                 fun_dim=1,
+                 out_dim=1,
+                 slice_num=32,
+                 ):
         super(Transolver, self).__init__()
         self.__name__ = 'Transolver'
         self.preprocess = MLP(fun_dim + space_dim, n_hidden * 2, n_hidden,
                               n_layers=0, res=False, act=act)
         self.n_hidden = n_hidden
         self.space_dim = space_dim
-        
-        # time embedding
-        
-        # time-step embedding
 
         self.blocks = nn.ModuleList([
-            Transolver_block(
-                num_heads=n_head,
-                hidden_dim=n_hidden,
-                dropout=dropout,
-                act=act,
-                mlp_ratio=mlp_ratio,
-                out_dim=out_dim,
-                slice_num=slice_num,
-                last_layer=(_ == n_layers - 1)
-            )
+            Transolver_block(num_heads=n_head, hidden_dim=n_hidden,
+                             dropout=dropout,
+                             act=act,
+                             mlp_ratio=mlp_ratio,
+                             out_dim=out_dim,
+                             slice_num=slice_num,
+                             last_layer=(_ == n_layers - 1))
             for _ in range(n_layers)
         ])
         self.initialize_weights()
+        self.placeholder = nn.Parameter((1 / (n_hidden)) * torch.rand(n_hidden, dtype=torch.float))
 
     def initialize_weights(self):
         self.apply(self._init_weights)
@@ -271,23 +183,40 @@ class Transolver(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, data):
-        x = data.x.unsqueeze(0) # space dim [B=1, N, C]
+        x = data.x.unsqueeze(0)                    # space dim [B, N, C]
+        f = data.f if hasattr(data, 'f') else None # func  dim [B, N, C]
 
-        assert x.ndim == 3, "x must be [N, C], that is batch size must be 1"
+        if f is not None:
+            f = torch.cat((x, f), -1)
+            f = self.preprocess(f)
+        else:
+            f = self.preprocess(x)
+            f = f + self.placeholder[None, None, :]
 
-        if data.get('t_val', None) is None or data.get('dt_val', None) is None:
-            raise RuntimeError(f't or d is None in {data}')
-        
-        t = data.t_val.item()
-        d = data.dt_val.item()
-        t = torch.tensor([t], dtype=x.dtype, device=x.device).unsqueeze(0) # [B=1, 1]
-        d = torch.tensor([d], dtype=x.dtype, device=x.device).unsqueeze(0) # [B=1, 1]
-
-        x = self.preprocess(x)
         for block in self.blocks:
-            x = block(x)
+            f = block(f)
 
-        return x[0] # [N, C]
+        return f[0]
 
-#======================================================================#
+    # def forward(self, data):
+    #     x = data.x
+    #     f = data.f if hasattr(data, 'f') else None # func  dim
+    #     t = data.t if hasattr(data, 't') else None
+    #
+    #     if f is not None:
+    #         f = torch.cat((x, f), -1)
+    #         f = self.preprocess(f)
+    #     else:
+    #         f = self.preprocess(x)
+    #         f = f + self.placeholder[None, None, :]
+    #
+    #     if t is not None:
+    #         t = timestep_embedding(t, self.n_hidden).repeat(1, x.shape[1], 1)
+    #         t = self.time_fc(t)
+    #         f = f + t
+    #
+    #     for block in self.blocks:
+    #         f = block(f)
+    #
+    #     return f
 #

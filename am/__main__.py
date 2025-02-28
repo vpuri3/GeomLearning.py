@@ -93,9 +93,16 @@ def train_timeseries(cfg, device):
 
     if cfg.GNN:
         model = am.MeshGraphNet(ci, ce, co, cfg.gnn_width, cfg.gnn_num_layers)
-    elif cfg.TRA:
+    elif cfg.TRA == 0:
         model = am.Transolver(
             space_dim=ci, out_dim=co, fun_dim=0,
+            n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
+            n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
+            slice_num=cfg.tra_num_slices,
+        )
+    elif cfg.TRA == 1:
+        model = am.TS1(
+            in_dim=ci, out_dim=co,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
             slice_num=cfg.tra_num_slices,
@@ -378,7 +385,7 @@ class Config:
 
     # model
     GNN: bool = False
-    TRA: bool = False
+    TRA: int = 0 # 0: Transolver, 1: TS1
 
     # GNN
     gnn_width: int = 128
@@ -389,7 +396,7 @@ class Config:
     tra_num_layers: int = 5
     tra_num_heads: int = 8
     tra_mlp_ratio: float = 2.0
-    tra_num_slices: int = 64
+    tra_num_slices: int = 32
 
     # training arguments
     epochs: int = 100
