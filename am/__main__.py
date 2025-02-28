@@ -125,17 +125,21 @@ def train_timeseries(cfg, device):
         )
         
         # scheduler
-        # kw = dict(lr=5e-4, **kw,)
-        # kw = dict(
-        #     Schedule="OneCycleLR",
-        #     lr=1e-3,
-        #     # one_cycle_pct_start=0.3,
-        #     # one_cycle_div_factor=25,
-        #     # one_cycle_final_div_factor=1e4,
-        #     one_cycle_three_phase=True,
-        #     **kw,
-        # )
-        kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
+        if cfg.schedule is None or cfg.schedule == 'ConstantLR':
+            kw = dict(
+                **kw,
+                lr=cfg.learning_rate,
+            )
+        elif cfg.schedule == 'OneCycleLR':
+            kw = dict(
+                **kw,
+                Schedule='OneCycleLR',
+                lr = cfg.learning_rate,
+                one_cycle_pct_start=cfg.one_cycle_pct_start,
+                one_cycle_div_factor=cfg.one_cycle_div_factor,
+                one_cycle_final_div_factor=cfg.one_cycle_final_div_factor,
+                one_cycle_three_phase=cfg.one_cycle_three_phase,
+            )
 
         trainer = mlutils.Trainer(model, _data, data_, **kw)
         trainer.add_callback('epoch_end', callback)
@@ -149,11 +153,11 @@ def train_timeseries(cfg, device):
     # ANALYSIS
     #=================#
 
-    if device != 'cpu' and device != torch.device('cpu'):
-        torch.cuda.empty_cache()
-    trainer = mlutils.Trainer(model, _data, data_, device=device)
-    callback.load(trainer)
-    callback(trainer, final=True)
+    # if device != 'cpu' and device != torch.device('cpu'):
+    #     torch.cuda.empty_cache()
+    # trainer = mlutils.Trainer(model, _data, data_, device=device)
+    # callback.load(trainer)
+    # callback(trainer, final=True)
 
     return
 
@@ -389,7 +393,13 @@ class Config:
 
     # training arguments
     epochs: int = 100
+    learning_rate: float = 1e-3
     weight_decay: float = 1e-3
+    schedule: str = None
+    one_cycle_pct_start:float = 0.3
+    one_cycle_div_factor: float = 25
+    one_cycle_final_div_factor: float = 1e4
+    one_cycle_three_phase: bool = True
 
     # timeseries  dataset
     merge: bool = True

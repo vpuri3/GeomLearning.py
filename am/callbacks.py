@@ -338,7 +338,7 @@ def timeseries_statistics_plot(df, mode, filename=None, dpi=175):
         plt.ylim(-1, 1)
         plt.ylabel('R-Squared')
     elif mode == 'l2':
-        plt.ylim(0, 1e-1)
+        plt.ylim(0, 1e-2) # 10%
         plt.ylabel('MSE')
 
     medians = df.median(axis=1)
