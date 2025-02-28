@@ -4,7 +4,7 @@ import torch
 import os
 import yaml
 from tqdm import tqdm
-from jsonargparse import ArgumentParser, CLI
+from jsonargparse import CLI
 from dataclasses import dataclass
 
 # local
@@ -87,7 +87,7 @@ def train_timeseries(cfg, device):
     # MODEL
     #=================#
 
-    ci = 3 + 2 + (cfg.disp + cfg.vmstr + cfg.temp) + (cfg.sdf * 10) # (x/y/z, t/dt, fields...)
+    ci = 3 + (cfg.disp + cfg.vmstr + cfg.temp) + (cfg.sdf * 10) # (pos, fields, sdf)
     ce = 3
     co = cfg.disp + cfg.vmstr + cfg.temp
 
@@ -95,7 +95,7 @@ def train_timeseries(cfg, device):
         model = am.MeshGraphNet(ci, ce, co, cfg.gnn_width, cfg.gnn_num_layers)
     elif cfg.TRA == 0:
         model = am.Transolver(
-            space_dim=ci, out_dim=co, fun_dim=0,
+            space_dim=ci+2, out_dim=co, fun_dim=0,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
             slice_num=cfg.tra_num_slices,

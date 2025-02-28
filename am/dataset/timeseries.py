@@ -181,7 +181,7 @@ class TimeseriesDatasetTransform(DatasetTransform):
             raise NotImplementedError("TimeseriesTransform not implemented for merge=False")
 
         # features / labels
-        xs = [pos, t, dt,]
+        xs = [pos,]
         ys = []
 
         if self.sdf:
