@@ -206,6 +206,12 @@ class Trainer:
 
         self.statsfun = statsfun
         self.callbacks = collections.defaultdict(list)
+        self.stat_vals = {
+            "train_loss" : None,
+            "test_loss" : None,
+            "train_stats" : None,
+            "test_stats" : None,
+        }
 
     #------------------------#
     # CALLBACKS

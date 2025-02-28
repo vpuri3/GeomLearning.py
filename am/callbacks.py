@@ -255,11 +255,8 @@ class TimeseriesCallback(Callback):
             case_nums = []
             case_names = []
 
-            l2_ARs = []
-            l2_NRs = []
-
-            r2_ARs = []
-            r2_NRs = []
+            l2_cases = []
+            r2_cases = []
 
             if trainer.GLOBAL_RANK == 0:
                 pbar = tqdm(total=num_cases, desc=f"Evaluating {split} dataset")
@@ -272,27 +269,20 @@ class TimeseriesCallback(Callback):
                 case_nums.append(icase)
                 case_names.append(case_name)
                 
-                for (autoreg, ext) in zip([True, False], ['AR', 'NR']):
-                    eval_data, l2s, r2s = march_case(
-                        model, case_data, transform,
-                        autoreg=autoreg, device=device, K=self.autoreg_start,
-                    )
+                eval_data, l2s, r2s = march_case(
+                    model, case_data, transform,
+                    autoreg=True, device=device, K=self.autoreg_start,
+                )
 
-                    case_dir = os.path.join(split_dir, f"{split}{str(icase).zfill(3)}-{ext}-{case_name}")
-                    file_name = f'{os.path.basename(self.case_dir)}-{split}{str(icase).zfill(4)}-{ext}-{case_name}'
+                # case_dir = os.path.join(split_dir, f"{split}{str(icase).zfill(3)}-{ext}-{case_name}")
+                # file_name = f'{os.path.basename(self.case_dir)}-{split}{str(icase).zfill(4)}-{ext}-{case_name}'
+                # if self.final and len(case_nums) < self.num_eval_cases:
+                #     visualize_timeseries_pyv(eval_data, case_dir, merge=True, name=file_name)
 
-                    # if self.final and len(case_nums) < self.num_eval_cases:
-                    #     visualize_timeseries_pyv(eval_data, case_dir, merge=True, name=file_name)
+                l2_cases.append(l2s)
+                r2_cases.append(r2s)
 
-                    if ext == 'AR':
-                        l2_ARs.append(l2s)
-                        r2_ARs.append(r2s)
-                    else:
-                        l2_NRs.append(l2s)
-                        r2_NRs.append(r2s)
-
-                    del eval_data 
-
+                del eval_data 
                 del case_data
                 
                 if trainer.GLOBAL_RANK == 0:
@@ -303,59 +293,54 @@ class TimeseriesCallback(Callback):
 
             # Convert list of stats arrays into a DataFrame where each row represents
             # a time step and each column represents a case
-            df_l2_AR = pd.DataFrame(l2_ARs).transpose()
-            df_r2_AR = pd.DataFrame(r2_ARs).transpose()
-            df_l2_NR = pd.DataFrame(l2_NRs).transpose()
-            df_r2_NR = pd.DataFrame(r2_NRs).transpose()
+            df_l2 = pd.DataFrame(l2_cases).transpose()
+            df_r2 = pd.DataFrame(r2_cases).transpose()
 
             # Assign case numbers as column names
-            df_l2_AR.columns = case_nums
-            df_r2_AR.columns = case_nums
-            df_l2_NR.columns = case_nums
-            df_r2_NR.columns = case_nums
+            df_l2.columns = case_nums
+            df_r2.columns = case_nums
 
             # Assign step numbers as index
-            df_l2_AR.index.name = 'Step'
-            df_r2_AR.index.name = 'Step'
-            df_l2_NR.index.name = 'Step'
-            df_r2_NR.index.name = 'Step'
+            df_l2.index.name = 'Step'
+            df_r2.index.name = 'Step'
 
             # create dataframe for each autoreg
-            df_l2_AR = hstack_dataframes_across_ranks(df_l2_AR, trainer)
-            df_r2_AR = hstack_dataframes_across_ranks(df_r2_AR, trainer)
-            df_l2_NR = hstack_dataframes_across_ranks(df_l2_NR, trainer)
-            df_r2_NR = hstack_dataframes_across_ranks(df_r2_NR, trainer)
+            df_l2 = hstack_dataframes_across_ranks(df_l2, trainer)
+            df_r2 = hstack_dataframes_across_ranks(df_r2, trainer)
             
             if trainer.GLOBAL_RANK == 0:
                 print(f"Saving {split} statistics to {ckpt_dir}")
-                df_l2_AR.to_csv(os.path.join(ckpt_dir, f'l2_AR_stats_{split}.txt'), index=False)
-                df_r2_AR.to_csv(os.path.join(ckpt_dir, f'r2_AR_stats_{split}.txt'), index=False)
-                df_l2_NR.to_csv(os.path.join(ckpt_dir, f'l2_NR_stats_{split}.txt'), index=False)
-                df_r2_NR.to_csv(os.path.join(ckpt_dir, f'r2_NR_stats_{split}.txt'), index=False)
+                df_l2.to_csv(os.path.join(ckpt_dir, f'l2_stats_{split}.txt'), index=False)
+                df_r2.to_csv(os.path.join(ckpt_dir, f'r2_stats_{split}.txt'), index=False)
             
         if trainer.DDP:
             torch.distributed.barrier()
 
         # make plots
         for split in ['train', 'test']:
-            # df_l2_AR = pd.read_csv(os.path.join(ckpt_dir, f'l2_AR_stats_{split}.txt'))
-            # df_l2_NR = pd.read_csv(os.path.join(ckpt_dir, f'l2_NR_stats_{split}.txt'))
-            df_r2_AR = pd.read_csv(os.path.join(ckpt_dir, f'r2_AR_stats_{split}.txt'))
-            # df_r2_NR = pd.read_csv(os.path.join(ckpt_dir, f'r2_NR_stats_{split}.txt'))
+            df_l2 = pd.read_csv(os.path.join(ckpt_dir, f'l2_stats_{split}.txt'))
+            df_r2 = pd.read_csv(os.path.join(ckpt_dir, f'r2_stats_{split}.txt'))
 
             if trainer.GLOBAL_RANK == 0:
-                print(f"Saving R-Squared plots to {ckpt_dir}/r2_plot_{split}.png")
-                r2_timeseries(df_r2_AR, filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
-                
+                print(f"Saving L2/R2 plots to {ckpt_dir}/r2_plot_{split}.png")
+                timeseries_plot(df_r2, 'r2', filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
+                timeseries_plot(df_l2, 'l2', filename=os.path.join(ckpt_dir, f'l2_plot_{split}.png'))
+
         return
 
 #======================================================================#
 # Plotting functions
 #======================================================================#
-def r2_timeseries(df, filename=None, dpi=175,):
+def timeseries_plot(df, mode, filename=None, dpi=175):
     plt.figure(figsize=(8, 4), dpi=dpi)
-    plt.ylim(-1, 1)
     
+    if mode == 'r2':
+        plt.ylim(-1, 1)
+        plt.ylabel('R-Squared')
+    elif mode == 'l2':
+        plt.ylim(0, 1e-1)
+        plt.ylabel('MSE')
+
     medians = df.median(axis=1)
     q1 = df.quantile(0.25, axis=1)
     q3 = df.quantile(0.75, axis=1)
@@ -369,11 +354,9 @@ def r2_timeseries(df, filename=None, dpi=175,):
     )
     
     plt.xlabel('Time Step')
-    plt.ylabel('R-Squared')
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    # Save plot if filename is provided
     if filename is not None:
         plt.savefig(filename, bbox_inches='tight')
         plt.close()
