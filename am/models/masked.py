@@ -2,6 +2,7 @@
 import torch
 from torch import nn
 import torch_geometric as pyg
+from mlutils.utils import check_package_version_lteq
 
 __all__ = [
     'MaskedLoss',
@@ -67,13 +68,16 @@ class MaskedModel(nn.Module):
         )
 
         return pyg.data.Data(
-            **{k: graph[k] for k in graph.keys() if k != 'edge_index' and k != 'edge_attr'},
+            **{
+                k: graph[k]
+                for k in pyg_get_data_keys(graph)
+                if k != 'edge_index' and k != 'edge_attr'
+            },
             edge_index=edge_index,
             edge_attr=edge_attr,
         )
 
     def forward(self, graph):
-
         if self.mask:
             mask = graph.mask.view(-1, 1)
             subgraph = self.reduce_graph(graph)
@@ -87,6 +91,15 @@ class MaskedModel(nn.Module):
             x = x * mask_bulk
 
         return x
+
+#======================================================================#
+def pyg_get_data_keys(data: pyg.data.Data):
+    if check_package_version_lteq('torch_geometric', '2.4'):
+        k = data.keys
+    else:
+        k = data.keys()
+
+    return k
 
 #======================================================================#
 #

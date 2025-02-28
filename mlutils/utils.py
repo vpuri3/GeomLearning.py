@@ -34,7 +34,7 @@ __all__ = [
 
     # versioning hell
     'to_numpy',
-    'torch_version_lteq'
+    'check_package_version_lteq'
 ]
 
 #=======================================================================#
@@ -44,9 +44,9 @@ def to_numpy(t: torch.Tensor):
     '''
     return t.detach().cpu().resolve_conj().resolve_neg().numpy()
 
-def torch_version_lteq(version: str):
+def check_package_version_lteq(pkg: str, version: str):
     import pkg_resources
-    VERSION = pkg_resources.get_distribution("torch").version
+    VERSION = pkg_resources.get_distribution(pkg).version
     return pkg_resources.parse_version(VERSION) <= pkg_resources.parse_version(version)
 
 #=======================================================================#
@@ -118,7 +118,7 @@ def dist_setup():
 
         torch.cuda.set_device(LOCAL_RANK)
 
-        if torch_version_lteq('2'): # not sure about version
+        if check_package_version_lteq('torch', '2'): # not sure about version
             dist.init_process_group(
                 backend,
                 rank=GLOBAL_RANK,

@@ -14,7 +14,7 @@ import collections
 
 # local
 from mlutils.utils import (
-    num_parameters, select_device, is_torchrun, 
+    num_parameters, select_device, is_torchrun, check_package_version_lteq,
 )
 
 __all__ = [
@@ -73,7 +73,7 @@ class Trainer:
         self.print_config = print_config
         self.print_batch = print_batch
         self.print_epoch = print_epoch
-        self.stats_every = stats_every
+        self.stats_every = stats_every if stats_every != 0 else 1
 
         ###
         # DEVICE
@@ -247,7 +247,10 @@ class Trainer:
         if self.GLOBAL_RANK == 0:
             print(f"Loading checkpoint {load_path}")
 
-        snapshot = torch.load(load_path, weights_only=False)
+        if check_package_version_lteq('torch', '2.4'):
+            snapshot = torch.load(load_path)
+        else:
+            snapshot = torch.load(load_path, weights_only=False)
 
         self.epoch = snapshot['epoch']
         
