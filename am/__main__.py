@@ -76,8 +76,8 @@ def train_timeseries(cfg, device):
         # force_reload=True,
     )
 
-    # _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
-    _data, data_, _ = am.split_timeseries_dataset(dataset, split=[0.2, 0.05, 0.75])
+    _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
+    # _data, data_, _ = am.split_timeseries_dataset(dataset, split=[0.05, 0.01, 0.94])
     
     if GLOBAL_RANK == 0:
         print(f"Loaded {len(dataset.case_files)} cases from {DATADIR_TIMESERIES}")
@@ -105,7 +105,14 @@ def train_timeseries(cfg, device):
             in_dim=ci, out_dim=co,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
-            slice_num=cfg.tra_num_slices,
+            num_slices=cfg.tra_num_slices,
+        )
+    elif cfg.TRA == 2:
+        model = am.TS2(
+            in_dim=ci, out_dim=co,
+            n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
+            n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
+            num_slices=cfg.tra_num_slices,
         )
     else:
         print(f"No model selected. Choose between GNN or TRA.")
