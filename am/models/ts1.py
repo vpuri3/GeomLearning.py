@@ -10,17 +10,7 @@ __all__ = [
     "TS1",
 ]
 
-ACTIVATION = {
-    'gelu': nn.GELU,
-    'gelu_fast': nn.GELU(approximate='tanh'),
-    'tanh': nn.Tanh,
-    'sigmoid': nn.Sigmoid,
-    'relu': nn.ReLU,
-    'leaky_relu': nn.LeakyReLU(0.1),
-    'softplus': nn.Softplus,
-    'ELU': nn.ELU,
-    'silu': nn.SiLU,
-}
+FastGELU = lambda: nn.GELU(approximate='tanh')
 
 def modulate(x, shift, scale):
     '''
@@ -180,7 +170,7 @@ class Block(nn.Module):
             in_features=hidden_dim,
             hidden_features=int(hidden_dim * mlp_ratio),
             out_features=hidden_dim,
-            act=nn.GELU(approximate='tanh'),
+            act_layer=FastGELU,
             drop=dropout,
         )
         
@@ -190,6 +180,8 @@ class Block(nn.Module):
         )
 
     def forward(self, x, c):
+        # x: [B, N, C]
+        # c: [B, C]
         shift1, scale1, gate1, shift2, scale2, gate2 = self.adaLN_modulation(c).chunk(6, dim=1)
         x = x + gate1.unsqueeze(1) * self.att(modulate(self.ln1(x), shift1, scale1))
         x = x + gate2.unsqueeze(1) * self.mlp(modulate(self.ln2(x), shift2, scale2))
@@ -231,7 +223,7 @@ class TS1(nn.Module):
             in_dim,
             n_hidden * 2,
             n_hidden,
-            act=nn.GELU(approximate='tanh'),
+            act_layer=FastGELU,
             drop=dropout,
         )
         
@@ -260,7 +252,7 @@ class TS1(nn.Module):
             trunc_normal_(m.weight, std=0.02)
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-        elif isinstance(m, (nn.LayerNorm, nn.BatchNorm1d)):
+        elif isinstance(m, (nn.LayerNorm,)):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
@@ -279,8 +271,8 @@ class TS1(nn.Module):
         d = torch.tensor([d], dtype=x.dtype, device=x.device) # [B=1]
         d = self.d_embedding(d)
         
-        c = t + d
-        x = self.x_embedding(x)
+        c = t + d               # [B=1, C]
+        x = self.x_embedding(x) # [B=1, N, C]
         for block in self.blocks:
             x = block(x, c)
         x = self.final_layer(x, c)
