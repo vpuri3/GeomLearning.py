@@ -80,21 +80,13 @@ class SliceAttention(nn.Module):
 
         self.temperature = nn.Parameter(torch.ones([1, num_heads, 1, 1]) * 0.5)
 
-        # self.in_project_slice = nn.Linear(head_dim, num_slices)
-        # torch.nn.init.orthogonal_(self.in_project_slice.weight)
-
         self.to_kv_slice = nn.Linear(hidden_dim, 2 * hidden_dim)
         self.xq = nn.Parameter(torch.empty(1, num_heads, num_slices, self.head_dim))
         torch.nn.init.orthogonal_(self.xq)
 
         # TODO: compare with standard MHA
-        self.q_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, self.head_dim))
-        self.k_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, self.head_dim))
-        self.v_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, self.head_dim))
-        
-        trunc_normal_(self.q_proj, std=0.02)
-        trunc_normal_(self.k_proj, std=0.02)
-        trunc_normal_(self.v_proj, std=0.02)
+        self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
+        trunc_normal_(self.qkv_proj, std=0.02)
 
         self.to_out = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
@@ -127,9 +119,8 @@ class SliceAttention(nn.Module):
         
         ### (2) Attention among slice tokens
 
-        q_slice_token = einsum(slice_token, self.q_proj, 'b h q d, h d d -> b h q d')
-        k_slice_token = einsum(slice_token, self.k_proj, 'b h q d, h d d -> b h q d')
-        v_slice_token = einsum(slice_token, self.v_proj, 'b h q d, h d d -> b h q d')
+        qkv_slice_token = einsum(slice_token, self.qkv_proj, 'b h m d, h d e -> b h m e')
+        q_slice_token, k_slice_token, v_slice_token = qkv_slice_token.chunk(3, dim=-1)
 
         dots = einsum(q_slice_token, k_slice_token.transpose(-1, -2), 'b h q d, b h d q -> b h q d') * self.scale
         attn = F.softmax(dots, dim=-1)
