@@ -259,7 +259,7 @@ class TimeseriesCallback(Callback):
             r2_cases = []
 
             if trainer.GLOBAL_RANK == 0:
-                pbar = tqdm(total=num_cases, desc=f"Evaluating {split} dataset")
+                pbar = tqdm(total=num_cases, desc=f"Evaluating {split} dataset", ncols=80)
             
             for icase in range(icase0, icase1):
                 case_idx = dataset.case_range(icase)
@@ -323,15 +323,15 @@ class TimeseriesCallback(Callback):
 
             if trainer.GLOBAL_RANK == 0:
                 print(f"Saving L2/R2 plots to {ckpt_dir}/r2_plot_{split}.png")
-                timeseries_plot(df_r2, 'r2', filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
-                timeseries_plot(df_l2, 'l2', filename=os.path.join(ckpt_dir, f'l2_plot_{split}.png'))
+                timeseries_statistics_plot(df_r2, 'r2', filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
+                timeseries_statistics_plot(df_l2, 'l2', filename=os.path.join(ckpt_dir, f'l2_plot_{split}.png'))
 
         return
 
 #======================================================================#
 # Plotting functions
 #======================================================================#
-def timeseries_plot(df, mode, filename=None, dpi=175):
+def timeseries_statistics_plot(df, mode, filename=None, dpi=175):
     plt.figure(figsize=(8, 4), dpi=dpi)
     
     if mode == 'r2':
@@ -416,11 +416,18 @@ def hstack_dataframes_across_ranks(df: pd.DataFrame, trainer: mlutils.Trainer) -
     gathered_data = [None] * trainer.WORLD_SIZE
     torch.distributed.all_gather_object(gathered_data, local_data)
     
-    # Combine columns from all processes
+    # Find max length across all columns
+    max_len = max(len(lst) for rank_data in gathered_data for lst in rank_data.values())
+    
+    # Combine columns from all processes with padding
     combined_data = {}
     for rank_data in gathered_data:
-        combined_data.update(rank_data)
-        
+        for col, values in rank_data.items():
+            # Pad shorter columns with None
+            if len(values) < max_len:
+                values = values + [None] * (max_len - len(values))
+            combined_data[col] = values
+            
     return pd.DataFrame(combined_data)
 
 def vstack_dataframes_across_ranks(df: pd.DataFrame, trainer: mlutils.Trainer) -> pd.DataFrame:
