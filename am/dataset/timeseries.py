@@ -11,7 +11,7 @@ import copy
 import json
 from typing import Union
 
-from mlutils.utils import (to_numpy, torch_version_lteq)
+from mlutils.utils import (to_numpy, check_package_version_lteq)
 from .utils import (timeseries_dataset, merge_timeseries)
 from .transform import DatasetTransform
 
@@ -268,7 +268,7 @@ class TimeseriesDataset(pyg.data.Dataset):
             [time_step_dict[os.path.basename(case_file)[:-3]] for case_file in self.case_files])
         self.time_steps_cum = self.time_steps.cumsum(0)
 
-        if torch_version_lteq('2.4.0'):
+        if check_package_version_lteq('torch', '2.4.0'):
             super().__init__(transform=transform)
         else:
             super().__init__(transform=transform, force_reload=force_reload)
@@ -360,7 +360,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         # get graph
         path = self.processed_paths[icase]
 
-        if torch_version_lteq('2.4.0'):
+        if check_package_version_lteq('torch', '2.4'):
             graph = torch.load(path)
         else:
             graph = torch.load(path, weights_only=False, mmap=True)
