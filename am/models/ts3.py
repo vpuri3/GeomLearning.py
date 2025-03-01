@@ -83,7 +83,7 @@ class SliceAttention(nn.Module):
         self.temperature_project = nn.Linear(hidden_dim, self.num_heads)
 
         self.to_kv_slice = nn.Linear(hidden_dim, 2 * hidden_dim)
-        self.xq = nn.Parameter(torch.empty(1, num_heads, num_slices, self.head_dim))
+        self.xq = nn.Parameter(torch.empty(num_heads, num_slices, self.head_dim))
         torch.nn.init.orthogonal_(self.xq)
 
         # TODO: compare with standard MHA
@@ -111,7 +111,7 @@ class SliceAttention(nn.Module):
         temperature = 0.5 + F.softplus(self.temperature_project(x)) # [B, N, H]
         temperature = temperature.transpose(1, 2).unsqueeze(-2)     # [B, H, 1, N]
 
-        slice_scores = einsum(self.xq, xk, 'b h m d, b h n d -> b h m n') # [B, H, M, N]
+        slice_scores = einsum(self.xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
         slice_weights = F.softmax(slice_scores / temperature, dim=-2)
         slice_norm = slice_weights.sum(dim=-1) # [B, H, M]
 

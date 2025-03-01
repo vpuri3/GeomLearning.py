@@ -83,9 +83,9 @@ class SliceAttention(nn.Module):
         self.temperature = nn.Parameter(torch.ones([1, num_heads, 1, 1]) * 0.5)
 
         self.to_kv_slice = nn.Linear(hidden_dim, 2 * hidden_dim)
-        self.xq = nn.Parameter(torch.empty(1, num_heads, num_slices, self.head_dim))
+        self.xq = nn.Parameter(torch.empty(num_heads, num_slices, self.head_dim))
         torch.nn.init.orthogonal_(self.xq)
-
+        
         # TODO: compare with standard MHA
         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
         trunc_normal_(self.qkv_proj, std=0.02)
@@ -112,7 +112,7 @@ class SliceAttention(nn.Module):
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
 
-        slice_scores = einsum(self.xq, xk, 'b h m d, b h n d -> b h m n') # [B, H, M, N]
+        slice_scores = einsum(self.xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
         slice_weights = F.softmax(slice_scores / self.temperature, dim=-2)
         slice_norm = slice_weights.sum(dim=-1) # [B, H, M]
 

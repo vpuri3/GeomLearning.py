@@ -12,15 +12,15 @@ import am
 import mlutils
 from am.dataset.filtering import save_dataset_statistics, compute_filtered_dataset_statistics, compute_dataset_statistics
 
-#===============#
-PROJDIR      = '/home/vedantpu/GeomLearning.py'
-DATADIR_BASE = '/home/vedantpu/GeomLearning.py/data/'
-#===============#
+# #===============#
+# PROJDIR      = '/home/vedantpu/GeomLearning.py'
+# DATADIR_BASE = '/home/vedantpu/GeomLearning.py/data/'
+# #===============#
 
-# #===============#
-# PROJDIR      = '/home/vedantpu/.julia/dev/GeomLearning.py'
-# DATADIR_BASE = '/mnt/hdd1/vedantpu/data/'
-# #===============#
+#===============#
+PROJDIR      = '/home/vedantpu/.julia/dev/GeomLearning.py'
+DATADIR_BASE = '/mnt/hdd1/vedantpu/data/'
+#===============#
 
 # #===============#
 # PROJDIR = "/ocean/projects/eng170006p/vpuri1/GeomLearning.py"
@@ -77,8 +77,8 @@ def train_timeseries(cfg, device):
     )
 
     # _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
-    _data, data_, _ = am.split_timeseries_dataset(dataset, split=[0.2, 0.05, 0.75])
-    # _data, data_, _ = am.split_timeseries_dataset(dataset, split=[0.05, 0.01, 0.94])
+    # _data, data_, _ = am.split_timeseries_dataset(dataset, split=[0.2, 0.05, 0.75])
+    _data, data_, _ = am.split_timeseries_dataset(dataset, split=[0.05, 0.01, 0.94])
     
     if GLOBAL_RANK == 0:
         print(f"Loaded {len(dataset.case_files)} cases from {DATADIR_TIMESERIES}")
