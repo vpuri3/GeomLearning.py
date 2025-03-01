@@ -7,7 +7,7 @@ from timm.layers import trunc_normal_, Mlp
 from einops import rearrange, einsum
 
 __all__ = [
-    "TS3",
+    "TS4",
 ]
 
 # # the incremental speedup isn't worth dealing with versioning hell
@@ -75,16 +75,17 @@ class SliceAttention(nn.Module):
 
         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
 
-        self.head_dim = hidden_dim // num_heads
+        self.hidden_dim = hidden_dim
         self.num_heads = num_heads
+        self.num_slices = num_slices
+        self.head_dim = hidden_dim // num_heads
         self.scale = self.head_dim ** -0.5
         self.dropout = nn.Dropout(dropout)
 
-        self.temperature_project = nn.Linear(hidden_dim, self.num_heads)
+        self.temperature_project = nn.Linear(self.hidden_dim, self.num_heads)
 
-        self.to_kv_slice = nn.Linear(hidden_dim, 2 * hidden_dim)
-        self.xq = nn.Parameter(torch.empty(1, num_heads, num_slices, self.head_dim))
-        torch.nn.init.orthogonal_(self.xq)
+        self.to_q_slice = nn.Sequential(nn.SiLU(), nn.Linear(self.hidden_dim, self.hidden_dim * self.num_slices),)
+        self.to_kv_slice = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
 
         # TODO: compare with standard MHA
         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
@@ -100,18 +101,18 @@ class SliceAttention(nn.Module):
         # x: [B, N, C]
         # c: [B, C]
         
-        # TODO: make slice weights dependent on c via query
-
         ### (1) Slicing
 
+        xq = self.to_q_slice(c)
         xk, xv = self.to_kv_slice(x).chunk(2, dim=-1)
+        xq = rearrange(xq, 'b (h m d) -> b h m d', h=self.num_heads, m=self.num_slices) # [B, H, M, D]
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
-        xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
+        xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
 
         temperature = 0.5 + F.softplus(self.temperature_project(x)) # [B, N, H]
         temperature = temperature.transpose(1, 2).unsqueeze(-2)     # [B, H, 1, N]
 
-        slice_scores = einsum(self.xq, xk, 'b h m d, b h n d -> b h m n') # [B, H, M, N]
+        slice_scores = einsum(xq, xk, 'b h m d, b h n d -> b h m n') # [B, H, M, N]
         slice_weights = F.softmax(slice_scores / temperature, dim=-2)
         slice_norm = slice_weights.sum(dim=-1) # [B, H, M]
 
@@ -167,18 +168,12 @@ class Block(nn.Module):
             act_layer=FastGELU,
             drop=dropout,
         )
-        
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_dim, 6 * hidden_dim, bias=True)
-        )
 
     def forward(self, x, c):
         # x: [B, N, C]
         # c: [B, C]
-        shift1, scale1, gate1, shift2, scale2, gate2 = self.adaLN_modulation(c).chunk(6, dim=1)
-        x = x + gate1.unsqueeze(1) * self.att(modulate(self.ln1(x), shift1, scale1), c)
-        x = x + gate2.unsqueeze(1) * self.mlp(modulate(self.ln2(x), shift2, scale2))
+        x = x + self.att(self.ln1(x), c)
+        x = x + self.mlp(self.ln2(x))
         return x
 
 class FinalLayer(nn.Module):
@@ -186,21 +181,15 @@ class FinalLayer(nn.Module):
         super().__init__()
         self.ln = nn.LayerNorm(hidden_dim)
         self.mlp = nn.Linear(hidden_dim, out_dim)
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_dim, 2 * hidden_dim, bias=True)
-        )
 
-    def forward(self, x, c):
-        shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
-        x = modulate(self.ln(x), shift, scale)
-        x = self.mlp(x)
+    def forward(self, x):
+        x = self.mlp(self.ln(x))
         return x
 
 #======================================================================#
 # MODEL
 #======================================================================#
-class TS3(nn.Module):
+class TS4(nn.Module):
     def __init__(self,
         in_dim,
         out_dim,
@@ -269,7 +258,7 @@ class TS3(nn.Module):
         x = self.x_embedding(x) # [B=1, N, C]
         for block in self.blocks:
             x = block(x, c)
-        x = self.final_layer(x, c)
+        x = self.final_layer(x)
 
         return x[0] # [N, C]
 

@@ -76,7 +76,8 @@ def train_timeseries(cfg, device):
         # force_reload=True,
     )
 
-    _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
+    # _data, data_ = am.split_timeseries_dataset(dataset, split=[0.8, 0.2])
+    _data, data_, _ = am.split_timeseries_dataset(dataset, split=[0.2, 0.05, 0.75])
     # _data, data_, _ = am.split_timeseries_dataset(dataset, split=[0.05, 0.01, 0.94])
     
     if GLOBAL_RANK == 0:
@@ -116,6 +117,13 @@ def train_timeseries(cfg, device):
         )
     elif cfg.TRA == 3:
         model = am.TS3(
+            in_dim=ci, out_dim=co,
+            n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
+            n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
+            num_slices=cfg.tra_num_slices,
+        )
+    elif cfg.TRA == 4:
+        model = am.TS4(
             in_dim=ci, out_dim=co,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
@@ -250,9 +258,8 @@ def train_finaltime(cfg, device):
     callback = am.FinaltimeCallback(case_dir, mesh=cfg.GNN, num_eval_cases=cfg.num_eval_cases)
 
     if cfg.train and cfg.epochs > 0:
-        _batch_size  = 1
-        batch_size_  = 1
-        _batch_size_ = 1
+
+        _batch_size = batch_size_ = _batch_size_ = 1
 
         kw = dict(
             device=device, gnn_loader=True, stats_every=cfg.epochs//10,
@@ -260,10 +267,29 @@ def train_finaltime(cfg, device):
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_
         )
 
-        # kw = dict(lr=5e-4, **kw,)
-        kw = dict(lr=1e-3, Schedule="OneCycleLR", **kw,)
+        # scheduler
+        if cfg.schedule is None or cfg.schedule == 'ConstantLR':
+            kw = dict(
+                **kw,
+                lr=cfg.learning_rate,
+            )
+        elif cfg.schedule == 'OneCycleLR':
+            kw = dict(
+                **kw,
+                Schedule='OneCycleLR',
+                lr = cfg.learning_rate,
+                one_cycle_pct_start=cfg.one_cycle_pct_start,
+                one_cycle_div_factor=cfg.one_cycle_div_factor,
+                one_cycle_final_div_factor=cfg.one_cycle_final_div_factor,
+                one_cycle_three_phase=cfg.one_cycle_three_phase,
+            )
+
         trainer = mlutils.Trainer(model, _data, data_, **kw)
         trainer.add_callback('epoch_end', callback)
+
+        if cfg.restart_file is not None:
+            trainer.load(cfg.restart_file)
+
         trainer.train()
 
     #=================#
