@@ -114,6 +114,13 @@ def train_timeseries(cfg, device):
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
             num_slices=cfg.tra_num_slices,
         )
+    elif cfg.TRA == 3:
+        model = am.TS3(
+            in_dim=ci, out_dim=co,
+            n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
+            n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
+            num_slices=cfg.tra_num_slices,
+        )
     else:
         print(f"No model selected. Choose between GNN or TRA.")
         raise NotImplementedError()
@@ -217,12 +224,19 @@ def train_finaltime(cfg, device):
 
     if cfg.GNN:
         model = am.MeshGraphNet(ci, ce, co, cfg.gnn_width, cfg.gnn_num_layers)
-    elif cfg.TRA:
+    elif cfg.TRA == 0:
         model = am.Transolver(
             space_dim=ci, out_dim=co, fun_dim=0,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
             slice_num=cfg.tra_num_slices,
+        )
+    elif cfg.TRA == 1:
+        model = am.TS(
+            in_dim=ci, out_dim=co,
+            n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
+            n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
+            num_slices=cfg.tra_num_slices,
         )
     else:
         print(f"No model selected. Choose between GNN or TRA.")
