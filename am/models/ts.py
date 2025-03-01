@@ -7,64 +7,12 @@ from timm.layers import trunc_normal_, Mlp
 from einops import rearrange, einsum
 
 __all__ = [
-    "TS2",
+    "TS",
 ]
 
 # # the incremental speedup isn't worth dealing with versioning hell
 # FastGELU = lambda: nn.GELU(approximate='tanh')
 FastGELU = nn.GELU
-
-def modulate(x, shift, scale):
-    '''
-    Modulate the input x with shift and scale with
-    AdaLayerNorm (DiT, https://arxiv.org/abs/2302.07459)
-    '''
-    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
-
-#======================================================================#
-# Embeddings
-#======================================================================#
-class TimeEmbedding(nn.Module):
-    """
-    Embeds scalar timesteps into vector representations.
-    
-    Ref: https://github.com/facebookresearch/DiT/blob/main/models.py
-    """
-    def __init__(self, hidden_size, frequency_embedding_size=256):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(frequency_embedding_size, hidden_size, bias=True),
-            nn.SiLU(),
-            nn.Linear(hidden_size, hidden_size, bias=True),
-        )
-        self.frequency_embedding_size = frequency_embedding_size
-
-    @staticmethod
-    def timestep_embedding(t, dim, max_period=10000):
-        """
-        Create sinusoidal timestep embeddings.
-        :param t: a 1-D Tensor of N indices, one per batch element.
-                          These may be fractional.
-        :param dim: the dimension of the output.
-        :param max_period: controls the minimum frequency of the embeddings.
-        :return: an (N, D) Tensor of positional embeddings.
-
-        Ref: https://github.com/openai/glide-text2im/blob/main/glide_text2im/nn.py
-        """
-        half = dim // 2
-        freqs = torch.exp(
-            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
-        ).to(device=t.device)
-        args = t[:, None].float() * freqs[None]
-        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
-        if dim % 2:
-            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
-        return embedding
-
-    def forward(self, t):
-        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
-        t_emb = self.mlp(t_freq)
-        return t_emb
 
 #======================================================================#
 # SLICE ATTENTION
@@ -86,7 +34,6 @@ class SliceAttention(nn.Module):
         self.xq = nn.Parameter(torch.empty(1, num_heads, num_slices, self.head_dim))
         torch.nn.init.orthogonal_(self.xq)
 
-        # TODO: compare with standard MHA
         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
         trunc_normal_(self.qkv_proj, std=0.02)
 
@@ -95,17 +42,10 @@ class SliceAttention(nn.Module):
             nn.Dropout(dropout)
         )
 
-    def forward(self, x, c):
+    def forward(self, x):
 
         # x: [B, N, C]
-        # c: [B, C]
         
-        # TODO: make slice weights dependent on c via query
-
-        # IDEAS:
-        # - Transolver++: Gimble softmax with temperature = 1 + self.temperature_project(x) (Transolver)
-        # - Transolver++: remove xv and use xk for both key and value
-
         ### (1) Slicing
 
         xk, xv = self.to_kv_slice(x).chunk(2, dim=-1)
@@ -169,17 +109,10 @@ class Block(nn.Module):
             drop=dropout,
         )
         
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_dim, 6 * hidden_dim, bias=True)
-        )
-
-    def forward(self, x, c):
+    def forward(self, x):
         # x: [B, N, C]
-        # c: [B, C]
-        shift1, scale1, gate1, shift2, scale2, gate2 = self.adaLN_modulation(c).chunk(6, dim=1)
-        x = x + gate1.unsqueeze(1) * self.att(modulate(self.ln1(x), shift1, scale1), c)
-        x = x + gate2.unsqueeze(1) * self.mlp(modulate(self.ln2(x), shift2, scale2))
+        x = x + self.att(self.ln1(x))
+        x = x + self.mlp(self.ln2(x))
         return x
 
 class FinalLayer(nn.Module):
@@ -187,21 +120,15 @@ class FinalLayer(nn.Module):
         super().__init__()
         self.ln = nn.LayerNorm(hidden_dim)
         self.mlp = nn.Linear(hidden_dim, out_dim)
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_dim, 2 * hidden_dim, bias=True)
-        )
 
-    def forward(self, x, c):
-        shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
-        x = modulate(self.ln(x), shift, scale)
-        x = self.mlp(x)
+    def forward(self, x):
+        x = self.mlp(self.ln(x))
         return x
 
 #======================================================================#
 # MODEL
 #======================================================================#
-class TS2(nn.Module):
+class TS(nn.Module):
     def __init__(self,
         in_dim,
         out_dim,
@@ -221,9 +148,6 @@ class TS2(nn.Module):
             act_layer=FastGELU,
             drop=dropout,
         )
-        
-        self.t_embedding = TimeEmbedding(n_hidden)
-        self.d_embedding = TimeEmbedding(n_hidden)
         
         self.blocks = nn.ModuleList([
             Block(
@@ -252,25 +176,11 @@ class TS2(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, data):
-        x = data.x.unsqueeze(0) # space dim [B=1, N, C]
-
-        assert x.ndim == 3, "x must be [N, C], that is batch size must be 1"
-        if data.get('t_val', None) is None or data.get('dt_val', None) is None:
-            raise RuntimeError(f't or d is None in {data}')
-        
-        t = data.t_val.item()
-        t = torch.tensor([t], dtype=x.dtype, device=x.device) # [B=1]
-        t = self.t_embedding(t)
-        
-        d = data.dt_val.item()
-        d = torch.tensor([d], dtype=x.dtype, device=x.device) # [B=1]
-        d = self.d_embedding(d)
-        
-        c = t + d               # [B=1, C]
+        x = data.x.unsqueeze(0) # [B=1, N, C]
         x = self.x_embedding(x) # [B=1, N, C]
         for block in self.blocks:
-            x = block(x, c)
-        x = self.final_layer(x, c)
+            x = block(x)
+        x = self.final_layer(x)
 
         return x[0] # [N, C]
 

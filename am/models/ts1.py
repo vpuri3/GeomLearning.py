@@ -10,7 +10,9 @@ __all__ = [
     "TS1",
 ]
 
-FastGELU = lambda: nn.GELU(approximate='tanh')
+# # the incremental speedup isn't worth dealing with versioning hell
+# FastGELU = lambda: nn.GELU(approximate='tanh')
+FastGELU = nn.GELU
 
 def modulate(x, shift, scale):
     '''
@@ -67,7 +69,7 @@ class TimeEmbedding(nn.Module):
 #======================================================================#
 # SLICE ATTENTION
 #======================================================================#
-class SliceAttention(nn.Module):
+class PhysicsAttention(nn.Module):
     def __init__(self, dim, heads=8, dim_head=64, dropout=0., num_slices=64):
         super().__init__()
         inner_dim = dim_head * heads
@@ -156,7 +158,7 @@ class Block(nn.Module):
         super().__init__()
         self.ln1 = nn.LayerNorm(hidden_dim)
         self.ln2 = nn.LayerNorm(hidden_dim)
-        self.att = SliceAttention(
+        self.att = PhysicsAttention(
             hidden_dim, heads=num_heads, dim_head=hidden_dim // num_heads,
             dropout=dropout, num_slices=num_slices,
         )
