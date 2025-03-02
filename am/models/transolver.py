@@ -183,11 +183,15 @@ class Transolver(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, data):
-        x = data.x.unsqueeze(0)                    # space [B, N, C]
-        t = data.t.unsqueeze(0)                    # time  [B, N, 1]
-        d = data.dt.unsqueeze(0)                   # dt    [B, N, 1]
-        x = torch.cat((x, t, d), -1)               #       [B, N, C]
+        x = data.x.unsqueeze(0) # space [B, N, C]
         f = data.f if hasattr(data, 'f') else None # func  [B, N, C]
+        
+        if hasattr(data, 't'):
+            t = data.t.unsqueeze(0)
+            x = torch.cat((x, t), -1)
+        if hasattr(data, 'dt'):
+            d = data.dt.unsqueeze(0)
+            x = torch.cat((x, d), -1)
 
         if f is not None:
             f = torch.cat((x, f), -1)

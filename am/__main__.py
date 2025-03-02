@@ -221,6 +221,10 @@ def train_finaltime(cfg, device):
     indices = [split, len(dataset) - split]
     _data, data_ = torch.utils.data.random_split(dataset, indices)
     
+    # split = int(len(dataset) * 0.10)
+    # indices = [split, 8, len(dataset) - split - 8]
+    # _data, data_, _ = torch.utils.data.random_split(dataset, indices)
+    
     if GLOBAL_RANK == 0:
         print(f"Loaded {len(dataset)} cases from {DATADIR_FINALTIME}")
         print(f"Split into {len(_data)} train and {len(data_)} test cases")
@@ -243,7 +247,14 @@ def train_finaltime(cfg, device):
             slice_num=cfg.tra_num_slices,
         )
     elif cfg.TRA == 1:
-        model = am.TS(
+        model = am.TS1Uncond(
+            in_dim=ci, out_dim=co,
+            n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
+            n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
+            num_slices=cfg.tra_num_slices,
+        )
+    elif cfg.TRA == 2:
+        model = am.TS2Uncond(
             in_dim=ci, out_dim=co,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,

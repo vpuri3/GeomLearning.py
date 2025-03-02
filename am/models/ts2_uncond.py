@@ -7,7 +7,7 @@ from timm.layers import trunc_normal_, Mlp
 from einops import rearrange, einsum
 
 __all__ = [
-    "TS",
+    "TS2Uncond",
 ]
 
 # # the incremental speedup isn't worth dealing with versioning hell
@@ -23,20 +23,24 @@ class SliceAttention(nn.Module):
 
         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
 
-        self.head_dim = hidden_dim // num_heads
+        self.hidden_dim = hidden_dim
         self.num_heads = num_heads
+        self.num_slices = num_slices
+        self.head_dim = hidden_dim // num_heads
         self.scale = self.head_dim ** -0.5
         self.dropout = nn.Dropout(dropout)
 
+        # (1) Get slice weights
+        self.wt_k_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.wtq = nn.Parameter(torch.empty(num_heads, num_slices, self.head_dim))
+        torch.nn.init.orthogonal_(self.wtq)
+
         self.temperature_project = nn.Linear(hidden_dim, self.num_heads)
 
-        self.to_kv_slice = nn.Linear(hidden_dim, 2 * hidden_dim)
-        self.xq = nn.Parameter(torch.empty(num_heads, num_slices, self.head_dim))
-        torch.nn.init.orthogonal_(self.xq)
+        # (2) Attention among slice tokens
+        self.qkv_proj = nn.Linear(hidden_dim, 3 * hidden_dim)
 
-        self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
-        trunc_normal_(self.qkv_proj, std=0.02)
-
+        # (3) Desclice and return
         self.to_out = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.Dropout(dropout)
@@ -46,38 +50,36 @@ class SliceAttention(nn.Module):
 
         # x: [B, N, C]
         
-        ### (1) Slicing
+        ### (1) Get slice weights
 
-        xk, xv = self.to_kv_slice(x).chunk(2, dim=-1)
-        xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
-        xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
+        wtk = self.wt_k_proj(x)
+        wtk = rearrange(wtk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
 
         temperature = 0.5 + F.softplus(self.temperature_project(x)) # [B, N, H]
         temperature = temperature.transpose(1, 2).unsqueeze(-2)     # [B, H, 1, N]
 
-        slice_scores = einsum(self.xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
+        slice_scores = einsum(self.wtq, wtk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
         slice_weights = F.softmax(slice_scores / temperature, dim=-2)
         slice_norm = slice_weights.sum(dim=-1) # [B, H, M]
 
-        slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B, H, M, D]
-        slice_token = slice_token / (slice_norm.unsqueeze(-1) + 1e-5)
-        
         ### (2) Attention among slice tokens
-
-        qkv_slice_token = einsum(slice_token, self.qkv_proj, 'b h m d, h d e -> b h m e')
-        q_slice_token, k_slice_token, v_slice_token = qkv_slice_token.chunk(3, dim=-1)
-
-        dots = einsum(q_slice_token, k_slice_token.transpose(-1, -2), 'b h q d, b h d q -> b h q d') * self.scale
+        qkv_token = self.qkv_proj(x) # [B, N, 3D]
+        qkv_token = rearrange(qkv_token, 'b n (h d) -> b h n d', d=3*self.head_dim) # [B, H, N, 3D]
+        qkv_token = einsum(slice_weights, qkv_token, 'b h m n, b h n d -> b h m d') # [B, H, M, 3D]
+        qkv_token = qkv_token / (slice_norm.unsqueeze(-1) + 1e-5)
+        q_token, k_token, v_token = qkv_token.chunk(3, dim=-1)
+        
+        dots = einsum(q_token, k_token.transpose(-1, -2), 'b h q d, b h d q -> b h q d') * self.scale
         attn = F.softmax(dots, dim=-1)
         attn = self.dropout(attn)
-        out_slice_token = einsum(attn, v_slice_token, 'b h q d, b h q d -> b h q d')
+        out_token = einsum(attn, v_token, 'b h q d, b h q d -> b h q d')
 
         ### (3) Deslice
 
-        out_x = einsum(out_slice_token, slice_weights, 'b h m d, b h m n -> b h n d')
-        out_x = rearrange(out_x, 'b h n d -> b n (h d)')
+        out = einsum(out_token, slice_weights, 'b h m d, b h m n -> b h n d')
+        out = rearrange(out, 'b h n d -> b n (h d)')
 
-        return self.to_out(out_x)
+        return self.to_out(out)
 
 #======================================================================#
 # BLOCK
@@ -131,7 +133,7 @@ class FinalLayer(nn.Module):
 #======================================================================#
 # MODEL
 #======================================================================#
-class TS(nn.Module):
+class TS2Uncond(nn.Module):
     def __init__(self,
         in_dim,
         out_dim,
