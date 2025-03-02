@@ -7,6 +7,7 @@ from tqdm import tqdm
 
 import os
 
+from mlutils.utils import (to_numpy, check_package_version_lteq)
 from .utils import makegraph
 from .transform import DatasetTransform
 
@@ -68,7 +69,10 @@ class FinaltimeDataset(pyg.data.Dataset):
             exclude_list = [e + '.npz' for e in exclude_list]
             self.case_files = [c for c in self.case_files if c not in exclude_list]
 
-        super().__init__(root, transform, force_reload=force_reload)
+        if check_package_version_lteq('torch', '2.4.0'):
+            super().__init__(root, transform=transform)
+        else:
+            super().__init__(root, transform=transform, force_reload=force_reload)
 
     @property
     def raw_paths(self):
@@ -80,6 +84,22 @@ class FinaltimeDataset(pyg.data.Dataset):
         proc_dir = os.path.join(self.root, "processed")
         case_files = [f"case{str(i).zfill(5)}_{self.case_files[i][:-4]}.pt" for i in range(len(self))]
         return [os.path.join(proc_dir, case) for case in case_files]
+
+    #-------------------#
+    # OLD PYG VERSION
+    #-------------------#
+    @property
+    def processed_dir(self):
+        return os.path.join(self.root, 'processed')
+
+    @property
+    def processed_file_names(self):
+        return self.processed_paths()
+
+    @property
+    def raw_file_names(self):
+        return self.raw_paths()
+    #-------------------#
 
     def process(self):
         num_cases = len(self.case_files)
@@ -111,7 +131,11 @@ class FinaltimeDataset(pyg.data.Dataset):
 
     def get(self, idx):
         path = self.processed_paths[idx]
-        return torch.load(path, weights_only=False)
+        if check_package_version_lteq('torch', '2.4'):
+            graph = torch.load(path)
+        else:
+            graph = torch.load(path, weights_only=False)
+        return graph
 
 #======================================================================#
 #
