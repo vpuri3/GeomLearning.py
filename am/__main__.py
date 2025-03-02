@@ -10,22 +10,25 @@ from dataclasses import dataclass
 # local
 import am
 import mlutils
-from am.dataset.filtering import save_dataset_statistics, compute_filtered_dataset_statistics, compute_dataset_statistics
 
-#===============#
-PROJDIR      = '/home/vedantpu/GeomLearning.py'
-DATADIR_BASE = '/home/vedantpu/GeomLearning.py/data/'
-#===============#
+#======================================================================#
+import socket
+MACHINE = socket.gethostname()
 
-# #===============#
-# PROJDIR      = '/home/vedantpu/.julia/dev/GeomLearning.py'
-# DATADIR_BASE = '/mnt/hdd1/vedantpu/data/'
-# #===============#
+if MACHINE == "eagle":
+    # VDEL Eagle - 1 node: 4x 2080Ti
+    PROJDIR      = '/home/vedantpu/.julia/dev/GeomLearning.py'
+    DATADIR_BASE = '/mnt/hdd1/vedantpu/data/NetFabb/'
+elif MACHINE.startswith("gpu-node-"):
+    # MAIL GPU - 1 node: 8x 2080Ti
+    PROJDIR      = '/home/vedantpu/GeomLearning.py'
+    DATADIR_BASE = '/home/vedantpu/GeomLearning.py/data/'
+elif MACHINE.startswith("v"):
+    # PSC Bridges - 8x v100 32GB
+    PROJDIR      = "/ocean/projects/eng170006p/vpuri1/GeomLearning.py"
+    DATADIR_BASE = 'data/'
 
-# #===============#
-# PROJDIR = "/ocean/projects/eng170006p/vpuri1/GeomLearning.py"
-# DATADIR_BASE = 'data/'
-# #===============#
+#======================================================================#
 
 DATADIR_RAW        = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_raw')
 DATADIR_TIMESERIES = os.path.join(DATADIR_BASE, 'netfabb_ti64_hires_timeseries')
@@ -46,7 +49,9 @@ SUBDIRS = [
     r'data_3000-3500',
 ]
 
-CASEDIR = os.path.join('.', 'out', 'am')
+PROJDIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+CASEDIR = os.path.join(PROJDIR, 'out', 'am')
+os.makedirs(CASEDIR, exist_ok=True)
 
 #======================================================================#
 def train_timeseries(cfg, device):
