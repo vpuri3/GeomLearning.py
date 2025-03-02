@@ -167,11 +167,14 @@ class Trainer:
                 final_div_factor=one_cycle_final_div_factor,
                 three_phase=one_cycle_three_phase,
             )
+            self.update_schedule_every_epoch = False
         elif Schedule == "CosineAnnealingLR":
             niters = epochs * len(self._loader)
             self.schedule = optim.lr_scheduler.CosineAnnealingLR(self.opt, niters)
+            self.update_schedule_every_epoch = True
         elif Schedule is None:
             self.schedule = optim.lr_scheduler.ConstantLR(self.opt, factor=1.0, total_iters=1e10)
+            self.update_schedule_every_epoch = True
         else:
             raise NotImplementedError()
         
@@ -356,6 +359,8 @@ class Trainer:
             if (self.epoch % self.stats_every) == 0:
                 self.statistics()
             self.trigger_callbacks("epoch_end")
+            if self.update_schedule_every_epoch:
+                self.schedule.step()
 
         return
 
@@ -383,9 +388,12 @@ class Trainer:
             loss.backward()
             self.trigger_callbacks("batch_post_grad")
             self.opt.step()
-            self.schedule.step()
             self.trigger_callbacks("batch_end")
             self.opt.zero_grad()
+            
+            # update schedule every batch
+            if not self.update_schedule_every_epoch:
+                self.schedule.step()
 
             if print_batch:
                 batch_iterator.set_description(
