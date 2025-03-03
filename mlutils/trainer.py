@@ -49,7 +49,7 @@ class Trainer:
         one_cycle_div_factor=25,        # initial_lr = max_lr/div_factor. Default: 25
         one_cycle_final_div_factor=1e4, # min_lr = initial_lr/final_div_factor Default: 1e4
         one_cycle_three_phase=False,    # first two phases will be symmetrical about pct_start third phase: initial_lr -> initial_lr/final_div_factor
-
+        
         lossfun=None,
         batch_lossfun=None,
         epochs=None,
@@ -169,8 +169,7 @@ class Trainer:
             )
             self.update_schedule_every_epoch = False
         elif Schedule == "CosineAnnealingLR":
-            niters = epochs * len(self._loader)
-            self.schedule = optim.lr_scheduler.CosineAnnealingLR(self.opt, niters)
+            self.schedule = optim.lr_scheduler.CosineAnnealingLR(self.opt, T_max=self.epochs)
             self.update_schedule_every_epoch = True
         elif Schedule is None:
             self.schedule = optim.lr_scheduler.ConstantLR(self.opt, factor=1.0, total_iters=1e10)
