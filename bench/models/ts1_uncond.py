@@ -67,10 +67,10 @@ class SliceAttention(nn.Module):
         qkv_slice_token = einsum(slice_token, self.qkv_proj, 'b h m d, h d e -> b h m e')
         q_slice_token, k_slice_token, v_slice_token = qkv_slice_token.chunk(3, dim=-1)
 
-        dots = einsum(q_slice_token, k_slice_token.transpose(-1, -2), 'b h q d, b h d q -> b h q d') * self.scale
+        dots = einsum(q_slice_token, k_slice_token, 'b h q d, b h k d -> b h q k') * self.scale
         attn = F.softmax(dots, dim=-1)
         attn = self.dropout(attn)
-        out_slice_token = einsum(attn, v_slice_token, 'b h q d, b h q d -> b h q d')
+        out_slice_token = einsum(attn, v_slice_token, 'b h q k, b h k d -> b h q d')
 
         ### (3) Deslice
 
