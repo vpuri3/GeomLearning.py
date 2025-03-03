@@ -79,7 +79,8 @@ def select_device(device=None, verbose=False):
     if is_torchrun():
         if not dist.is_initialized():
             dist_setup()
-        return int(os.environ['LOCAL_RANK'])
+        LOCAL_RANK = int(os.environ['LOCAL_RANK'])
+        return torch.device(LOCAL_RANK)
 
     device = (
         "cuda" if torch.cuda.is_available()

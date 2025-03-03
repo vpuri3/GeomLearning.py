@@ -87,7 +87,7 @@ class Trainer:
         if self.DISTRIBUTED:
             assert dist.is_initialized()
             self.DDP = dist.get_world_size() > 1
-            self.device = self.LOCAL_RANK
+            self.device = torch.device(self.LOCAL_RANK)
         else:
             self.DDP = False
             self.device = select_device(device, verbose=True)
@@ -244,8 +244,8 @@ class Trainer:
             snapshot['model_state'] = self.model.module.state_dict()
         else:
             snapshot['model_state'] = self.model.state_dict()
-        snapshot['opt'] = self.opt
-        snapshot['schedule'] = None if (self.schedule is None) else self.schedule.state_dict()
+        snapshot['opt_state'] = self.opt.state_dict()
+        snapshot['schedule_state'] = None if (self.schedule is None) else self.schedule.state_dict()
 
         torch.save(snapshot, save_path)
 
@@ -256,23 +256,18 @@ class Trainer:
             print(f"Loading checkpoint {load_path}")
 
         if check_package_version_lteq('torch', '2.4'):
-            snapshot = torch.load(load_path)
+            snapshot = torch.load(load_path, map_location=self.device)
         else:
-            snapshot = torch.load(load_path, weights_only=False)
+            snapshot = torch.load(load_path, weights_only=False, map_location=self.device)
 
         self.epoch = snapshot['epoch']
-        
+
         if self.DDP:
             self.model.module.load_state_dict(snapshot['model_state'])
-            self.model.module.to(self.device)
         else:
             self.model.load_state_dict(snapshot['model_state'])
-            self.model.to(self.device)
 
-        self.opt = snapshot['opt']
-        self.schedule.load_state_dict(snapshot['schedule'])
-        # if isinstance(self.schedule, optim.lr_scheduler.OneCycleLR):
-        #     self.schedule.last_epoch = self.epoch
+        self.opt.load_state_dict(snapshot['opt_state'])
 
     #------------------------#
     # DATALOADER
