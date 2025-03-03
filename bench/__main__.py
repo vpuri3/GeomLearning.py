@@ -185,6 +185,12 @@ def train(cfg, device):
                 one_cycle_final_div_factor=cfg.one_cycle_final_div_factor,
                 one_cycle_three_phase=cfg.one_cycle_three_phase,
             )
+        elif cfg.schedule == 'CosineAnnealingLR':
+            kw = dict(
+                **kw,
+                Schedule='CosineAnnealingLR',
+                lr = cfg.learning_rate,
+            )
 
         trainer = mlutils.Trainer(model, _data, data_, **kw)
         trainer.add_callback('epoch_end', callback)

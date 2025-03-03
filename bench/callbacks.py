@@ -81,6 +81,7 @@ class Callback:
         return
 
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
+        # compute relative error
         pass
 
 #======================================================================#
