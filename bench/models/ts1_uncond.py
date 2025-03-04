@@ -14,70 +14,194 @@ __all__ = [
 # FastGELU = lambda: nn.GELU(approximate='tanh')
 FastGELU = nn.GELU
 
+def gumbel_noise(shape, device=None):
+    u = torch.rand(shape, device=device)
+    return -torch.log(-torch.log(u + 1e-10) + 1e-10)
+
+def mha_slice(q, k, v):
+    scale = q.shape[-1] ** -0.5
+    dots = einsum(q, k, 'h q d, b h k d -> b h q k') * scale
+    attn = F.softmax(dots, dim=-1)
+    out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
+    return out, attn
+
+def mha(q, k, v):
+    scale = q.shape[-1] ** -0.5
+    dots = einsum(q, k, 'b h q d, b h k d -> b h q k') * scale
+    attn = F.softmax(dots, dim=-1)
+    out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
+    return out, attn
+
+def stable_max(logits: torch.Tensor, dim: int = -1, clamp_min: float = -10.0) -> torch.Tensor:
+    """
+    StableMax is an alternative to Softmax that helps mitigate numerical
+    instabilities. It applies an elementwise transform s(x) and normalizes
+    over the specified dimension to produce probabilities that sum to 1.
+
+    s(x) = (x + 1) if x >= 0, or 1 / (1 - x) if x < 0.
+    logits are clamped to a minimum value (clamp_min) to avoid extreme negatives.
+    """
+    # Clamp extreme negative logits
+    logits = torch.clamp(logits, min=clamp_min)
+    s_logits = torch.where(logits >= 0, logits + 1, 1 / (1 - logits))
+    s_sum = s_logits.sum(dim=dim, keepdim=True)
+    return s_logits / (s_sum + 1e-9)
+
 #======================================================================#
 # SLICE ATTENTION
 #======================================================================#
+# class SliceAttention(nn.Module):
+#     def __init__(self, hidden_dim, num_heads=8, dropout=0., num_slices=32):
+#         super().__init__()
+
+#         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
+
+#         self.hidden_dim = hidden_dim
+#         self.num_heads = num_heads
+#         self.num_slices = num_slices
+#         self.head_dim = hidden_dim // num_heads
+#         self.scale = self.head_dim ** -0.5
+#         self.dropout = nn.Dropout(dropout)
+
+#         # (1) Get slice weights
+#         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
+#         self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
+#         torch.nn.init.orthogonal_(self.wtq)
+
+#         # (2) Attention among slice tokens
+#         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
+#         trunc_normal_(self.qkv_proj, std=0.02)
+
+#         # (3) Desclice and return
+#         self.out_q_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
+#         self.out_kv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 2 * self.head_dim))
+#         trunc_normal_(self.out_kv_proj, std=0.02)
+
+#         self.to_out = nn.Sequential(
+#             nn.Linear(self.hidden_dim, self.hidden_dim),
+#             nn.Dropout(dropout)
+#         )
+        
+#     def forward(self, x):
+
+#         # x: [B, N, C]
+        
+#         ### (1) Slicing
+
+#         xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1)
+#         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
+#         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
+
+#         slice_token = mha_slice(self.wtq, xk, xv)
+
+#         ### (2) Attention among slice tokens
+        
+#         qkv_token = einsum(slice_token, self.qkv_proj, 'b h m d, h d e -> b h m e')
+#         q_token, k_token, v_token = qkv_token.chunk(3, dim=-1)
+#         out_token = mha(q_token,k_token, v_token) # [B H M D]
+        
+#         ### (3) Deslice
+
+#         q_out = self.out_q_proj(x)
+#         q_out = rearrange(q_out, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
+        
+#         kv_out = einsum(out_token, self.out_kv_proj, 'b h m d, h d e -> b h m e')
+#         k_out, v_out = kv_out.chunk(2, dim=-1)
+
+#         out = mha(q_out, k_out, v_out)
+#         out = rearrange(out, 'b h n d -> b n (h d)')
+
+#         return self.to_out(out)
+
 class SliceAttention(nn.Module):
     def __init__(self, hidden_dim, num_heads=8, dropout=0., num_slices=32):
         super().__init__()
 
         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
 
-        self.head_dim = hidden_dim // num_heads
+        self.hidden_dim = hidden_dim
         self.num_heads = num_heads
-        self.scale = self.head_dim ** -0.5
+        self.num_slices = num_slices
+        self.head_dim = hidden_dim // num_heads
         self.dropout = nn.Dropout(dropout)
 
-        self.temperature_project = nn.Linear(hidden_dim, self.num_heads)
+        # (1) Get slice weights
+        self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
 
-        self.to_kv_slice = nn.Linear(hidden_dim, 2 * hidden_dim)
-        self.xq = nn.Parameter(torch.empty(num_heads, num_slices, self.head_dim))
-        torch.nn.init.orthogonal_(self.xq)
+        self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
+        # self.wtq = nn.Parameter(torch.empty(self.num_slices, self.head_dim))
+        # self.wtq_bias = nn.Parameter(torch.zeros(self.num_heads, self.num_slices))
+        # self.wtq_bias = nn.Parameter(torch.zeros(self.num_slices))
+        torch.nn.init.orthogonal_(self.wtq)
 
+        self.temperature = nn.Parameter(torch.ones([1, self.num_heads, 1, 1]) * 0.5)
+        # self.temperature = nn.Parameter(torch.ones([1, self.num_heads, 1, 1]) * 1.0)
+        # self.temperature_project = nn.Linear(self.hidden_dim, self.num_heads)
+
+        # (2) Attention among slice tokens
         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
         trunc_normal_(self.qkv_proj, std=0.02)
 
+        # (3) Desclice and return
         self.to_out = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.Dropout(dropout)
         )
+        
+        # differences from OG
+        # 1. Slice query vector [H M D] instead of ([M D] + bias)
+        #    a. Wq [M D]
+        #    b. Wq [M D] + bias [M]
+        # 2. Temperature projection -- removed and got improvement
+        # 3. Attn QKV projector [H D 3D] instead of [H 3D] -- improvement over Transolver
 
+        # OG -> 5.5e-3
+        # (1a) + (2) -> 6.2e-3    
+        # (1b) + (2) -> 4.76e-3
+        # (1a) + (2) + (3) -> 3.84e-3
+        # (1b) + (2) + (3) -> 4.63e-3
+        
     def forward(self, x):
 
         # x: [B, N, C]
         
         ### (1) Slicing
 
-        xk, xv = self.to_kv_slice(x).chunk(2, dim=-1)
+        xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1)
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
 
-        temperature = 0.5 + F.softplus(self.temperature_project(x)) # [B, N, H]
-        temperature = temperature.transpose(1, 2).unsqueeze(-2)     # [B, H, 1, N]
+        # temperature = 0.5 + F.softplus(self.temperature_project(x)) # [B, N, H]
+        # temperature = temperature.transpose(1, 2).unsqueeze(-2)     # [B, H, 1, N]
+        temperature = self.temperature
 
-        slice_scores = einsum(self.xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
+        # (1)
+        slice_scores = einsum(self.wtq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
+        # slice_scores = einsum(self.wtq, xk, 'm d, b h n d -> b h m n') # [B, H, M, N]
+        # slice_scores = slice_scores + self.wtq_bias.unsqueeze(-1)
+        
+        # slice_scores = slice_scores + gumbel_noise(slice_scores.shape, device=slice_scores.device)
+
         slice_weights = F.softmax(slice_scores / temperature, dim=-2)
         slice_norm = slice_weights.sum(dim=-1) # [B, H, M]
-
         slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B, H, M, D]
         slice_token = slice_token / (slice_norm.unsqueeze(-1) + 1e-5)
         
         ### (2) Attention among slice tokens
 
-        qkv_slice_token = einsum(slice_token, self.qkv_proj, 'b h m d, h d e -> b h m e')
-        q_slice_token, k_slice_token, v_slice_token = qkv_slice_token.chunk(3, dim=-1)
+        # (3)
+        qkv_token = einsum(slice_token, self.qkv_proj, 'b h m d, h d e -> b h m e')
 
-        dots = einsum(q_slice_token, k_slice_token, 'b h q d, b h k d -> b h q k') * self.scale
-        attn = F.softmax(dots, dim=-1)
-        attn = self.dropout(attn)
-        out_slice_token = einsum(attn, v_slice_token, 'b h q k, b h k d -> b h q d')
+        q_token, k_token, v_token = qkv_token.chunk(3, dim=-1)
+        out_token, attn_weights = mha(q_token, k_token, v_token)
 
         ### (3) Deslice
 
-        out_x = einsum(out_slice_token, slice_weights, 'b h m d, b h m n -> b h n d')
-        out_x = rearrange(out_x, 'b h n d -> b n (h d)')
-
-        return self.to_out(out_x)
+        out = einsum(out_token, slice_weights, 'b h m d, b h m n -> b h n d')
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        out = self.to_out(out)
+        
+        return out, slice_weights, temperature, attn_weights
 
 #======================================================================#
 # BLOCK
@@ -90,7 +214,7 @@ class Block(nn.Module):
             num_heads: int,
             hidden_dim: int,
             dropout: float,
-            mlp_ratio=4,
+            mlp_ratio=2,
             num_slices=32,
     ):
         super().__init__()
@@ -114,9 +238,11 @@ class Block(nn.Module):
         
     def forward(self, x):
         # x: [B, N, C]
-        x = x + self.att(self.ln1(x))
+        
+        _x, *stats = self.att(self.ln1(x))
+        x = x + _x
         x = x + self.mlp(self.ln2(x))
-        return x
+        return x, *stats
 
 class FinalLayer(nn.Module):
     def __init__(self, hidden_dim, out_dim):
@@ -178,13 +304,28 @@ class TS1Uncond(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward(self, x):
+    def forward(self, x, return_stats: bool=False):
         # x: [B, N, C]
         x = self.x_embedding(x) # [B, N, C]
+
+        if return_stats:
+            slice_weights = []
+            temperature = []
+            attn_weights = []
+
         for block in self.blocks:
-            x = block(x)
+            x, *stats = block(x)
+            if return_stats:
+                slice_weights.append(stats[0])
+                temperature.append(stats[1])
+                attn_weights.append(stats[2])
+
         x = self.final_layer(x)
-        return x
+
+        if return_stats:
+            return x, slice_weights, temperature, attn_weights
+        else:
+            return x
 
 #======================================================================#
 #

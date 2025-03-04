@@ -404,8 +404,13 @@ class Trainer:
 
     def batch_loss(self, batch):
         if self.batch_lossfun is not None:
-            batch = batch.to(self.device)
-            loss = self.batch_lossfun(self.model, batch)
+            if isinstance(batch, tuple) or isinstance(batch, list):
+                batch = [x.to(self.device) for x in batch]
+            elif isinstance(batch, dict):
+                batch = {k: v.to(self.device) for k, v in batch.items()}
+            elif isinstance(batch, torch.Tensor):
+                batch = batch.to(self.device)
+            loss = self.batch_lossfun(self, self.model, batch)
         elif self.gnn_loader:
             batch = batch.to(self.device)
             yh = self.model(batch)

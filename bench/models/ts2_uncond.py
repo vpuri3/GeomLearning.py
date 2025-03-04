@@ -10,6 +10,7 @@ __all__ = [
     "TS2Uncond",
 ]
 
+#======================================================================#
 # # the incremental speedup isn't worth dealing with versioning hell
 # FastGELU = lambda: nn.GELU(approximate='tanh')
 FastGELU = nn.GELU
@@ -31,18 +32,19 @@ class SliceAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # (1) Get slice weights
-        self.wt_k_proj = nn.Linear(hidden_dim, hidden_dim)
-        self.wtq = nn.Parameter(torch.empty(num_heads, num_slices, self.head_dim))
+        self.wt_k_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
         torch.nn.init.orthogonal_(self.wtq)
 
-        self.temperature_project = nn.Linear(hidden_dim, self.num_heads)
+        # self.temperature_project = nn.Linear(hidden_dim, self.num_heads)
+        self.temperature = nn.Parameter(torch.ones([1, self.num_heads, 1, 1]) * 0.5)
 
         # (2) Attention among slice tokens
         self.qkv_proj = nn.Linear(hidden_dim, 3 * hidden_dim)
 
         # (3) Desclice and return
         self.to_out = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.Dropout(dropout)
         )
 
@@ -55,8 +57,9 @@ class SliceAttention(nn.Module):
         wtk = self.wt_k_proj(x)
         wtk = rearrange(wtk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
 
-        temperature = 0.5 + F.softplus(self.temperature_project(x)) # [B, N, H]
-        temperature = temperature.transpose(1, 2).unsqueeze(-2)     # [B, H, 1, N]
+        # temperature = 0.5 + F.softplus(self.temperature_project(x)) # [B, N, H]
+        # temperature = temperature.transpose(1, 2).unsqueeze(-2)     # [B, H, 1, N]
+        temperature = self.temperature
 
         slice_scores = einsum(self.wtq, wtk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
         slice_weights = F.softmax(slice_scores / temperature, dim=-2)

@@ -169,19 +169,30 @@ def train(cfg, device):
             clip_grad=1.,
         )
         
+        L2 = torch.nn.MSELoss()
+        alpha = 1e-0
+        def batch_lossfun(trainer, model, batch):
+            x, y = batch
+            yh, slice_weights, temperature, attn_weights = model(x, return_stats=True)
+
+            l2_loss = L2(yh, y)
+            l1_loss = sum(w.abs().sum() / w.numel() for w in slice_weights) / len(slice_weights)
+
+            loss = l2_loss + alpha * l1_loss
+            return loss
+        
+        kw['batch_lossfun'] = batch_lossfun
+        
         # scheduler
         if cfg.schedule is None or cfg.schedule == 'ConstantLR':
-            kw = dict(**kw, lr=cfg.learning_rate,)
+            kw['lr'] = cfg.learning_rate
         elif cfg.schedule == 'OneCycleLR':
-            kw = dict(
-                **kw,
-                Schedule='OneCycleLR',
-                lr = cfg.learning_rate,
-                one_cycle_pct_start=cfg.one_cycle_pct_start,
-                one_cycle_div_factor=cfg.one_cycle_div_factor,
-                one_cycle_final_div_factor=cfg.one_cycle_final_div_factor,
-                one_cycle_three_phase=cfg.one_cycle_three_phase,
-            )
+            kw['Schedule'] = 'OneCycleLR'
+            kw['lr'] = cfg.learning_rate
+            kw['one_cycle_pct_start'] = cfg.one_cycle_pct_start
+            kw['one_cycle_div_factor'] = cfg.one_cycle_div_factor
+            kw['one_cycle_final_div_factor'] = cfg.one_cycle_final_div_factor
+            kw['one_cycle_three_phase'] = cfg.one_cycle_three_phase
         else:
             kw = dict(**kw, Schedule=cfg.schedule, lr=cfg.learning_rate,)
 

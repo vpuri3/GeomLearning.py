@@ -54,7 +54,8 @@ class Callback:
             if self.save_every is None:
                 self.save_every = trainer.stats_every
             if trainer.epoch == 0:
-                return
+                # return
+                pass
             if (trainer.epoch % self.save_every) != 0:
                 return
         #------------------------#
@@ -81,8 +82,29 @@ class Callback:
         return
 
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
-        # compute relative error
-        pass
+        batch = trainer._data[:]
+        x = batch[0].to(trainer.device)
+        y = batch[1].to(trainer.device)
+        yh, slice_weights, temperature, attn_weights = trainer.model(x, return_stats=True)
+        mse = (yh - y).pow(2).mean()
+        
+        # Compute sparsity of slice weights
+        slice_sparsity = [ (w.abs() < 1e-2).float().mean().item() for w in slice_weights ]
+        attn_sparsity = [ (w.abs() < 1e-2).float().mean().item() for w in attn_weights ]                
+
+        # Compute mean and std of temperature
+        temp_means = [t.mean().item() for t in temperature]
+        temp_stds = [t.std().item() for t in temperature]
+
+        print()
+        print(f"Temperature means per layer: {[round(t, 4) for t in temp_means]}")
+        print(f"Temperature stds per layer: {[round(t, 4) for t in temp_stds]}")
+        print(f"Slice sparsity per layer: {[round(s, 4) for s in slice_sparsity]}. Mean: {sum(slice_sparsity) / len(slice_sparsity):.4f}")
+        print(f"Attn sparsity per layer: {[round(s, 4) for s in attn_sparsity]}. Mean: {sum(attn_sparsity) / len(attn_sparsity):.4f}")
+        print(f"Train MSE: {mse.item():.4f}")
+        print()
+
+        return
 
 #======================================================================#
 #
