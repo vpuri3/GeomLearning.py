@@ -40,6 +40,7 @@ class Trainer:
 
         lr=None,
         weight_decay=None,
+        clip_grad=None,
 
         Opt=None,
         Schedule=None,
@@ -103,7 +104,7 @@ class Trainer:
         self.data_ = data_
 
         self._batch_size = 32 if _batch_size is None else _batch_size
-        self._batch_size_ = len(_data) if _batch_size is None else batch_size_
+        self._batch_size_ = len(_data) if _batch_size_ is None else _batch_size_
         self.batch_size_ = batch_size_
 
         if (data_ is not None) and (batch_size_ is None):
@@ -132,6 +133,7 @@ class Trainer:
             lr = 1e-3
         if weight_decay is None:
             weight_decay = 0.0
+        self.clip_grad = clip_grad
 
         params = self.model.parameters()
 
@@ -169,7 +171,7 @@ class Trainer:
             )
             self.update_schedule_every_epoch = False
         elif Schedule == "CosineAnnealingLR":
-            self.schedule = optim.lr_scheduler.CosineAnnealingLR(self.opt, T_max=self.epochs)
+            self.schedule = optim.lr_scheduler.CosineAnnealingLR(self.opt, T_max=self.epochs, eta_min=1e-6)
             self.update_schedule_every_epoch = True
         elif Schedule is None:
             self.schedule = optim.lr_scheduler.ConstantLR(self.opt, factor=1.0, total_iters=1e10)
@@ -381,6 +383,8 @@ class Trainer:
             loss = self.batch_loss(batch)
             loss.backward()
             self.trigger_callbacks("batch_post_grad")
+            if self.clip_grad is not None:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad)
             self.opt.step()
             self.trigger_callbacks("batch_end")
             self.opt.zero_grad()

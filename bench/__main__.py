@@ -76,10 +76,9 @@ def train(cfg, device):
     # _data, data_ = torch.utils.data.random_split(dataset, [0.80, 0.20])
     
     if GLOBAL_RANK == 0:
-        print(f"Loaded dataset {dataset} with {len(dataset)} cases.")
+        print(f"Loaded {cfg.dataset} dataset with {len(dataset)} cases.")
         print(f"Split into {len(_data)} train and {len(data_)} test cases.")
     
-    dl = torch.utils.data.DataLoader(dataset, batch_size=2, shuffle=True)
     #=================#
     # MODEL
     #=================#
@@ -167,14 +166,12 @@ def train(cfg, device):
             Opt='AdamW', weight_decay=cfg.weight_decay, epochs=cfg.epochs,
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
             lossfun=lossfun,
+            clip_grad=1.,
         )
         
         # scheduler
         if cfg.schedule is None or cfg.schedule == 'ConstantLR':
-            kw = dict(
-                **kw,
-                lr=cfg.learning_rate,
-            )
+            kw = dict(**kw, lr=cfg.learning_rate,)
         elif cfg.schedule == 'OneCycleLR':
             kw = dict(
                 **kw,
@@ -185,12 +182,8 @@ def train(cfg, device):
                 one_cycle_final_div_factor=cfg.one_cycle_final_div_factor,
                 one_cycle_three_phase=cfg.one_cycle_three_phase,
             )
-        elif cfg.schedule == 'CosineAnnealingLR':
-            kw = dict(
-                **kw,
-                Schedule='CosineAnnealingLR',
-                lr = cfg.learning_rate,
-            )
+        else:
+            kw = dict(**kw, Schedule=cfg.schedule, lr=cfg.learning_rate,)
 
         trainer = mlutils.Trainer(model, _data, data_, **kw)
         trainer.add_callback('epoch_end', callback)
@@ -303,8 +296,6 @@ if __name__ == "__main__":
         cfg = Config(**cfg)
         cfg.eval = True
         cfg.train = False
-        cfg.autoreg_start = _cfg.autoreg_start
-        cfg.num_eval_cases = _cfg.num_eval_cases
 
     if DISTRIBUTED:
         torch.distributed.barrier()
