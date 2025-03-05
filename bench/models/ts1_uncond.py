@@ -167,6 +167,7 @@ class SliceAttention(nn.Module):
         
         ### (1) Slicing
 
+        xq = self.wtq
         xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1)
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
@@ -176,8 +177,8 @@ class SliceAttention(nn.Module):
         temperature = self.temperature
 
         # (1)
-        slice_scores = einsum(self.wtq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
-        # slice_scores = einsum(self.wtq, xk, 'm d, b h n d -> b h m n') # [B, H, M, N]
+        slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
+        # slice_scores = einsum(xq, xk, 'm d, b h n d -> b h m n') # [B, H, M, N]
         # slice_scores = slice_scores + self.wtq_bias.unsqueeze(-1)
         
         # slice_scores = slice_scores + gumbel_noise(slice_scores.shape, device=slice_scores.device)

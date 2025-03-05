@@ -21,6 +21,13 @@ def modulate(x, shift, scale):
     '''
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
+def mha(q, k, v):
+    scale = q.shape[-1] ** -0.5
+    dots = einsum(q, k, 'b h q d, b h k d -> b h q k') * scale
+    attn = F.softmax(dots, dim=-1)
+    out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
+    return out, attn
+
 #======================================================================#
 # Embeddings
 #======================================================================#
@@ -75,66 +82,60 @@ class SliceAttention(nn.Module):
 
         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
 
-        self.head_dim = hidden_dim // num_heads
+        self.hidden_dim = hidden_dim
         self.num_heads = num_heads
-        self.scale = self.head_dim ** -0.5
+        self.num_slices = num_slices
+        self.head_dim = hidden_dim // num_heads
         self.dropout = nn.Dropout(dropout)
 
-        self.temperature = nn.Parameter(torch.ones([1, num_heads, 1, 1]) * 0.5)
+        # (1) Get slice weights
+        self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
+        self.wtq = nn.Parameter(torch.empty(self.num_slices, self.head_dim))
+        torch.nn.init.orthogonal_(self.wtq)
+        self.temperature = nn.Parameter(torch.ones([1, self.num_heads, 1, 1]) * 0.5)
 
-        self.to_kv_slice = nn.Linear(hidden_dim, 2 * hidden_dim)
-        self.xq = nn.Parameter(torch.empty(num_heads, num_slices, self.head_dim))
-        torch.nn.init.orthogonal_(self.xq)
-        
-        # TODO: compare with standard MHA
+        # (2) Attention among slice tokens
         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
         trunc_normal_(self.qkv_proj, std=0.02)
 
+        # (3) Desclice and return
         self.to_out = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.Dropout(dropout)
         )
-
-    def forward(self, x, c):
+        
+    def forward(self, x):
 
         # x: [B, N, C]
-        # c: [B, C]
         
-        # TODO: make slice weights dependent on c via query
-
-        # IDEAS:
-        # - Transolver++: Gimble softmax with temperature = 1 + self.temperature_project(x) (Transolver)
-        # - Transolver++: remove xv and use xk for both key and value
-
         ### (1) Slicing
 
-        xk, xv = self.to_kv_slice(x).chunk(2, dim=-1)
+        xq = self.wtq # [M, D]
+        xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1)
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
 
-        slice_scores = einsum(self.xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
-        slice_weights = F.softmax(slice_scores / self.temperature, dim=-2)
+        temperature = self.temperature
+        slice_scores = einsum(xq, xk, 'm d, b h n d -> b h m n') # [B, H, M, N]
+        slice_weights = F.softmax(slice_scores / temperature, dim=-2)
         slice_norm = slice_weights.sum(dim=-1) # [B, H, M]
-
         slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B, H, M, D]
         slice_token = slice_token / (slice_norm.unsqueeze(-1) + 1e-5)
         
         ### (2) Attention among slice tokens
 
-        qkv_slice_token = einsum(slice_token, self.qkv_proj, 'b h m d, h d e -> b h m e')
-        q_slice_token, k_slice_token, v_slice_token = qkv_slice_token.chunk(3, dim=-1)
+        qkv_token = einsum(slice_token, self.qkv_proj, 'b h m d, h d e -> b h m e')
 
-        dots = einsum(q_slice_token, k_slice_token, 'b h q d, b h k d -> b h q k') * self.scale
-        attn = F.softmax(dots, dim=-1)
-        attn = self.dropout(attn)
-        out_slice_token = einsum(attn, v_slice_token, 'b h q k, b h k d -> b h q d')
+        q_token, k_token, v_token = qkv_token.chunk(3, dim=-1)
+        out_token, attn_weights = mha(q_token, k_token, v_token)
 
         ### (3) Deslice
 
-        out_x = einsum(out_slice_token, slice_weights, 'b h m d, b h m n -> b h n d')
-        out_x = rearrange(out_x, 'b h n d -> b n (h d)')
-
-        return self.to_out(out_x)
+        out = einsum(out_token, slice_weights, 'b h m d, b h m n -> b h n d')
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        out = self.to_out(out)
+        
+        return out
 
 #======================================================================#
 # BLOCK
@@ -178,7 +179,7 @@ class Block(nn.Module):
         # x: [B, N, C]
         # c: [B, C]
         shift1, scale1, gate1, shift2, scale2, gate2 = self.adaLN_modulation(c).chunk(6, dim=1)
-        x = x + gate1.unsqueeze(1) * self.att(modulate(self.ln1(x), shift1, scale1), c)
+        x = x + gate1.unsqueeze(1) * self.att(modulate(self.ln1(x), shift1, scale1))
         x = x + gate2.unsqueeze(1) * self.mlp(modulate(self.ln2(x), shift2, scale2))
         return x
 

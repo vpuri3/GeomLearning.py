@@ -410,6 +410,8 @@ class Trainer:
                 batch = {k: v.to(self.device) for k, v in batch.items()}
             elif isinstance(batch, torch.Tensor):
                 batch = batch.to(self.device)
+            else:
+                batch = batch.to(self.device)
             loss = self.batch_lossfun(self, self.model, batch)
         elif self.gnn_loader:
             batch = batch.to(self.device)

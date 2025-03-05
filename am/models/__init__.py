@@ -9,7 +9,6 @@ from .ts2_uncond  import * # Slice attention2
 
 # Conditioned
 from .ts1 import * # Physics attention + AdaLN conditioning
-from .ts2 import * # Slice attention + AdaLN conditioning
-from .ts3 import * # Slice attention (+ temperature) + AdaLN conditioning
-from .ts4 import * # Slice attention (+ temperature) + slice query conditioning
+from .ts2 import * # Slice attention + AdaLN conditioning (query size [M, D])
+from .ts3 import * # Slice attention + slice query conditioning (query size [M, D])
 #

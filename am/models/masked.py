@@ -25,7 +25,7 @@ class MaskedLoss(torch.nn.Module):
         self.mask = mask
         self.lossfun = nn.MSELoss()
 
-    def forward(self, model, batch):
+    def forward(self, trainer, model, batch):
         yh = model(batch)
 
         # (1)

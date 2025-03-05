@@ -127,13 +127,6 @@ def train_timeseries(cfg, device):
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
             num_slices=cfg.tra_num_slices,
         )
-    elif cfg.TRA == 4:
-        model = am.TS4(
-            in_dim=ci, out_dim=co,
-            n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
-            n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
-            num_slices=cfg.tra_num_slices,
-        )
     else:
         print(f"No model selected. Choose between GNN or TRA.")
         raise NotImplementedError()
