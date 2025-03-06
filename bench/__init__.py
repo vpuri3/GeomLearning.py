@@ -1,6 +1,7 @@
 #
 from .utils import *
 from .models import *
+from .dataset import *
 from .callbacks import *
 
 # Set non-interactive backend globally

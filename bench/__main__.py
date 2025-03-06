@@ -18,7 +18,7 @@ MACHINE = socket.gethostname()
 
 if MACHINE == "eagle":
     # VDEL Eagle - 1 node: 4x 2080Ti
-    DATADIR_BASE = '/mnt/hdd1/vedantpu/data/GeoFNO/'
+    DATADIR_BASE = '/mnt/hdd1/vedantpu/data/'
 elif MACHINE.startswith("gpu-node-"):
     # MAIL GPU - 1 node: 8x 2080Ti
     DATADIR_BASE = '/home/vedantpu/GeomLearning.py/data/'
@@ -32,7 +32,7 @@ CASEDIR = os.path.join(PROJDIR, 'out', 'bench')
 os.makedirs(CASEDIR, exist_ok=True)
 
 #======================================================================#
-def train(cfg, device):
+def main(cfg, device):
     DISTRIBUTED = mlutils.is_torchrun()
     GLOBAL_RANK = int(os.environ['RANK']) if DISTRIBUTED else 0
 
@@ -42,79 +42,60 @@ def train(cfg, device):
     # DATA
     #=================#
     
-    if cfg.dataset == 'elasticity':
-        import numpy as np
-
-        DATADIR = os.path.join(DATADIR_BASE, 'elasticity')
-        PATH_Sigma = os.path.join(DATADIR, 'Meshes', 'Random_UnitCell_sigma_10.npy')
-        PATH_XY = os.path.join(DATADIR, 'Meshes', 'Random_UnitCell_XY_10.npy')
-
-        input_s = np.load(PATH_Sigma)
-        input_s = torch.tensor(input_s, dtype=torch.float).permute(1, 0).unsqueeze(-1)
-        input_xy = np.load(PATH_XY)
-        input_xy = torch.tensor(input_xy, dtype=torch.float).permute(2, 0, 1)
-        
-        print(input_xy.shape, input_s.shape)
-        
-        ntrain = 1000
-        ntest  = 200
-        
-        y_normalizer = bench.UnitTransformer(input_s[:ntrain])
-        input_s = y_normalizer.encode(input_s)
-
-        dataset = torch.utils.data.TensorDataset(input_xy, input_s)
-        _data = torch.utils.data.Subset(dataset, range(ntrain))
-        data_ = torch.utils.data.Subset(dataset, range(len(dataset)-ntest, len(dataset)))
-
-        ci = 2
-        co = 1
-
+    _data, data_ = bench.load_dataset(cfg.dataset, DATADIR_BASE)
+    
+    if cfg.dataset in ['elasticity', 'darcy']:
+        c_in = 2
+        c_out = 1
+        cond = False
+    elif cfg.dataset in ['airfoil', 'cylinder_flow']:
+        c_in = 2
+        c_edge = 2
+        c_out = 2
+        cond = True
     else:
         print(f"Dataset {cfg.dataset} not found.")
         exit()
 
-    # _data, data_ = torch.utils.data.random_split(dataset, [0.80, 0.20])
-    
     if GLOBAL_RANK == 0:
-        print(f"Loaded {cfg.dataset} dataset with {len(dataset)} cases.")
-        print(f"Split into {len(_data)} train and {len(data_)} test cases.")
+        print(f"Loaded {cfg.dataset} dataset with {len(_data)} train and {len(data_)} test cases.")
     
     #=================#
     # MODEL
     #=================#
 
-    if cfg.cond:
-        if cfg.TRA == 0:
+    if cond:
+        if cfg.model_type == 0:
             model = bench.Transolver(
-                space_dim=ci+2, out_dim=co, fun_dim=0,
+                space_dim=c_in+2, out_dim=c_out, fun_dim=0,
                 n_hidden=cfg.width, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 slice_num=cfg.num_slices,
             )
-        elif cfg.TRA == 1:
+        elif cfg.model_type == 1:
             model = bench.TS1(
-                in_dim=ci, out_dim=co,
+                in_dim=c_in, out_dim=c_out,
                 n_hidden=cfg.width, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
-        elif cfg.TRA == 2:
+        elif cfg.model_type == 2:
             model = bench.TS2(
-                in_dim=ci, out_dim=co,
+                in_dim=c_in, out_dim=c_out,
                 n_hidden=cfg.width, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
-        elif cfg.TRA == 3:
+        elif cfg.model_type == 3:
             model = bench.TS3(
-                in_dim=ci, out_dim=co,
+                in_dim=c_in, out_dim=c_out,
                 n_hidden=cfg.width, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
-        elif cfg.TRA == 4:
+        elif cfg.model_type == 4:
             model = bench.TS4(
-                in_dim=ci, out_dim=co,
+                in_dim=c_in, out_dim=c_out,
                 n_hidden=cfg.width, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
@@ -123,27 +104,29 @@ def train(cfg, device):
             print(f"No conditioned model selected.")
             raise NotImplementedError()
     else:
-        if cfg.TRA == 0:
+        if cfg.model_type == 0:
             model = bench.Transolver(
-                space_dim=ci, out_dim=co, fun_dim=0,
+                space_dim=c_in, out_dim=c_out, fun_dim=0,
                 n_hidden=cfg.width, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 slice_num=cfg.num_slices,
             )
-        elif cfg.TRA == 1:
+        elif cfg.model_type == 1:
             model = bench.TS1Uncond(
-                in_dim=ci, out_dim=co,
+                in_dim=c_in, out_dim=c_out,
                 n_hidden=cfg.width, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
-        elif cfg.TRA == 2:
+        elif cfg.model_type == 2:
             model = bench.TS2Uncond(
-                in_dim=ci, out_dim=co,
+                in_dim=c_in, out_dim=c_out,
                 n_hidden=cfg.width, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
+        elif cfg.model_type == 999:
+            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.width, cfg.num_layers)
         else:
             print(f"No unconditioned model selected.")
             raise NotImplementedError()
@@ -169,19 +152,19 @@ def train(cfg, device):
             clip_grad=1.,
         )
         
-        L2 = torch.nn.MSELoss()
-        alpha = 1e-0
-        def batch_lossfun(trainer, model, batch):
-            x, y = batch
-            yh, slice_weights, temperature, attn_weights = model(x, return_stats=True)
+        # L2 = torch.nn.MSELoss()
+        # alpha = 1e-0
+        # def batch_lossfun(trainer, model, batch):
+        #     x, y = batch
+        #     yh, slice_weights, temperature, attn_weights = model(x, return_stats=True)
 
-            l2_loss = L2(yh, y)
-            l1_loss = sum(w.abs().sum() / w.numel() for w in slice_weights) / len(slice_weights)
+        #     l2_loss = L2(yh, y)
+        #     l1_loss = sum(w.abs().sum() / w.numel() for w in slice_weights) / len(slice_weights)
 
-            loss = l2_loss + alpha * l1_loss
-            return loss
+        #     loss = l2_loss + alpha * l1_loss
+        #     return loss
         
-        kw['batch_lossfun'] = batch_lossfun
+        # kw['batch_lossfun'] = batch_lossfun
         
         # scheduler
         if cfg.schedule is None or cfg.schedule == 'ConstantLR':
@@ -234,7 +217,7 @@ class Config:
     seed: int = 123
 
     # model
-    TRA: int = 0 # 0: Transolver, 1: TS1, ...
+    model_type: int = 0 # 0: Transolver, 1: TS1, ..., 999: MeshGraphNet
     width: int = 128
     num_layers: int = 5
     num_heads: int = 8
@@ -243,15 +226,15 @@ class Config:
 
     # training arguments
     epochs: int = 100
-    learning_rate: float = 1e-3
+    batch_size: int = 1
     weight_decay: float = 1e-3
+    learning_rate: float = 1e-3
     schedule: str = None
     one_cycle_pct_start:float = 0.3
     one_cycle_div_factor: float = 25
     one_cycle_final_div_factor: float = 1e4
     one_cycle_three_phase: bool = True
     
-    batch_size: int = 1
 
 if __name__ == "__main__":
     
@@ -311,7 +294,7 @@ if __name__ == "__main__":
     if DISTRIBUTED:
         torch.distributed.barrier()
 
-    train(cfg, device)
+    main(cfg, device)
 
     #===============#
     mlutils.dist_finalize()
