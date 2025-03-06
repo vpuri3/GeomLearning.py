@@ -128,8 +128,8 @@ class SliceAttention(nn.Module):
         # (1) Get slice weights
         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
 
-        self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
-        # self.wtq = nn.Parameter(torch.empty(self.num_slices, self.head_dim))
+        # self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
+        self.wtq = nn.Parameter(torch.empty(self.num_slices, self.head_dim))
         # self.wtq_bias = nn.Parameter(torch.zeros(self.num_heads, self.num_slices))
         # self.wtq_bias = nn.Parameter(torch.zeros(self.num_slices))
         torch.nn.init.orthogonal_(self.wtq)
@@ -177,8 +177,8 @@ class SliceAttention(nn.Module):
         temperature = self.temperature
 
         # (1)
-        slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
-        # slice_scores = einsum(xq, xk, 'm d, b h n d -> b h m n') # [B, H, M, N]
+        # slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
+        slice_scores = einsum(xq, xk, 'm d, b h n d -> b h m n') # [B, H, M, N]
         # slice_scores = slice_scores + self.wtq_bias.unsqueeze(-1)
         
         # slice_scores = slice_scores + gumbel_noise(slice_scores.shape, device=slice_scores.device)
