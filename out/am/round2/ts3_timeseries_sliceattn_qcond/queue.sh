@@ -51,7 +51,7 @@ torchrun --master_port 29501 \
     --tra_num_heads 8 --tra_num_slices 32 --tra_num_layers 8 \
     --schedule OneCycleLR --learning_rate 1e-3 --weight_decay 1e-2
 
-EXP_NAME="ts7" # 
+EXP_NAME="ts7" #  ckpt10 -> 2.9e-4
 torchrun --master_port 29501 \
     --nproc_per_node gpu -m am --exp_name ${EXP_NAME} --train true \
     --epochs 200 --timeseries true --sdf true --TRA 3 --tra_width 128 \
