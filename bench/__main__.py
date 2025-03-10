@@ -150,25 +150,10 @@ def main(cfg, device):
             device=device, gnn_loader=False, stats_every=cfg.epochs//10,
             Opt='AdamW', weight_decay=cfg.weight_decay, epochs=cfg.epochs,
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
-            lossfun=lossfun,
-            clip_grad=1.,
+            lossfun=lossfun, clip_grad=1.,
         )
         
-        # L2 = torch.nn.MSELoss()
-        # alpha = 1e-0
-        # def batch_lossfun(trainer, model, batch):
-        #     x, y = batch
-        #     yh, slice_weights, temperature, attn_weights = model(x, return_stats=True)
-
-        #     l2_loss = L2(yh, y)
-        #     l1_loss = sum(w.abs().sum() / w.numel() for w in slice_weights) / len(slice_weights)
-
-        #     loss = l2_loss + alpha * l1_loss
-        #     return loss
-        
-        # kw['batch_lossfun'] = batch_lossfun
-        
-        # scheduler
+        # LR scheduler
         if cfg.schedule is None or cfg.schedule == 'ConstantLR':
             kw['lr'] = cfg.learning_rate
         elif cfg.schedule == 'OneCycleLR':
@@ -180,7 +165,20 @@ def main(cfg, device):
             kw['one_cycle_three_phase'] = cfg.one_cycle_three_phase
         else:
             kw = dict(**kw, Schedule=cfg.schedule, lr=cfg.learning_rate,)
+            
+        # Noise schedule
+        kw['noise_schedule'] = cfg.noise_schedule
+        kw['noise_init'] = cfg.noise_init
 
+        def batch_lossfun(trainer, model, batch):
+            x, y = batch
+            noise = trainer.noise_schedule.get_current_noise()
+            yh = model(x, noise=noise)
+            yh = model(x)
+            return lossfun(yh, y)
+        
+        kw['batch_lossfun'] = batch_lossfun
+        
         trainer = mlutils.Trainer(model, _data, data_, **kw)
         trainer.add_callback('epoch_end', callback)
 
@@ -236,7 +234,9 @@ class Config:
     one_cycle_div_factor: float = 25
     one_cycle_final_div_factor: float = 40
     one_cycle_three_phase: bool = False
-    
+    noise_schedule: str = 'linear'
+    noise_init: float = 0.1
+
 
 if __name__ == "__main__":
     

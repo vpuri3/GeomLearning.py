@@ -1,8 +1,12 @@
 #
 import torch
 
-__all__ = ['IdentityTransformer', 'UnitTransformer']
+__all__ = [
+    'IdentityTransformer',
+    'UnitTransformer',
+]
 
+#======================================================================#
 class IdentityTransformer():
     def __init__(self, X):
         self.mean = X.mean(dim=0, keepdim=True)
@@ -40,6 +44,7 @@ class UnitTransformer():
             else:
                 return (X - self.mean[:, component]) / self.std[:, component]
 
+#======================================================================#
 class UnitGaussianNormalizer(object):
     def __init__(self, x, eps=0.00001, time_last=True):
         super(UnitGaussianNormalizer, self).__init__()
@@ -110,3 +115,5 @@ class TestLoss():
 
     def __call__(self, x, y):
         return self.rel(x, y)
+#======================================================================#
+#

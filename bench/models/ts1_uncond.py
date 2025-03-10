@@ -59,18 +59,10 @@ class SliceAttention(nn.Module):
         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
 
         self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
-        # self.wtq_bias = nn.Parameter(torch.zeros(self.num_heads, self.num_slices))
-        
-        # self.wtq = nn.Parameter(torch.empty(self.num_slices, self.head_dim))
-        # self.wtq_bias = nn.Parameter(torch.zeros(self.num_slices))
-
-        torch.nn.init.orthogonal_(self.wtq)
-        
+        trunc_normal_(self.wtq, std=0.02)
         self.register_buffer('wtq_bias', torch.zeros(self.num_heads, self.num_slices))
 
         self.temperature = nn.Parameter(torch.ones([1, self.num_heads, 1, 1]) * 0.5)
-        # self.temperature = nn.Parameter(torch.ones([1, self.num_heads, self.num_slices, 1]) * 0.5)
-        # self.temperature_project = nn.Linear(self.hidden_dim, self.num_heads)
 
         # (2) Attention among slice tokens
         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
@@ -82,20 +74,7 @@ class SliceAttention(nn.Module):
             nn.Dropout(dropout)
         )
         
-        # differences from OG
-        # 1. Slice query vector [H M D] instead of ([M D] + bias)
-        #    a. Wq [M D]
-        #    b. Wq [M D] + bias [M]
-        # 2. Temperature projection -- removed and got improvement
-        # 3. Attn QKV projector [H D 3D] instead of [H 3D] -- improvement over Transolver
-
-        # OG -> 5.53e-3
-        # (1a) + (2) -> 6.2e-3    
-        # (1b) + (2) -> 4.76e-3
-        # (1a) + (2) + (3) -> 3.84e-3
-        # (1b) + (2) + (3) -> 4.63e-3
-        
-    def forward(self, x):
+    def forward(self, x, noise=None):
 
         # x: [B, N, C]
         
@@ -106,20 +85,22 @@ class SliceAttention(nn.Module):
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
 
-        # temperature = 0.5 + F.softplus(self.temperature_project(x)) # [B, N, H]
-        # temperature = temperature.transpose(1, 2).unsqueeze(-2)     # [B, H, 1, N]
+        bias = self.wtq_bias.unsqueeze(-1)
         temperature = self.temperature * 0. + 1.
 
         # (1)
         slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
-        # slice_scores = einsum(xq, xk, 'm d, b h n d -> b h m n') # [B, H, M, N]
-        slice_scores = slice_scores + self.wtq_bias.unsqueeze(-1)
-
-        # slice_scores = slice_scores + gumbel_noise(slice_scores.shape, device=slice_scores.device)
-
-        # TopK + dynamic bias load balancing (deepseek v3)
+        slice_scores = slice_scores + bias
         
-        # can be made much more efficient.
+        if self.training:
+            if noise is not None:
+                slice_scores = slice_scores + noise * torch.rand_like(slice_scores)
+                # slice_scores = slice_scores + noise * torch.randn_like(slice_scores)
+                # slice_scores = slice_scores + noise * gumbel_noise(slice_scores.shape, device=slice_scores.device)
+                pass
+            pass
+
+        # TopK (can be made much more efficient)
         k_val = self.num_slices // 4
         topk_scores, topk_indices = slice_scores.topk(k_val, dim=-2)
         with torch.no_grad():
@@ -131,13 +112,13 @@ class SliceAttention(nn.Module):
         slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B, H, M, D]
         slice_token = slice_token / (slice_norm + 1e-5)
         
+        # Dynamic bias load balancing (like deepseek v3)
         if self.training:
             slice_usage = slice_weights.mean(dim=-1)
             target_usage = 1 / self.num_slices
             with torch.no_grad():
                 bias_update = (target_usage - slice_usage).mean(dim=0)
                 self.wtq_bias.data += 0.01 * bias_update
-            pass
         
         ### (2) Attention among slice tokens
 
@@ -151,7 +132,7 @@ class SliceAttention(nn.Module):
         out = rearrange(out, 'b h n d -> b n (h d)')
         out = self.to_out(out)
         
-        return out, slice_weights, temperature, attn_weights
+        return out, slice_weights, temperature, bias, attn_weights
 
 #======================================================================#
 # BLOCK
@@ -186,10 +167,10 @@ class Block(nn.Module):
             drop=dropout,
         )
         
-    def forward(self, x):
+    def forward(self, x, noise=None):
         # x: [B, N, C]
         
-        _x, *stats = self.att(self.ln1(x))
+        _x, *stats = self.att(self.ln1(x), noise=noise)
         x = x + _x
         x = x + self.mlp(self.ln2(x))
         return x, *stats
@@ -257,26 +238,28 @@ class TS1Uncond(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward(self, x, return_stats: bool=False):
+    def forward(self, x, noise=None, return_stats: bool=False):
         # x: [B, N, C]
         x = self.x_embedding(x) # [B, N, C]
 
         if return_stats:
             slice_weights = []
             temperature = []
+            bias = []
             attn_weights = []
 
         for block in self.blocks:
-            x, *stats = block(x)
+            x, *stats = block(x, noise=noise)
             if return_stats:
                 slice_weights.append(stats[0])
                 temperature.append(stats[1])
-                attn_weights.append(stats[2])
+                bias.append(stats[2])
+                attn_weights.append(stats[3])
 
         x = self.final_layer(x)
 
         if return_stats:
-            return x, slice_weights, temperature, attn_weights
+            return x, slice_weights, temperature, bias, attn_weights
         else:
             return x
 
