@@ -14,24 +14,6 @@ __all__ = [
 # FastGELU = lambda: nn.GELU(approximate='tanh')
 FastGELU = nn.GELU
 
-def gumbel_noise(shape, device=None):
-    u = torch.rand(shape, device=device)
-    return -torch.log(-torch.log(u + 1e-10) + 1e-10)
-
-def mha_slice(q, k, v):
-    scale = q.shape[-1] ** -0.5
-    dots = einsum(q, k, 'h q d, b h k d -> b h q k') * scale
-    attn = F.softmax(dots, dim=-1)
-    out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
-    return out, attn
-
-def mha(q, k, v):
-    scale = q.shape[-1] ** -0.5
-    dots = einsum(q, k, 'b h q d, b h k d -> b h q k') * scale
-    attn = F.softmax(dots, dim=-1)
-    out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
-    return out, attn
-
 def stable_max(logits: torch.Tensor, dim: int = -1, clamp_min: float = -10.0) -> torch.Tensor:
     """
     StableMax is an alternative to Softmax that helps mitigate numerical
@@ -47,72 +29,20 @@ def stable_max(logits: torch.Tensor, dim: int = -1, clamp_min: float = -10.0) ->
     s_sum = s_logits.sum(dim=dim, keepdim=True)
     return s_logits / (s_sum + 1e-9)
 
+def gumbel_noise(shape, device=None):
+    u = torch.rand(shape, device=device)
+    return -torch.log(-torch.log(u + 1e-10) + 1e-10)
+
+def mha(q, k, v):
+    scale = q.shape[-1] ** -0.5
+    dots = einsum(q, k, 'b h q d, b h k d -> b h q k') * scale
+    attn = F.softmax(dots, dim=-1)
+    out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
+    return out, attn
+
 #======================================================================#
 # SLICE ATTENTION
 #======================================================================#
-# class SliceAttention(nn.Module):
-#     def __init__(self, hidden_dim, num_heads=8, dropout=0., num_slices=32):
-#         super().__init__()
-
-#         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
-
-#         self.hidden_dim = hidden_dim
-#         self.num_heads = num_heads
-#         self.num_slices = num_slices
-#         self.head_dim = hidden_dim // num_heads
-#         self.scale = self.head_dim ** -0.5
-#         self.dropout = nn.Dropout(dropout)
-
-#         # (1) Get slice weights
-#         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
-#         self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
-#         torch.nn.init.orthogonal_(self.wtq)
-
-#         # (2) Attention among slice tokens
-#         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
-#         trunc_normal_(self.qkv_proj, std=0.02)
-
-#         # (3) Desclice and return
-#         self.out_q_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
-#         self.out_kv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 2 * self.head_dim))
-#         trunc_normal_(self.out_kv_proj, std=0.02)
-
-#         self.to_out = nn.Sequential(
-#             nn.Linear(self.hidden_dim, self.hidden_dim),
-#             nn.Dropout(dropout)
-#         )
-        
-#     def forward(self, x):
-
-#         # x: [B, N, C]
-        
-#         ### (1) Slicing
-
-#         xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1)
-#         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
-#         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
-
-#         slice_token = mha_slice(self.wtq, xk, xv)
-
-#         ### (2) Attention among slice tokens
-        
-#         qkv_token = einsum(slice_token, self.qkv_proj, 'b h m d, h d e -> b h m e')
-#         q_token, k_token, v_token = qkv_token.chunk(3, dim=-1)
-#         out_token = mha(q_token,k_token, v_token) # [B H M D]
-        
-#         ### (3) Deslice
-
-#         q_out = self.out_q_proj(x)
-#         q_out = rearrange(q_out, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
-        
-#         kv_out = einsum(out_token, self.out_kv_proj, 'b h m d, h d e -> b h m e')
-#         k_out, v_out = kv_out.chunk(2, dim=-1)
-
-#         out = mha(q_out, k_out, v_out)
-#         out = rearrange(out, 'b h n d -> b n (h d)')
-
-#         return self.to_out(out)
-
 class SliceAttention(nn.Module):
     def __init__(self, hidden_dim, num_heads=8, dropout=0., num_slices=32):
         super().__init__()
@@ -128,14 +58,18 @@ class SliceAttention(nn.Module):
         # (1) Get slice weights
         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
 
-        # self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
-        self.wtq = nn.Parameter(torch.empty(self.num_slices, self.head_dim))
+        self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
         # self.wtq_bias = nn.Parameter(torch.zeros(self.num_heads, self.num_slices))
+        
+        # self.wtq = nn.Parameter(torch.empty(self.num_slices, self.head_dim))
         # self.wtq_bias = nn.Parameter(torch.zeros(self.num_slices))
+
         torch.nn.init.orthogonal_(self.wtq)
+        
+        self.register_buffer('wtq_bias', torch.zeros(self.num_heads, self.num_slices))
 
         self.temperature = nn.Parameter(torch.ones([1, self.num_heads, 1, 1]) * 0.5)
-        # self.temperature = nn.Parameter(torch.ones([1, self.num_heads, 1, 1]) * 1.0)
+        # self.temperature = nn.Parameter(torch.ones([1, self.num_heads, self.num_slices, 1]) * 0.5)
         # self.temperature_project = nn.Linear(self.hidden_dim, self.num_heads)
 
         # (2) Attention among slice tokens
@@ -155,7 +89,7 @@ class SliceAttention(nn.Module):
         # 2. Temperature projection -- removed and got improvement
         # 3. Attn QKV projector [H D 3D] instead of [H 3D] -- improvement over Transolver
 
-        # OG -> 5.5e-3
+        # OG -> 5.53e-3
         # (1a) + (2) -> 6.2e-3    
         # (1b) + (2) -> 4.76e-3
         # (1a) + (2) + (3) -> 3.84e-3
@@ -174,25 +108,40 @@ class SliceAttention(nn.Module):
 
         # temperature = 0.5 + F.softplus(self.temperature_project(x)) # [B, N, H]
         # temperature = temperature.transpose(1, 2).unsqueeze(-2)     # [B, H, 1, N]
-        temperature = self.temperature
+        temperature = self.temperature * 0. + 1.
 
         # (1)
-        # slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
-        slice_scores = einsum(xq, xk, 'm d, b h n d -> b h m n') # [B, H, M, N]
-        # slice_scores = slice_scores + self.wtq_bias.unsqueeze(-1)
-        
+        slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
+        # slice_scores = einsum(xq, xk, 'm d, b h n d -> b h m n') # [B, H, M, N]
+        slice_scores = slice_scores + self.wtq_bias.unsqueeze(-1)
+
         # slice_scores = slice_scores + gumbel_noise(slice_scores.shape, device=slice_scores.device)
 
+        # TopK + dynamic bias load balancing (deepseek v3)
+        
+        # can be made much more efficient.
+        k_val = self.num_slices // 4
+        topk_scores, topk_indices = slice_scores.topk(k_val, dim=-2)
+        with torch.no_grad():
+            slice_scores.fill_(-1e6)
+            slice_scores.scatter_(-2, topk_indices, topk_scores)
+
         slice_weights = F.softmax(slice_scores / temperature, dim=-2)
-        slice_norm = slice_weights.sum(dim=-1) # [B, H, M]
+        slice_norm = slice_weights.sum(dim=-1, keepdim=True) # [B, H, M]
         slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B, H, M, D]
-        slice_token = slice_token / (slice_norm.unsqueeze(-1) + 1e-5)
+        slice_token = slice_token / (slice_norm + 1e-5)
+        
+        if self.training:
+            slice_usage = slice_weights.mean(dim=-1)
+            target_usage = 1 / self.num_slices
+            with torch.no_grad():
+                bias_update = (target_usage - slice_usage).mean(dim=0)
+                self.wtq_bias.data += 0.01 * bias_update
+            pass
         
         ### (2) Attention among slice tokens
 
-        # (3)
         qkv_token = einsum(slice_token, self.qkv_proj, 'b h m d, h d e -> b h m e')
-
         q_token, k_token, v_token = qkv_token.chunk(3, dim=-1)
         out_token, attn_weights = mha(q_token, k_token, v_token)
 
@@ -262,34 +211,37 @@ class TS1Uncond(nn.Module):
     def __init__(self,
         in_dim,
         out_dim,
-        n_layers=5,
-        n_hidden=128,
+        num_layers=5,
+        hidden_dim=128,
         dropout=0,
-        n_head=8,
+        num_heads=8,
         mlp_ratio=1,
         num_slices=32,
     ):
         super().__init__()
         
+        self.num_layers = num_layers
+        self.num_slices = num_slices
+
         self.x_embedding = Mlp(
             in_dim,
-            n_hidden * 2,
-            n_hidden,
+            hidden_dim * 2,
+            hidden_dim,
             act_layer=FastGELU,
             drop=dropout,
         )
         
         self.blocks = nn.ModuleList([
             Block(
-                num_heads=n_head,
-                hidden_dim=n_hidden,
+                num_heads=num_heads,
+                hidden_dim=hidden_dim,
                 dropout=dropout,
                 mlp_ratio=mlp_ratio,
                 num_slices=num_slices,
             )
-            for _ in range(n_layers)
+            for _ in range(num_layers)
         ])
-        self.final_layer = FinalLayer(n_hidden, out_dim)
+        self.final_layer = FinalLayer(hidden_dim, out_dim)
 
         self.initialize_weights()
 

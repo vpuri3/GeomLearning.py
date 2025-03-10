@@ -2,6 +2,7 @@
 import os
 import json
 
+import gc
 import torch
 import shutil
 from tqdm import tqdm
@@ -10,6 +11,7 @@ import mlutils
 
 __all__ = [
     'Callback',
+    'TSCallback',
 ]
 
 #======================================================================#
@@ -80,29 +82,89 @@ class Callback:
         self.final = False
 
         return
-
+    
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
-        batch = trainer._data[:]
-        x = batch[0].to(trainer.device)
-        y = batch[1].to(trainer.device)
-        yh, slice_weights, temperature, attn_weights = trainer.model(x, return_stats=True)
-        mse = (yh - y).pow(2).mean()
+        pass
+
+#======================================================================#
+class TSCallback(Callback):
+    # def __init__(self, case_dir: str, save_every=None):
+    #     super().__init__(case_dir, save_every)
+
+    @torch.no_grad()
+    def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
         
-        # Compute sparsity of slice weights
-        slice_sparsity = [ (w.abs() < 1e-2).float().mean().item() for w in slice_weights ]
-        attn_sparsity = [ (w.abs() < 1e-2).float().mean().item() for w in attn_weights ]                
+        trainer.model.eval()
+        
+        N, MSE = 0, 0.0
+        slice_weights = [[] for _ in range(trainer.model.num_layers)]
+        attn_weights = [[] for _ in range(trainer.model.num_layers)]
+        temperature = [[] for _ in range(trainer.model.num_layers)]
 
-        # Compute mean and std of temperature
-        temp_means = [t.mean().item() for t in temperature]
-        temp_stds = [t.std().item() for t in temperature]
+        for batch in trainer._loader_:
+            x = batch[0].to(trainer.device)
+            y = batch[1].to(trainer.device)
+            yh, swt, tmp, att = trainer.model(x, return_stats=True)
+            
+            n = trainer.get_batch_size(batch)
+            N += n
+            MSE += ((yh - y).pow(2).mean() * n).item()
+            for i in range(trainer.model.num_layers):
+                slice_weights[i].append(swt[i].detach().cpu())
+                attn_weights[i].append(att[i].detach().cpu())
+                temperature[i].append(tmp[i].detach().cpu())
+                
+            del x, y, yh, swt, tmp, att
+
+        MSE = MSE / N
+        slice_weights = [torch.cat(slice_weights[i], dim=0) for i in range(trainer.model.num_layers)]
+        attn_weights = [torch.cat(attn_weights[i], dim=0) for i in range(trainer.model.num_layers)]
+        temperature = [torch.cat(temperature[i], dim=0) for i in range(trainer.model.num_layers)]
+
+        # Attention utilization (number of non-zero attn weights)
+        attn_utilization = [(w > 1e-2).sum(dim=-1).float().mean().item() / trainer.model.num_slices for w in attn_weights ]                
+        
+        print()
+        print(f"Train MSE: {MSE:.8f}")
+        print(f"Attn utilization: {[round(s, 4) for s in attn_utilization]}. Mean: {sum(attn_utilization) / len(attn_utilization):.4f}")
+        print()
+
+        print(f"Temperature stats:")
+        print(f"  Mean: {[round(t.mean().item(), 4) for t in temperature]}")
+        print(f"  Std : {[round(t.std().item(), 4) for t in temperature]}")
+        print(f"  Min : {[round(t.min().item(), 4) for t in temperature]}")
+        print(f"  Max : {[round(t.max().item(), 4) for t in temperature]}")
+
+        # Slice sparsity: what proportion of slices are invoked per point
+        slice_sparsity = [(w < 1e-2).sum(dim=-2).float().mean().item() * 100 / trainer.model.num_slices for w in slice_weights]
+        
+        # Slice utilization (how evenly are slices used)
+        target_use = 1 / trainer.model.num_slices
+        threshold = 0.5 * target_use
+        slice_use = [w.mean(dim=-1) for w in slice_weights] # [B H M]
+        underused = [(slice_use[i] < (target_use - threshold)).float().mean().item() * 100 for i in range(trainer.model.num_layers)]
+        overused = [(slice_use[i] > (target_use + threshold)).float().mean().item() * 100 for i in range(trainer.model.num_layers)]
+        
+        # print(f"Slice utilization: How evenly are slices used?")
+        # print(f"Want every slice to be used equally often, avoiding scenarios where")
+        # print(f"some slices are always ignored (underutilized) or overly relied upon (overutilized).")
 
         print()
-        print(f"Temperature means per layer: {[round(t, 4) for t in temp_means]}")
-        print(f"Temperature stds per layer: {[round(t, 4) for t in temp_stds]}")
-        print(f"Slice sparsity per layer: {[round(s, 4) for s in slice_sparsity]}. Mean: {sum(slice_sparsity) / len(slice_sparsity):.4f}")
-        print(f"Attn sparsity per layer: {[round(s, 4) for s in attn_sparsity]}. Mean: {sum(attn_sparsity) / len(attn_sparsity):.4f}")
-        print(f"Train MSE: {mse.item():.4f}")
+        print(f"Slice utilization stats:")
         print()
+        print(f"  Mean: {[round(s.mean().item(), 4) for s in slice_use]} (Target: {target_use:.5f})")
+        print(f"  Std : {[round(s.std(dim=-1).mean().item(), 4) for s in slice_use]}")
+        print(f"  Min : {[round(s.min().item(), 4) for s in slice_use]}")
+        print(f"  Max : {[round(s.max().item(), 4) for s in slice_use]}")
+        print(f"  % Underused (< {target_use - threshold:.5f}): {[round(u, 2) for u in underused]}. Mean: {sum(underused) / len(underused):.4f}")
+        print(f"  % Overused  (> {target_use + threshold:.5f}): {[round(o, 2) for o in overused]}. Mean: {sum(overused) / len(overused):.4f}")
+        print(f"  % Sparsity : {[round(s, 2) for s in slice_sparsity]}. Mean: {sum(slice_sparsity) / len(slice_sparsity):.4f}")
+        # print(f"Sparsity: What proportion of slices are invoked per point?")
+        print()
+
+        # if trainer.is_cuda:
+        #     gc.collect()
+        #     torch.cuda.empty_cache()
 
         return
 

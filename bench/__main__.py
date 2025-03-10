@@ -68,36 +68,36 @@ def main(cfg, device):
         if cfg.model_type == 0:
             model = bench.Transolver(
                 space_dim=c_in+2, out_dim=c_out, fun_dim=0,
-                n_hidden=cfg.width, n_layers=cfg.num_layers,
+                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 slice_num=cfg.num_slices,
             )
         elif cfg.model_type == 1:
             model = bench.TS1(
                 in_dim=c_in, out_dim=c_out,
-                n_hidden=cfg.width, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
+                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
+                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
         elif cfg.model_type == 2:
             model = bench.TS2(
                 in_dim=c_in, out_dim=c_out,
-                n_hidden=cfg.width, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
+                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
+                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
         elif cfg.model_type == 3:
             model = bench.TS3(
                 in_dim=c_in, out_dim=c_out,
-                n_hidden=cfg.width, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
+                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
+                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
         elif cfg.model_type == 4:
             model = bench.TS4(
                 in_dim=c_in, out_dim=c_out,
-                n_hidden=cfg.width, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
+                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
+                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
         else:
@@ -107,26 +107,26 @@ def main(cfg, device):
         if cfg.model_type == 0:
             model = bench.Transolver(
                 space_dim=c_in, out_dim=c_out, fun_dim=0,
-                n_hidden=cfg.width, n_layers=cfg.num_layers,
+                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 slice_num=cfg.num_slices,
             )
         elif cfg.model_type == 1:
             model = bench.TS1Uncond(
                 in_dim=c_in, out_dim=c_out,
-                n_hidden=cfg.width, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
+                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
+                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
         elif cfg.model_type == 2:
             model = bench.TS2Uncond(
                 in_dim=c_in, out_dim=c_out,
-                n_hidden=cfg.width, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
+                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
+                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
         elif cfg.model_type == 999:
-            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.width, cfg.num_layers)
+            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
         else:
             print(f"No unconditioned model selected.")
             raise NotImplementedError()
@@ -137,12 +137,14 @@ def main(cfg, device):
 
     lossfun  = torch.nn.MSELoss()
     callback = bench.Callback(case_dir,)
+    if cfg.model_type in [1,]:
+        callback = bench.TSCallback(case_dir,)
 
     if cfg.train and cfg.epochs > 0:
 
         _batch_size  = cfg.batch_size
-        batch_size_  = len(data_)
-        _batch_size_ = len(_data)
+        batch_size_  = 100 # len(data_)
+        _batch_size_ = 100 # len(_data)
 
         kw = dict(
             device=device, gnn_loader=False, stats_every=cfg.epochs//10,
@@ -214,11 +216,11 @@ class Config:
     dataset: str = None
 
     exp_name: str = 'exp'
-    seed: int = 123
+    seed: int = 0
 
     # model
     model_type: int = 0 # 0: Transolver, 1: TS1, ..., 999: MeshGraphNet
-    width: int = 128
+    hidden_dim: int = 128
     num_layers: int = 5
     num_heads: int = 8
     mlp_ratio: float = 2.0
@@ -227,13 +229,13 @@ class Config:
     # training arguments
     epochs: int = 100
     batch_size: int = 1
-    weight_decay: float = 1e-3
+    weight_decay: float = 0e-0
     learning_rate: float = 1e-3
     schedule: str = None
-    one_cycle_pct_start:float = 0.3
+    one_cycle_pct_start:float = 0.1
     one_cycle_div_factor: float = 25
-    one_cycle_final_div_factor: float = 1e4
-    one_cycle_three_phase: bool = True
+    one_cycle_final_div_factor: float = 40
+    one_cycle_three_phase: bool = False
     
 
 if __name__ == "__main__":
