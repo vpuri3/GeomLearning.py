@@ -13,6 +13,7 @@ import time
 import collections
 
 # local
+from mlutils.schedule import NoiseScheduler
 from mlutils.utils import (
     num_parameters, select_device, is_torchrun, check_package_version_lteq,
 )
@@ -51,6 +52,10 @@ class Trainer:
         one_cycle_final_div_factor=1e4, # min_lr = initial_lr/final_div_factor Default: 1e4
         one_cycle_three_phase=False,    # first two phases will be symmetrical about pct_start third phase: initial_lr -> initial_lr/final_div_factor
         
+        noise_schedule='linear',
+        noise_init=0.1,
+        noise_min=0.0,
+        
         lossfun=None,
         batch_lossfun=None,
         epochs=None,
@@ -62,9 +67,6 @@ class Trainer:
         print_epoch=True,
         stats_every=1, # stats every k epochs
     ):
-
-        # TODO
-        # - EARLY STOPPING with patience (5 epochs)
 
         ###
         # PRINTING
@@ -158,14 +160,16 @@ class Trainer:
         self.epoch = 0
         self.epochs = 100 if epochs is None else epochs
 
+        bsize = self._batch_size * dist.get_world_size() if self.DISTRIBUTED else self._batch_size
+        self.steps_per_epoch = len(_data) // bsize + 1
+        self.total_steps = self.steps_per_epoch * self.epochs
+
         if Schedule == "OneCycleLR":
-            bsize = self._batch_size * dist.get_world_size() if self.DISTRIBUTED else self._batch_size
-            steps_per_epoch = len(_data) // bsize + 1
             self.schedule = optim.lr_scheduler.OneCycleLR(
                 self.opt,
                 max_lr=lr,
                 epochs=epochs,
-                steps_per_epoch=steps_per_epoch,
+                steps_per_epoch=self.steps_per_epoch,
                 pct_start=one_cycle_pct_start,
                 div_factor=one_cycle_div_factor,
                 final_div_factor=one_cycle_final_div_factor,
@@ -180,6 +184,13 @@ class Trainer:
             self.update_schedule_every_epoch = True
         else:
             raise NotImplementedError()
+        
+        self.noise_schedule = NoiseScheduler(
+            total_steps=self.total_steps,
+            decay_type=noise_schedule,
+            initial_noise=noise_init,
+            min_noise=noise_min,
+        )
         
         self.config = {
             "device" : device,
@@ -272,6 +283,8 @@ class Trainer:
             self.model.load_state_dict(snapshot['model_state'])
 
         self.opt.load_state_dict(snapshot['opt_state'])
+        
+        self.noise_schedule.set_current_step(self.epoch * self.steps_per_epoch)
 
     #------------------------#
     # DATALOADER
@@ -396,6 +409,8 @@ class Trainer:
             # update schedule every batch
             if not self.update_schedule_every_epoch:
                 self.schedule.step()
+
+            self.noise_schedule.step()
 
             if print_batch:
                 batch_iterator.set_description(

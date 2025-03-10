@@ -10,7 +10,6 @@ import random
 
 __all__ = [
     "set_seed",
-
     'set_num_threads',
     "select_device",
 
@@ -27,11 +26,7 @@ __all__ = [
     "unnormalize",
 
     "r2",
-
-    "eval_model",
-    "eval_gnn",
-    "autoregressive_rollout",
-
+    
     # versioning hell
     'to_numpy',
     'check_package_version_lteq'
@@ -191,83 +186,5 @@ def r2(y_pred, y_true):
     r2 = 1 - ss_res / ss_tot
     return r2.item()
 
-#=======================================================================#
-def eval_model(
-    x: torch.Tensor, model: nn.Module, device=None,
-    batch_size=1, verbose=False,
-):
-    device = select_device(device, verbose=verbose)
-    loader = torch.utils.data.DataLoader(x, shuffle=False, batch_size=batch_size)
-    model  = model.to(device)
-
-    ys = []
-    for xx in loader:
-        xx = xx.to(device)
-        yy = model(xx).to("cpu")
-        del xx
-        ys.append(yy)
-
-    model = model.to("cpu")
-    y = torch.cat(ys, dim=0)
-    torch.cuda.empty_cache()
-    return y
-
-def eval_gnn(
-    data, model: nn.Module, device=None,
-    batch_size=1, verbose=False,
-):
-    import torch_geometric as pyg
-
-    device = select_device(device, verbose=verbose)
-    loader = pyg.loader.DataLoader(data, shuffle=False, batch_size=batch_size)
-    model  = model.to(device)
-
-    ys = []
-    for batch in loader:
-        batch = batch.to(device)
-        y = model(batch).to("cpu")
-        del batch
-        ys.append(y)
-
-    model = model.to("cpu")
-    y = torch.cat(ys, dim=0)
-    torch.cuda.empty_cache()
-    return y
-
-def autoregressive_rollout(
-    x : torch.Tensor,
-    model : nn.Module,
-    num_iters,
-    process=None, # (y0, y1) --> y_next_input, y_save
-    save=None,    # [ys] --> y
-    device=None,
-    verbose=False,
-):
-    if process is None:
-        process = lambda y0, y1 : y1
-    if save is None:
-        save = lambda ys : torch.stack(ys, dim=0)
-
-    device = select_device(device, verbose=verbose)
-
-    ys = [x]
-    y0 = x.to(device)
-    model = model.to(device)
-
-    for iter in range(num_iters):
-        y1 = model(y0)
-        y2 = process(y0, y1)
-
-        ys.append(y2.to("cpu"))
-        y0 = y2
-    #
-
-    model = model.to("cpu")
-    y = save(ys)
-
-    # clear GPU memory
-    torch.cuda.empty_cache()
-
-    return y
 #=======================================================================#
 #
