@@ -92,6 +92,8 @@ class Trainer:
         else:
             self.DDP = False
             self.device = select_device(device, verbose=True)
+            
+        self.is_cuda = self.device not in ['cpu', torch.device('cpu')]
 
         ###
         # DATA
@@ -361,8 +363,6 @@ class Trainer:
         return
 
     def train_epoch(self):
-        self.model.train()
-
         if self.DDP:
             self._loader.sampler.set_epoch(self.epoch)
 
@@ -380,11 +380,15 @@ class Trainer:
         for batch in batch_iterator:
             self.opt.zero_grad()
             self.trigger_callbacks("batch_start")
+
+            self.model.train()
             loss = self.batch_loss(batch)
             loss.backward()
+
             self.trigger_callbacks("batch_post_grad")
             if self.clip_grad is not None:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad)
+
             self.opt.step()
             self.trigger_callbacks("batch_end")
             self.opt.zero_grad()
@@ -426,7 +430,7 @@ class Trainer:
 
         return loss
 
-    def batch_size(self, batch):
+    def get_batch_size(self, batch):
         if self.gnn_loader:
             return batch.y.size(0)
         else:
@@ -442,7 +446,7 @@ class Trainer:
 
         N, L = 0, 0.0
         for batch in loader:
-            n = self.batch_size(batch)
+            n = self.get_batch_size(batch)
             l = self.batch_loss(batch).item()
             N += n
             L += l * n
