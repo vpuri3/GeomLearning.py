@@ -41,7 +41,7 @@ class Trainer:
 
         lr=None,
         weight_decay=None,
-        clip_grad=None,
+        clip_grad_norm=None,
 
         Opt=None,
         Schedule=None,
@@ -137,7 +137,7 @@ class Trainer:
             lr = 1e-3
         if weight_decay is None:
             weight_decay = 0.0
-        self.clip_grad = clip_grad
+        self.clip_grad_norm = clip_grad_norm
 
         params = self.model.parameters()
 
@@ -399,8 +399,8 @@ class Trainer:
             loss.backward()
 
             self.trigger_callbacks("batch_post_grad")
-            if self.clip_grad is not None:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad)
+            if self.clip_grad_norm is not None:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
 
             self.opt.step()
             self.trigger_callbacks("batch_end")

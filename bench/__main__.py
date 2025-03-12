@@ -150,7 +150,7 @@ def main(cfg, device):
             device=device, gnn_loader=False, stats_every=cfg.epochs//10,
             Opt='AdamW', weight_decay=cfg.weight_decay, epochs=cfg.epochs,
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
-            lossfun=lossfun, clip_grad=1.,
+            lossfun=lossfun, clip_grad_norm=1.,
         )
         
         # LR scheduler
@@ -174,7 +174,6 @@ def main(cfg, device):
             x, y = batch
             noise = trainer.noise_schedule.get_current_noise()
             yh = model(x, noise=noise)
-            yh = model(x)
             return lossfun(yh, y)
         
         kw['batch_lossfun'] = batch_lossfun
