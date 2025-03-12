@@ -181,7 +181,7 @@ class TSCallback(Callback):
         print()
 
         fig, axes = plt.subplots(trainer.model.num_layers, 2, figsize=(10, 3*trainer.model.num_layers))
-        fig.suptitle('Slice Utilization and Bias Heatmaps')
+        fig.suptitle('Slice Utilization, Bias')
         
         for i in range(trainer.model.num_layers):
 
@@ -189,7 +189,7 @@ class TSCallback(Callback):
 
             ax = axes[i, 0]
             im = ax.imshow(mean_slice_use[i].cpu().numpy(), cmap='viridis', aspect='auto', vmin=0, vmax=3)
-            ax.set_title(f'Layer {i} - Slice Utilization (Corr: {corr:.3f})')
+            ax.set_title(f'Layer {i}: underused: {underused[i]:.1f}% / overused: {overused[i]:.1f}%')
             ax.set_xlabel('Slice Index')
             ax.set_ylabel('Head Index')
             fig.colorbar(im, ax=ax)
@@ -198,15 +198,16 @@ class TSCallback(Callback):
             
             ax = axes[i, 1]
             im = ax.imshow(bias[i].cpu().numpy(), cmap='viridis', aspect='auto', vmin=-5, vmax=5)
-            ax.set_title(f'Layer {i} - Bias (Corr: {corr:.3f})')
+            ax.set_title(f'Layer {i}: bias (min: {bias[i].min().item():.1f}, max: {bias[i].max().item():.1f}, corr: {corr:.3f})')
             ax.set_xlabel('Slice Index')
             ax.set_ylabel('Head Index')
             fig.colorbar(im, ax=ax)
             im.cmap.set_over('red')
             im.cmap.set_under('blue')
-            
+
         plt.tight_layout()
         plt.savefig(os.path.join(ckpt_dir, 'slice_utilization_and_bias.png'))
+        plt.savefig(os.path.join(ckpt_dir, '..', 'slice_utilization_and_bias.png'))
 
         # OBSERVATIONS:
         # - Negative Biases = Overused Keys

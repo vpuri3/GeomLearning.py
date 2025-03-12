@@ -10,21 +10,10 @@ __all__ = [
     "TS1Uncond",
 ]
 
-# # the incremental speedup isn't worth dealing with versioning hell
-# FastGELU = lambda: nn.GELU(approximate='tanh')
-FastGELU = nn.GELU
+FastGELU = lambda: nn.GELU(approximate='tanh')
 
-def stable_max(logits: torch.Tensor, dim: int = -1, clamp_min: float = -10.0) -> torch.Tensor:
-    """
-    StableMax is an alternative to Softmax that helps mitigate numerical
-    instabilities. It applies an elementwise transform s(x) and normalizes
-    over the specified dimension to produce probabilities that sum to 1.
-
-    s(x) = (x + 1) if x >= 0, or 1 / (1 - x) if x < 0.
-    logits are clamped to a minimum value (clamp_min) to avoid extreme negatives.
-    """
-    # Clamp extreme negative logits
-    logits = torch.clamp(logits, min=clamp_min)
+def stable_max(logits: torch.Tensor, dim: int = -1) -> torch.Tensor:
+    logits = logits - logits.max(dim=dim, keepdim=True).values
     s_logits = torch.where(logits >= 0, logits + 1, 1 / (1 - logits))
     s_sum = s_logits.sum(dim=dim, keepdim=True)
     return s_logits / (s_sum + 1e-9)
@@ -55,7 +44,7 @@ class SliceAttention(nn.Module):
         self.head_dim = hidden_dim // num_heads
         self.dropout = nn.Dropout(dropout)
 
-        # (1) Get slice weights
+        ### (1) Get slice weights
         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
 
         self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
@@ -64,11 +53,11 @@ class SliceAttention(nn.Module):
 
         self.temperature = nn.Parameter(torch.ones([1, self.num_heads, 1, 1]) * 0.5)
 
-        # (2) Attention among slice tokens
+        ### (2) Attention among slice tokens
         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
         trunc_normal_(self.qkv_proj, std=0.02)
 
-        # (3) Desclice and return
+        ### (3) Desclice and return
         self.to_out = nn.Sequential(
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.Dropout(dropout)
@@ -86,7 +75,7 @@ class SliceAttention(nn.Module):
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
 
         bias = self.wtq_bias.unsqueeze(-1)
-        temperature = self.temperature * 0. + 1.
+        temperature = self.temperature * 0. + 2.
 
         # (1)
         slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
@@ -107,7 +96,8 @@ class SliceAttention(nn.Module):
             slice_scores.fill_(-1e6)
             slice_scores.scatter_(-2, topk_indices, topk_scores)
 
-        slice_weights = F.softmax(slice_scores / temperature, dim=-2)
+        # slice_weights = F.softmax(slice_scores / temperature, dim=-2)
+        slice_weights = stable_max(slice_scores / temperature, dim=-2)
         slice_norm = slice_weights.sum(dim=-1, keepdim=True) # [B, H, M]
         slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B, H, M, D]
         slice_token = slice_token / (slice_norm + 1e-5)
@@ -203,6 +193,7 @@ class TS1Uncond(nn.Module):
         
         self.num_layers = num_layers
         self.num_slices = num_slices
+        self.num_heads = num_heads
 
         self.x_embedding = Mlp(
             in_dim,

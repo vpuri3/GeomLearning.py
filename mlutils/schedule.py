@@ -38,14 +38,18 @@ class NoiseScheduler:
     def get_current_noise(self):
         progress = self.step_num / self.total_steps
         
+        if progress > 1:
+            return self.min_noise
+        
         if self.decay_type == 'linear':
             noise = self.initial_noise * (1 - progress) + self.min_noise * progress
         elif self.decay_type == 'cosine':
             noise = self.min_noise + 0.5 * (self.initial_noise - self.min_noise) * (1 + math.cos(math.pi * progress))
         elif self.decay_type == 'exp':
-            min_noise = math.fabs(self.min_noise) + 1e-6
-            decay_rate = -math.log(min_noise / self.initial_noise) / self.total_steps
-            noise = self.initial_noise * math.exp(-decay_rate * self.step_num)
+            min_noise = math.fabs(self.min_noise) + 1e-9
+            initial_noise = math.fabs(self.initial_noise) + 1e-9
+            decay_rate = -math.log(min_noise / initial_noise) / self.total_steps
+            noise = initial_noise * math.exp(-decay_rate * self.step_num)
         elif self.decay_type == 'step':
             # Example: halve every 25% of steps
             steps_per_drop = self.total_steps // 4
