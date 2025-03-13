@@ -18,6 +18,11 @@ def stable_max(logits: torch.Tensor, dim: int = -1) -> torch.Tensor:
     s_sum = s_logits.sum(dim=dim, keepdim=True)
     return s_logits / (s_sum + 1e-9)
 
+def softplux_norm(logits: torch.Tensor, dim: int = -1, beta: float = 1.) -> torch.Tensor:
+    s_logits = F.softplus(logits, beta=beta)
+    s_sum = s_logits.sum(dim=dim, keepdim=True)
+    return s_logits / (s_sum + 1e-9)
+
 def gumbel_noise(shape, device=None):
     u = torch.rand(shape, device=device)
     return -torch.log(-torch.log(u + 1e-10) + 1e-10)
@@ -71,14 +76,14 @@ class SliceAttention(nn.Module):
 
         xq = self.wtq
         xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1)
-        xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
+        xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B H N D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
 
         bias = self.wtq_bias.unsqueeze(-1)
-        temperature = self.temperature * 0. + 2.
+        temperature = self.temperature * 0. + 4.
+        # temperature = self.temperature * 0. + 10.
 
-        # (1)
-        slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B, H, M, N]
+        slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B H M N]
         slice_scores = slice_scores + bias
         
         if self.training:
@@ -90,6 +95,7 @@ class SliceAttention(nn.Module):
             pass
 
         # TopK (can be made much more efficient)
+        # k_val = self.num_slices // 8
         k_val = self.num_slices // 4
         topk_scores, topk_indices = slice_scores.topk(k_val, dim=-2)
         with torch.no_grad():
@@ -97,9 +103,11 @@ class SliceAttention(nn.Module):
             slice_scores.scatter_(-2, topk_indices, topk_scores)
 
         # slice_weights = F.softmax(slice_scores / temperature, dim=-2)
-        slice_weights = stable_max(slice_scores / temperature, dim=-2)
-        slice_norm = slice_weights.sum(dim=-1, keepdim=True) # [B, H, M]
-        slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B, H, M, D]
+        # slice_weights = stable_max(slice_scores / temperature, dim=-2)
+        slice_weights = softplux_norm(slice_scores, dim=-2)
+
+        slice_norm = slice_weights.sum(dim=-1, keepdim=True) # [B H M]
+        slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
         slice_token = slice_token / (slice_norm + 1e-5)
         
         # Dynamic bias load balancing (like deepseek v3)
