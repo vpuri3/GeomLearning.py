@@ -12,12 +12,6 @@ __all__ = [
 
 FastGELU = lambda: nn.GELU(approximate='tanh')
 
-def stable_max(logits: torch.Tensor, dim: int = -1) -> torch.Tensor:
-    logits = logits - logits.max(dim=dim, keepdim=True).values
-    s_logits = torch.where(logits >= 0, logits + 1, 1 / (1 - logits))
-    s_sum = s_logits.sum(dim=dim, keepdim=True)
-    return s_logits / (s_sum + 1e-9)
-
 def softplux_norm(logits: torch.Tensor, dim: int = -1, beta: float = 1.) -> torch.Tensor:
     s_logits = F.softplus(logits, beta=beta)
     s_sum = s_logits.sum(dim=dim, keepdim=True)
@@ -56,8 +50,6 @@ class SliceAttention(nn.Module):
         trunc_normal_(self.wtq, std=0.02)
         self.register_buffer('wtq_bias', torch.zeros(self.num_heads, self.num_slices))
 
-        self.temperature = nn.Parameter(torch.ones([1, self.num_heads, 1, 1]) * 0.5)
-
         ### (2) Attention among slice tokens
         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
         trunc_normal_(self.qkv_proj, std=0.02)
@@ -78,45 +70,43 @@ class SliceAttention(nn.Module):
         xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1)
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B H N D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
-
-        bias = self.wtq_bias.unsqueeze(-1)
-        temperature = self.temperature * 0. + 4.
-        # temperature = self.temperature * 0. + 10.
-
         slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B H M N]
-        slice_scores = slice_scores + bias
-        
-        if self.training:
-            if noise is not None:
-                slice_scores = slice_scores + noise * torch.rand_like(slice_scores)
-                # slice_scores = slice_scores + noise * torch.randn_like(slice_scores)
-                # slice_scores = slice_scores + noise * gumbel_noise(slice_scores.shape, device=slice_scores.device)
-                pass
-            pass
 
         # TopK (can be made much more efficient)
-        # k_val = self.num_slices // 8
+        gamma = 1e-2
         k_val = self.num_slices // 4
-        topk_scores, topk_indices = slice_scores.topk(k_val, dim=-2)
-        with torch.no_grad():
-            slice_scores.fill_(-1e6)
-            slice_scores.scatter_(-2, topk_indices, topk_scores)
+        # k_val = self.num_slices // 8
 
-        # slice_weights = F.softmax(slice_scores / temperature, dim=-2)
-        # slice_weights = stable_max(slice_scores / temperature, dim=-2)
-        slice_weights = softplux_norm(slice_scores, dim=-2)
+        # # add bias before softmax
+        # gamma = 1e-2
+        # bias = self.wtq_bias.unsqueeze(-1)
+        # original_scores = slice_scores
+        # _, topk_indices = (slice_scores + bias).topk(k_val, dim=-2)
+        # slice_scores = torch.full_like(slice_scores, -1e6)
+        # slice_scores.scatter_(-2, topk_indices, original_scores.gather(-2, topk_indices))
+        # slice_weights = softplux_norm(slice_scores * 2, dim=-2)
+        
+        # add bias after softmax
+        gamma = 1e-2
+        slice_weights = F.softmax(slice_scores, dim=-2) # sigmoid?
+        bias = self.wtq_bias.unsqueeze(-1)
+        original_weights = slice_weights
+        _, topk_indices = (slice_weights + bias).topk(k_val, dim=-2)
+        slice_weights = torch.full_like(slice_weights, 0.)
+        slice_weights.scatter_(-2, topk_indices, original_weights.gather(-2, topk_indices))
+        slice_weights = slice_weights /slice_weights.sum(dim=-2, keepdim=True)
 
+        # Dynamic bias load balancing (like deepseek v3)
+        if self.training:
+            with torch.no_grad():
+                slice_usage = slice_weights.mean(dim=-1)
+                target_usage = 1 / self.num_slices
+                bias_update = target_usage - slice_usage.mean(dim=0)
+                self.wtq_bias.data += gamma * bias_update
+        
         slice_norm = slice_weights.sum(dim=-1, keepdim=True) # [B H M]
         slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
         slice_token = slice_token / (slice_norm + 1e-5)
-        
-        # Dynamic bias load balancing (like deepseek v3)
-        if self.training:
-            slice_usage = slice_weights.mean(dim=-1)
-            target_usage = 1 / self.num_slices
-            with torch.no_grad():
-                bias_update = (target_usage - slice_usage).mean(dim=0)
-                self.wtq_bias.data += 0.01 * bias_update
         
         ### (2) Attention among slice tokens
 
@@ -130,6 +120,8 @@ class SliceAttention(nn.Module):
         out = rearrange(out, 'b h n d -> b n (h d)')
         out = self.to_out(out)
         
+        temperature = torch.tensor(1., device=slice_scores.device)
+
         return out, slice_weights, temperature, bias, attn_weights
 
 #======================================================================#

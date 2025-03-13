@@ -131,7 +131,7 @@ class TSCallback(Callback):
         
         print()
         print(f"Train MSE: {MSE:.8f}")
-        print(f"Noise level: {trainer.noise_schedule.get_current_noise()}")
+        # print(f"Noise level: {trainer.noise_schedule.get_current_noise()}")
         print(f"Attn utilization: {[round(s, 4) for s in attn_utilization]}. Mean: {sum(attn_utilization) / len(attn_utilization):.4f}")
         print()
 
@@ -141,11 +141,11 @@ class TSCallback(Callback):
         # print(f"  Min : {[round(t.min().item(), 4) for t in temperature]}")
         # print(f"  Max : {[round(t.max().item(), 4) for t in temperature]}")
 
-        print(f"Bias stats:")
-        print(f"  Mean: {[round(b.mean().item(), 4) for b in bias]}")
-        print(f"  Std : {[round(b.std().item(), 4) for b in bias]}")
-        print(f"  Min : {[round(b.min().item(), 4) for b in bias]}")
-        print(f"  Max : {[round(b.max().item(), 4) for b in bias]}")
+        # print(f"Bias stats:")
+        # print(f"  Mean: {[round(b.mean().item(), 4) for b in bias]}")
+        # print(f"  Std : {[round(b.std().item(), 4) for b in bias]}")
+        # print(f"  Min : {[round(b.min().item(), 4) for b in bias]}")
+        # print(f"  Max : {[round(b.max().item(), 4) for b in bias]}")
 
         # Slice sparsity: what proportion of slices are invoked per point
         slice_sparsity = [(w < 1e-2).sum(dim=-2).float().mean().item() * 100 / trainer.model.num_slices for w in slice_weights]
@@ -164,21 +164,20 @@ class TSCallback(Callback):
 
         print()
         print(f"Slice utilization stats:")
-        print()
         print(f"  Mean: {[round(s.mean().item(), 4) for s in slice_use]} (Target: {target_use:.5f})")
-        print(f"  Std : {[round(s.std(dim=-1).mean().item(), 4) for s in slice_use]}")
-        print(f"  Min : {[round(s.min().item(), 4) for s in slice_use]}")
+        # print(f"  Std : {[round(s.std(dim=-1).mean().item(), 4) for s in slice_use]}")
+        # print(f"  Min : {[round(s.min().item(), 4) for s in slice_use]}")
         print(f"  Max : {[round(s.max().item(), 4) for s in slice_use]}")
-        print(f"  % Underused (< {target_use - threshold:.5f}): {[round(u, 2) for u in underused]}. Mean: {sum(underused) / len(underused):.4f}")
-        print(f"  % Overused  (> {target_use + threshold:.5f}): {[round(o, 2) for o in overused]}. Mean: {sum(overused) / len(overused):.4f}")
+        # print(f"  % Underused (< {target_use - threshold:.5f}): {[round(u, 2) for u in underused]}. Mean: {sum(underused) / len(underused):.4f}")
+        # print(f"  % Overused  (> {target_use + threshold:.5f}): {[round(o, 2) for o in overused]}. Mean: {sum(overused) / len(overused):.4f}")
         print(f"  % Sparsity : {[round(s, 2) for s in slice_sparsity]}. Mean: {sum(slice_sparsity) / len(slice_sparsity):.4f}")
         print()
 
         mean_slice_use = [w.mean(dim=[0,-1]) / target_use for w in slice_weights]
         slice_use_bias_corr = [torch.corrcoef(torch.stack([mean_slice_use[i].view(-1), bias[i].view(-1)])) for i in range(trainer.model.num_layers) ]
 
-        print(f"Slice use/ bias correlation: {[round(c[0,1].item(), 4) for c in slice_use_bias_corr]}")
-        print()
+        # print(f"Slice use/ bias correlation: {[round(c[0,1].item(), 4) for c in slice_use_bias_corr]}")
+        # print()
 
         fig, axes = plt.subplots(trainer.model.num_layers, 2, figsize=(10, 3*trainer.model.num_layers))
         fig.suptitle('Slice Utilization, Bias')
@@ -197,8 +196,8 @@ class TSCallback(Callback):
             im.cmap.set_under('blue')
             
             ax = axes[i, 1]
-            im = ax.imshow(bias[i].cpu().numpy(), cmap='viridis', aspect='auto', vmin=-5, vmax=5)
-            ax.set_title(f'Layer {i}: bias (min: {bias[i].min().item():.1f}, max: {bias[i].max().item():.1f}, corr: {corr:.3f})')
+            im = ax.imshow(bias[i].cpu().numpy(), cmap='viridis', aspect='auto', vmin=-1, vmax=1)
+            ax.set_title(f'Layer {i}: bias (min: {bias[i].min().item():.1e}, max: {bias[i].max().item():.1e}, corr: {corr:.3f})')
             ax.set_xlabel('Slice Index')
             ax.set_ylabel('Head Index')
             fig.colorbar(im, ax=ax)
@@ -209,28 +208,6 @@ class TSCallback(Callback):
         plt.savefig(os.path.join(ckpt_dir, 'slice_utilization_and_bias.png'))
         plt.savefig(os.path.join(ckpt_dir, '..', 'slice_utilization_and_bias.png'))
 
-        # OBSERVATIONS:
-        # - Negative Biases = Overused Keys
-        #   - Confirmed: Negative correlation between bias and usage.
-        #   - Why Dead Keys?:
-        #     - Initial Skew: Pre-bias dots heavily favor a few keys (e.g., due to poor initialization or point cloud structure). Bias overcorrects these, but underused keys don’t get enough boost.
-        #   - Fix:
-        #     - Increase noise_scale early (e.g., 0.5 → decay) to disrupt initial skew.
-        #     - Use smaller bias step (e.g., 0.0005) to avoid over-penalizing.
-        # - Dead Keys Have Neutral/Slight Negative Bias
-        #   - Confirmed: Dead keys (usage ≈ 0) don’t have large negative biases.
-        #   - Why Dead?:
-        #     - Attention Collapse: Top-k locks onto a subset early, and noise/bias can’t recover others.
-        #   - Fix:
-        #     - Add dropout to attn (e.g., F.dropout(attn, p=0.1) post-softmax) to force exploration.
-        #     - Reinitialize q_proj, k_proj with smaller variance (e.g., Xavier init).
-        # - Bias Isn’t Balancing
-        #   - Confirmed: Low correlation, biases drift without affecting usage.
-        #   - Fix:
-        #     - Normalize bias periodically (self.bias -= self.bias.mean(dim=-1, keepdim=True)).
-        #     - Clamp tighter (e.g., -2 to 2) to keep bias impactful but controlled.
-        # 
-        
         # if trainer.is_cuda:
         #     gc.collect()
         #     torch.cuda.empty_cache()
