@@ -3,19 +3,38 @@ import math
 import torch
 from torch import nn
 from torch.nn import functional as F
-from timm.layers import trunc_normal_, Mlp
+from timm.layers import trunc_normal_
 from einops import rearrange, einsum
 
 __all__ = [
     "TS1Uncond",
 ]
 
-FastGELU = lambda: nn.GELU(approximate='tanh')
+#---------------#
+# TODO:
+# - X/Y positional embedding
+# - nGPT: https://github.com/NVIDIA/ngpt/blob/main/model.py
+# - Differential Transformer: https://github.com/microsoft/unilm/blob/master/Diff-Transformer/multihead_diffattn.py
+# - Dynamic Tanh: https://arxiv.org/pdf/2503.10622
+#---------------#
 
-def softplux_norm(logits: torch.Tensor, dim: int = -1, beta: float = 1.) -> torch.Tensor:
-    s_logits = F.softplus(logits, beta=beta)
-    s_sum = s_logits.sum(dim=dim, keepdim=True)
-    return s_logits / (s_sum + 1e-9)
+class SwiGLU(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.silu = nn.SiLU()
+        
+    def forward(self, x):
+        u, v = x.chunk(2, dim=-1)
+        return u * self.silu(v)
+
+ACTIVATIONS = {
+    'gelu': nn.GELU(approximate='tanh'),
+    'silu': nn.SiLU(),
+    'swiglu': SwiGLU(),
+}
+
+def normalize(x):
+    return x / (torch.linalg.vector_norm(x, dim=-1, keepdim=True) + 1e-5)
 
 def gumbel_noise(shape, device=None):
     u = torch.rand(shape, device=device)
@@ -28,7 +47,9 @@ def mha(q, k, v):
     out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
     return out, attn
 
-def topk_sparse(weights, bias, k_val):
+def topk_sparse(weights, bias, k_val=None):
+    if k_val is None:
+        return weights
     B, H, M, N = weights.shape
     _, topk_indices = (weights + bias).topk(k_val, dim=-2)
     values = weights.gather(-2, topk_indices).reshape(-1)
@@ -44,7 +65,9 @@ def topk_sparse(weights, bias, k_val):
     )
     return sparse_weights
 
-def topk_dense(weights, bias, k_val):
+def topk_dense(weights, bias, k_val=None):
+    if k_val is None:
+        return weights
     _, topk_indices = (weights + bias).topk(k_val, dim=-2)
     sparse_weights = torch.full_like(weights, 0.)
     sparse_weights.scatter_(-2, topk_indices, weights.gather(-2, topk_indices))
@@ -54,11 +77,19 @@ def topk_dense(weights, bias, k_val):
 # SLICE ATTENTION
 #======================================================================#
 class SliceAttention(nn.Module):
-    def __init__(self, hidden_dim, num_heads=8, dropout=0., num_slices=32):
+    def __init__(
+            self,
+            hidden_dim,
+            num_heads=8,
+            dropout=0.,
+            num_slices=32,
+            k_val=None,
+        ):
         super().__init__()
 
         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
 
+        self.k_val = k_val
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
         self.num_slices = num_slices
@@ -76,13 +107,13 @@ class SliceAttention(nn.Module):
         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
         trunc_normal_(self.qkv_proj, std=0.02)
 
-        ### (3) Desclice and return
+        ### (3) Deslice and return
         self.to_out = nn.Sequential(
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.Dropout(dropout)
         )
         
-    def forward(self, x, noise=None):
+    def forward(self, x, gamma:float=None, noise=None):
 
         # x: [B, N, C]
         
@@ -92,33 +123,37 @@ class SliceAttention(nn.Module):
         xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1)
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B H N D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
+        
+        # # normalize xq, xk, xv
+        # xq = xq / (torch.linalg.vector_norm(xq, dim=-1, keepdim=True) + 1e-5)
+        # xk = xk / (torch.linalg.vector_norm(xk, dim=-1, keepdim=True) + 1e-5)
+        # xv = xv / (torch.linalg.vector_norm(xv, dim=-1, keepdim=True) + 1e-5)
+        
         slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B H M N]
-
-        #-------#
-        # Dynamic bias load balancing (like deepseek v3) + TopK (can be made much more efficient)
-        #-------#
-        gamma = 1e-2
-        k_val = self.num_slices // 4
-        # k_val = self.num_slices // 8
-
-        # gamma = 1e-2
-        # k_val = self.num_slices // 16
+        slice_weights = F.softmax(slice_scores, dim=-2)
+        
+        # #-------#
+        # # Dynamic bias load balancing (like deepseek v3) + TopK (can be made much more efficient)
+        # #-------#
 
         bias = self.wtq_bias.unsqueeze(-1)
-        # slice_weights = F.softmax(slice_scores, dim=-2)
-        slice_weights = F.sigmoid(slice_scores)
-        slice_weights = topk_dense(slice_weights, bias, k_val)
-        slice_weights = slice_weights / slice_weights.sum(dim=-2, keepdim=True)
+        # slice_weights = topk_dense(slice_weights, bias, self.k_val)
+        # slice_weights = slice_weights / slice_weights.sum(dim=-2, keepdim=True)
 
-        if self.training:
-            with torch.no_grad():
-                slice_usage = slice_weights.mean(dim=-1)
-                target_usage = 1 / self.num_slices
-                bias_update = target_usage - slice_usage.mean(dim=0)
-                self.wtq_bias.data += gamma * bias_update
+        # if self.training:
+        #     if gamma is not None:
+        #         with torch.no_grad():
+        #             slice_usage = slice_weights.mean(dim=-1)
+        #             target_usage = 1 / self.num_slices
+        #             bias_update = target_usage - slice_usage.mean(dim=0)
+        #             self.wtq_bias.data += gamma * bias_update
+
+        #-------#
+        #-------#
         
-        slice_norm = slice_weights.sum(dim=-1, keepdim=True) # [B H M]
         slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
+
+        slice_norm = slice_weights.sum(dim=-1, keepdim=True) # [B H M]
         slice_token = slice_token / (slice_norm + 1e-5)
         
         ### (2) Attention among slice tokens
@@ -133,13 +168,30 @@ class SliceAttention(nn.Module):
         out = rearrange(out, 'b h n d -> b n (h d)')
         out = self.to_out(out)
         
-        temperature = torch.tensor(1., device=slice_scores.device)
+        temperature = torch.tensor(1., device=x.device)
 
         return out, slice_weights, temperature, bias, attn_weights
 
 #======================================================================#
 # BLOCK
 #======================================================================#
+
+class MLP(nn.Module):
+    def __init__(self, in_features, hidden_features, out_features, act=None):
+        super().__init__()
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = ACTIVATIONS[act] if act else ACTIVATIONS['gelu']
+        if act == 'swiglu':
+            self.fc2 = nn.Linear(hidden_features // 2, out_features)
+        else:
+            self.fc2 = nn.Linear(hidden_features, out_features)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.fc2(x)
+        return x
+
 class Block(nn.Module):
     """Transformer encoder block."""
 
@@ -150,6 +202,8 @@ class Block(nn.Module):
             dropout: float,
             mlp_ratio=2,
             num_slices=32,
+            act=None,
+            k_val=None,
     ):
         super().__init__()
         self.ln1 = nn.LayerNorm(hidden_dim)
@@ -160,20 +214,20 @@ class Block(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             num_slices=num_slices,
+            k_val=k_val,
         )
-
-        self.mlp = Mlp(
+        
+        self.mlp = MLP(
             in_features=hidden_dim,
             hidden_features=int(hidden_dim * mlp_ratio),
             out_features=hidden_dim,
-            act_layer=FastGELU,
-            drop=dropout,
+            act=act,
         )
         
-    def forward(self, x, noise=None):
+    def forward(self, x, gamma:float=None, noise=None):
         # x: [B, N, C]
-        
-        _x, *stats = self.att(self.ln1(x), noise=noise)
+       
+        _x, *stats = self.att(self.ln1(x), gamma=gamma, noise=noise)
         x = x + _x
         x = x + self.mlp(self.ln2(x))
         return x, *stats
@@ -201,19 +255,23 @@ class TS1Uncond(nn.Module):
         num_heads=8,
         mlp_ratio=1,
         num_slices=32,
+        act=None,
+        k_val=None,
     ):
         super().__init__()
         
+        self.k_val = k_val
+        self.gamma = 0.0
+
         self.num_layers = num_layers
         self.num_slices = num_slices
         self.num_heads = num_heads
 
-        self.x_embedding = Mlp(
-            in_dim,
-            hidden_dim * 2,
-            hidden_dim,
-            act_layer=FastGELU,
-            drop=dropout,
+        self.x_embedding = MLP(
+            in_features=in_dim,
+            hidden_features=hidden_dim * 2,
+            out_features=hidden_dim,
+            act=act,
         )
         
         self.blocks = nn.ModuleList([
@@ -223,9 +281,12 @@ class TS1Uncond(nn.Module):
                 dropout=dropout,
                 mlp_ratio=mlp_ratio,
                 num_slices=num_slices,
+                act=act,
+                k_val=k_val,
             )
             for _ in range(num_layers)
         ])
+
         self.final_layer = FinalLayer(hidden_dim, out_dim)
 
         self.initialize_weights()
@@ -241,10 +302,21 @@ class TS1Uncond(nn.Module):
         elif isinstance(m, (nn.LayerNorm,)):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
+            
+    def normalize(self):
+        for block in self.blocks:
+            att = block.att
+            mlp = block.mlp
+            # att.wtq.data.copy_(normalize(att.wtq.data))
 
-    def forward(self, x, noise=None, return_stats: bool=False):
+        return
+
+    def forward(self, x, gamma:float=None, noise=None, return_stats: bool=False):
         # x: [B, N, C]
         x = self.x_embedding(x) # [B, N, C]
+        
+        if (gamma is not None) and self.training:
+            self.gamma = gamma
 
         if return_stats:
             slice_weights = []
@@ -253,7 +325,7 @@ class TS1Uncond(nn.Module):
             attn_weights = []
 
         for block in self.blocks:
-            x, *stats = block(x, noise=noise)
+            x, *stats = block(x, gamma=gamma, noise=noise)
             if return_stats:
                 slice_weights.append(stats[0])
                 temperature.append(stats[1])

@@ -13,7 +13,7 @@ import time
 import collections
 
 # local
-from mlutils.schedule import NoiseScheduler
+from mlutils.schedule import DecayScheduler
 from mlutils.utils import (
     num_parameters, select_device, is_torchrun, check_package_version_lteq,
 )
@@ -185,11 +185,11 @@ class Trainer:
         else:
             raise NotImplementedError()
         
-        self.noise_schedule = NoiseScheduler(
+        self.noise_schedule = DecayScheduler(
             total_steps=self.total_steps,
             decay_type=noise_schedule,
-            initial_noise=noise_init,
-            min_noise=noise_min,
+            init_val=noise_init,
+            min_val=noise_min,
         )
         
         self.config = {
@@ -394,6 +394,8 @@ class Trainer:
             self.opt.zero_grad()
             self.trigger_callbacks("batch_start")
 
+            self.noise_schedule.step()
+
             self.model.train()
             loss = self.batch_loss(batch)
             loss.backward()
@@ -409,8 +411,6 @@ class Trainer:
             # update schedule every batch
             if not self.update_schedule_every_epoch:
                 self.schedule.step()
-
-            self.noise_schedule.step()
 
             if print_batch:
                 batch_iterator.set_description(

@@ -78,27 +78,7 @@ def main(cfg, device):
                 hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
                 num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
-            )
-        elif cfg.model_type == 2:
-            model = bench.TS2(
-                in_dim=c_in, out_dim=c_out,
-                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
-                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                num_slices=cfg.num_slices,
-            )
-        elif cfg.model_type == 3:
-            model = bench.TS3(
-                in_dim=c_in, out_dim=c_out,
-                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
-                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                num_slices=cfg.num_slices,
-            )
-        elif cfg.model_type == 4:
-            model = bench.TS4(
-                in_dim=c_in, out_dim=c_out,
-                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
-                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                num_slices=cfg.num_slices,
+                act=cfg.act,
             )
         else:
             print(f"No conditioned model selected.")
@@ -117,13 +97,7 @@ def main(cfg, device):
                 hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
                 num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
-            )
-        elif cfg.model_type == 2:
-            model = bench.TS2Uncond(
-                in_dim=c_in, out_dim=c_out,
-                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
-                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                num_slices=cfg.num_slices,
+                k_val=cfg.topk,
             )
         elif cfg.model_type == 999:
             model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
@@ -143,8 +117,8 @@ def main(cfg, device):
     if cfg.train and cfg.epochs > 0:
 
         _batch_size  = cfg.batch_size
-        batch_size_  = 100 # len(data_)
-        _batch_size_ = 100 # len(_data)
+        batch_size_  = 200 # len(data_)
+        _batch_size_ = 200 # len(_data)
 
         kw = dict(
             device=device, gnn_loader=False, stats_every=cfg.epochs//10,
@@ -170,15 +144,29 @@ def main(cfg, device):
         kw['noise_schedule'] = cfg.noise_schedule
         kw['noise_init'] = cfg.noise_init
 
+        trainer = mlutils.Trainer(model, _data, data_, **kw)
+
+        gamma_schedule = mlutils.DecayScheduler(
+            init_val=cfg.gamma_init, min_val=cfg.gamma_min,
+            total_steps=trainer.total_steps // 2,
+            decay_type=cfg.gamma_schedule,
+        )
+
         def batch_lossfun(trainer, model, batch):
             x, y = batch
-            noise = trainer.noise_schedule.get_current_noise()
-            yh = model(x, noise=noise)
+
+            if model.training:
+                gamma_schedule.step()
+                gamma = gamma_schedule.get_current_val()
+                yh = model(x, gamma=gamma)
+            else:
+                yh = model(x)
+
             return lossfun(yh, y)
         
-        kw['batch_lossfun'] = batch_lossfun
-        
-        trainer = mlutils.Trainer(model, _data, data_, **kw)
+        if cfg.model_type == 1:
+            trainer.batch_lossfun = batch_lossfun
+
         trainer.add_callback('epoch_end', callback)
 
         if cfg.restart_file is not None:
@@ -217,6 +205,7 @@ class Config:
 
     # model
     model_type: int = 0 # 0: Transolver, 1: TS1, ..., 999: MeshGraphNet
+    act: str = 'gelu'
     hidden_dim: int = 128
     num_layers: int = 5
     num_heads: int = 8
@@ -233,9 +222,13 @@ class Config:
     one_cycle_div_factor: float = 25
     one_cycle_final_div_factor: float = 40
     one_cycle_three_phase: bool = False
-    noise_schedule: str = 'linear'
-    noise_init: float = 0.1
 
+    topk: int = 0
+    gamma_min: float = 0e-4
+    gamma_init: float = 1e-2
+    gamma_schedule: str = 'constant'
+    noise_init: float = 1e-1
+    noise_schedule: str = 'linear'
 
 if __name__ == "__main__":
     

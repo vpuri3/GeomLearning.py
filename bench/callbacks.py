@@ -130,10 +130,10 @@ class TSCallback(Callback):
         attn_utilization = [(w > 1e-2).sum(dim=-1).float().mean().item() / trainer.model.num_slices for w in attn_weights ]                
         
         print()
-        print(f"Train MSE: {MSE:.8f}")
-        # print(f"Noise level: {trainer.noise_schedule.get_current_noise()}")
+        print(f"Train MSE: {MSE:.8e}")
+        # print(f"Noise level: {trainer.noise_schedule.get_current_val()}")
+        print(f"K: {trainer.model.k_val}, Gamma: {trainer.model.gamma:.3e}")
         print(f"Attn utilization: {[round(s, 4) for s in attn_utilization]}. Mean: {sum(attn_utilization) / len(attn_utilization):.4f}")
-        print()
 
         # print(f"Temperature stats:")
         # print(f"  Mean: {[round(t.mean().item(), 4) for t in temperature]}")
@@ -205,8 +205,8 @@ class TSCallback(Callback):
             im.cmap.set_under('blue')
 
         plt.tight_layout()
-        plt.savefig(os.path.join(ckpt_dir, 'slice_utilization_and_bias.png'))
-        plt.savefig(os.path.join(ckpt_dir, '..', 'slice_utilization_and_bias.png'))
+        plt.savefig(os.path.join(ckpt_dir, 'utilization.png'))
+        plt.savefig(os.path.join(ckpt_dir, '..', 'utilization.png'))
 
         # if trainer.is_cuda:
         #     gc.collect()
