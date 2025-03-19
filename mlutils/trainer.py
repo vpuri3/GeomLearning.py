@@ -8,8 +8,6 @@ from tqdm import tqdm
 
 # builtin
 import os
-import math
-import time
 import collections
 
 # local
@@ -67,7 +65,7 @@ class Trainer:
         print_epoch=True,
         stats_every=1, # stats every k epochs
     ):
-
+        
         ###
         # PRINTING
         ###
@@ -221,6 +219,7 @@ class Trainer:
         # STATISTICS
         ###
 
+        self.training_loss = []
         self.statsfun = statsfun
         self.callbacks = collections.defaultdict(list)
         self.stat_vals = {
@@ -261,6 +260,7 @@ class Trainer:
             snapshot['model_state'] = self.model.state_dict()
         snapshot['opt_state'] = self.opt.state_dict()
         snapshot['schedule_state'] = None if (self.schedule is None) else self.schedule.state_dict()
+        snapshot['training_loss'] = self.training_loss
 
         torch.save(snapshot, save_path)
 
@@ -276,14 +276,15 @@ class Trainer:
             snapshot = torch.load(load_path, weights_only=False, map_location=self.device)
 
         self.epoch = snapshot['epoch']
-
         if self.DDP:
             self.model.module.load_state_dict(snapshot['model_state'])
         else:
             self.model.load_state_dict(snapshot['model_state'])
-
         self.opt.load_state_dict(snapshot['opt_state'])
+        self.schedule.load_state_dict(snapshot['schedule_state'])
+        self.training_loss = snapshot['training_loss']
         
+        # noise schedul
         self.noise_schedule.set_current_step(self.epoch * self.steps_per_epoch)
 
     #------------------------#
@@ -399,6 +400,8 @@ class Trainer:
             self.model.train()
             loss = self.batch_loss(batch)
             loss.backward()
+
+            self.training_loss.append(loss.item())
 
             self.trigger_callbacks("batch_post_grad")
             if self.clip_grad_norm is not None:

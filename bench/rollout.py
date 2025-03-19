@@ -45,12 +45,6 @@ def rollout(
             _data.x[:, -nf:] = _data.y[:, -nf:]
 
         target = transform.makefields(data, k, scale=True)
-
-        if transform.interpolate:
-            _data.x[:, -nf:] = transform.interpolate_layer(
-                _data.x[:, -nf:], _data, k-1, tol=tol
-            )
-
         data.y = model(_data) + _data.x[:, -nf:]
         data.e = data.y - target
 

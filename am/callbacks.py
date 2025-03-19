@@ -106,6 +106,16 @@ class Callback:
             print(f"Saving stats to {ckpt_dir}/stats.json")
             with open(os.path.join(ckpt_dir, 'stats.json'), 'w') as f:
                 json.dump(trainer.stat_vals, f)
+                
+        # save training loss plot
+        if trainer.GLOBAL_RANK == 0:
+            print(f"Saving loss plot to {self.case_dir}/training_loss.png")
+            plt.figure(figsize=(8, 4), dpi=175)
+            plt.plot(trainer.training_loss)
+            plt.xlabel('Step')
+            plt.ylabel('Training Loss')
+            plt.savefig(os.path.join(self.case_dir, 'training_loss.png'))
+            plt.close()
 
         # update data transform
         self.modify_dataset_transform(trainer, True)

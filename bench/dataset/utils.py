@@ -13,6 +13,7 @@ def load_dataset(
         force_reload: bool = False,
         mesh: bool = False,
         cells: bool = False,
+        max_cases: int = None,
     ):
     """Load a dataset by name.
     
@@ -50,8 +51,8 @@ def load_dataset(
         train_transform = TimeseriesDatasetTransform(mesh=mesh, cells=cells, dens=dataset_name == 'airfoil')
         test_transform  = TimeseriesDatasetTransform(mesh=mesh, cells=cells, dens=dataset_name == 'airfoil')
 
-        train_data = TimeseriesDataset(DATADIR, 'train', force_reload=force_reload, transform=train_transform)
-        test_data  = TimeseriesDataset(DATADIR, 'test', force_reload=force_reload, transform=test_transform)
+        train_data = TimeseriesDataset(DATADIR, 'train', force_reload=force_reload, transform=train_transform, max_cases=max_cases)
+        test_data  = TimeseriesDataset(DATADIR, 'test', force_reload=force_reload, transform=test_transform, max_cases=max_cases)
         
         return train_data, test_data
         

@@ -2,11 +2,15 @@
 import os
 import json
 
-import gc
 import torch
+import torch_geometric as pyg
+
+import gc
 import shutil
 from tqdm import tqdm
+
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 
 import mlutils
@@ -59,8 +63,8 @@ class Callback:
             if self.save_every is None:
                 self.save_every = trainer.stats_every
             if trainer.epoch == 0:
-                # return
-                pass
+                return
+                # pass
             if (trainer.epoch % self.save_every) != 0:
                 return
         #------------------------#
@@ -78,8 +82,28 @@ class Callback:
             with open(os.path.join(ckpt_dir, 'stats.json'), 'w') as f:
                 json.dump(trainer.stat_vals, f)
 
+        # save training loss plot
+        if trainer.GLOBAL_RANK == 0:
+            print(f"Saving loss plot to {self.case_dir}/training_loss.png")
+            plt.figure(figsize=(8, 4), dpi=175)
+            plt.plot(trainer.training_loss)
+            plt.xlabel('Step')
+            plt.ylabel('Loss')
+            plt.yscale('log')
+            plt.title('Training Loss')
+            plt.savefig(os.path.join(self.case_dir, 'training_loss.png'))
+            plt.close()
+
+        # modify dataset transform
+        if hasattr(self, 'modify_dataset_transform'):
+            self.modify_dataset_transform(trainer, True)
+
         # evaluate model
         self.evaluate(trainer, ckpt_dir)
+
+        # revert dataset transform
+        if hasattr(self, 'modify_dataset_transform'):
+            self.modify_dataset_transform(trainer, False)
 
         # revert self.final
         self.final = False
@@ -90,7 +114,7 @@ class Callback:
         pass
 
 #======================================================================#
-from bench import rollout
+from bench.rollout import rollout
 from am.callbacks import timeseries_statistics_plot
 from am.callbacks import hstack_dataframes_across_ranks, vstack_dataframes_across_ranks
 
@@ -104,6 +128,30 @@ class TimeseriesCallback(Callback):
         self.num_eval_cases = num_eval_cases
         self.mesh = mesh
     
+    def get_dataset_transform(self, dataset):
+        if dataset is None:
+            return None
+        elif isinstance(dataset, torch.utils.data.Subset):
+            return self.get_dataset_transform(dataset.dataset)
+        elif isinstance(dataset, pyg.data.Dataset):
+            return dataset.transform
+
+    def modify_dataset_transform(self, trainer: mlutils.Trainer, val: bool):
+        """
+        modify transform to return mesh, original fields
+        """
+        for dataset in [trainer._data, trainer.data_]:
+            if dataset is None:
+                continue
+
+            transform = self.get_dataset_transform(dataset)
+            transform.mesh = True if val else self.mesh
+            transform.orig = val
+            transform.cells = val
+            transform.metadata = val
+            
+        return
+
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
 
         device = trainer.device
@@ -125,15 +173,12 @@ class TimeseriesCallback(Callback):
                 os.makedirs(split_dir, exist_ok=True)
             
             # distribute cases across ranks
-            num_cases = len(dataset.case_files)
+            num_cases = dataset.num_cases
             cases_per_rank = num_cases // trainer.WORLD_SIZE 
             icase0 = trainer.GLOBAL_RANK * cases_per_rank
             icase1 = (trainer.GLOBAL_RANK + 1) * cases_per_rank if trainer.GLOBAL_RANK != trainer.WORLD_SIZE - 1 else num_cases
             
-            max_eval_cases = self.num_eval_cases // trainer.WORLD_SIZE
-
             case_nums = []
-            case_names = []
 
             l2_cases = []
             r2_cases = []
@@ -144,18 +189,13 @@ class TimeseriesCallback(Callback):
             for icase in range(icase0, icase1):
                 case_idx = dataset.case_range(icase)
                 case_data = dataset[case_idx]
-                case_name = case_data[0].metadata['case_name']
 
                 case_nums.append(icase)
-                case_names.append(case_name)
-                
-                eval_data, l2s, r2s = rollout(
-                    model, case_data, transform,
-                    autoreg=True, device=device, K=self.autoreg_start,
-                )
 
-                # case_dir = os.path.join(split_dir, f"{split}{str(icase).zfill(3)}-{ext}-{case_name}")
-                # file_name = f'{os.path.basename(self.case_dir)}-{split}{str(icase).zfill(4)}-{ext}-{case_name}'
+                eval_data, l2s, r2s = rollout(model, case_data, transform)
+
+                # case_dir = os.path.join(split_dir, f"{split}{str(icase).zfill(3)}-{ext}")
+                # file_name = f'{os.path.basename(self.case_dir)}-{split}{str(icase).zfill(4)}-{ext}'
                 # if self.final and len(case_nums) < self.num_eval_cases:
                 #     visualize_timeseries_pyv(eval_data, case_dir, merge=True, name=file_name)
 

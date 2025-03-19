@@ -47,6 +47,7 @@ def main(cfg, device):
         DATADIR_BASE,
         force_reload=cfg.force_reload,
         mesh=cfg.model_type == -1,
+        max_cases=cfg.max_cases,
     )
     
     if cfg.dataset in ['elasticity', 'darcy']:
@@ -226,11 +227,14 @@ class Config:
     eval: bool = False
     cond: bool = False
     restart_file: str = None
-    dataset: str = None
-    force_reload: bool = False
 
     exp_name: str = 'exp'
     seed: int = 0
+
+    # dataset
+    dataset: str = None
+    force_reload: bool = False
+    max_cases: int = None
 
     # model
     model_type: int = 0 # 0: Transolver, 1: TS1, ..., -1: MeshGraphNet

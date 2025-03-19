@@ -59,10 +59,10 @@ class TimeseriesDatasetTransform:
         if self.cells:
             data.cells = graph.cells
         if self.orig:
-            data.pos   = graph.pos
-            data.vel  = graph.vel
-            data.pres = graph.pres
-            data.dens = graph.dens
+            data.pos = graph.pos
+            data.velocity = graph.velocity
+            data.pressure = graph.pressure
+            data.density  = graph.density if hasattr(graph, 'density') else None
         if self.metadata:
             data.metadata = graph.metadata
 
@@ -71,14 +71,14 @@ class TimeseriesDatasetTransform:
     def makefields(self, data, time_step, scale=False):
 
         xs = []
-        xs = [*xs, data.vel[ time_step]] if self.vel  else xs
-        xs = [*xs, data.pres[time_step]] if self.pres else xs
-        xs = [*xs, data.dens[time_step]] if self.dens else xs
+        xs = [*xs, data.velocity[time_step]] if self.vel  else xs
+        xs = [*xs, data.pressure[time_step]] if self.pres else xs
+        xs = [*xs, data.density[time_step] ] if self.dens else xs
 
         out = torch.cat(xs, dim=-1)
         
         if scale:
-            out = out / self.scale.to(xs[0].device).view(-1, 1)
+            out = out / self.scale.to(xs[0].device)
 
         return out
 
@@ -165,6 +165,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         num_workers: Optional[int] = None,
         transform=None, 
         force_reload=False,
+        max_cases: int = None,
     ):
         """
         Create dataset of time-series data from TFRecord files.
@@ -177,7 +178,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         """
 
         self.num_workers = num_workers if num_workers is not None else mp.cpu_count() // 2
-
+        self.max_cases = max_cases
         self.DATADIR = DATADIR
         self.dataset_name = DATADIR.split('/')[-1]
         self.dataset_split = dataset_split
@@ -208,6 +209,9 @@ class TimeseriesDataset(pyg.data.Dataset):
         
     def set_num_cases(self):
         self.num_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
+        if self.max_cases is not None:
+            print(f"Limiting {self.dataset_split} dataset to {self.max_cases} cases")
+            self.num_cases = min(self.num_cases, self.max_cases)
 
     @property
     def raw_paths(self):
