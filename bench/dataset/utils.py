@@ -1,14 +1,19 @@
-# Suppress TensorFlow warnings
 import os
-import json
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset, Subset
 
 import bench
-from bench.dataset.timeseries import TimeseriesDataset
+from bench.dataset.timeseries import TimeseriesDataset, TimeseriesDatasetTransform
 
-def load_dataset(dataset_name, DATADIR_BASE):
+#======================================================================#
+def load_dataset(
+        dataset_name: str,
+        DATADIR_BASE: str,
+        force_reload: bool = False,
+        mesh: bool = False,
+        cells: bool = False,
+    ):
     """Load a dataset by name.
     
     Args:
@@ -42,10 +47,14 @@ def load_dataset(dataset_name, DATADIR_BASE):
     elif dataset_name in ['airfoil', 'cylinder_flow']:
         DATADIR = os.path.join(DATADIR_BASE, 'MeshGraphNets', dataset_name)
 
-        train_data = TimeseriesDataset(DATADIR, 'train')
-        test_data  = TimeseriesDataset(DATADIR, 'test')
+        train_transform = TimeseriesDatasetTransform(mesh=mesh, cells=cells, dens=dataset_name == 'airfoil')
+        test_transform  = TimeseriesDatasetTransform(mesh=mesh, cells=cells, dens=dataset_name == 'airfoil')
+
+        train_data = TimeseriesDataset(DATADIR, 'train', force_reload=force_reload, transform=train_transform)
+        test_data  = TimeseriesDataset(DATADIR, 'test', force_reload=force_reload, transform=test_transform)
         
         return train_data, test_data
         
     else:
         raise ValueError(f"Dataset {dataset_name} not found.") 
+#======================================================================#

@@ -42,24 +42,44 @@ def main(cfg, device):
     # DATA
     #=================#
     
-    _data, data_ = bench.load_dataset(cfg.dataset, DATADIR_BASE)
+    _data, data_ = bench.load_dataset(
+        cfg.dataset,
+        DATADIR_BASE,
+        force_reload=cfg.force_reload,
+        mesh=cfg.model_type == -1,
+    )
     
     if cfg.dataset in ['elasticity', 'darcy']:
         c_in = 2
         c_out = 1
         cond = False
+
+        if GLOBAL_RANK == 0:
+            print(f"Loaded {cfg.dataset} dataset with {len(_data)} train and {len(data_)} test cases.")
+    
     elif cfg.dataset in ['airfoil', 'cylinder_flow']:
-        c_in = 2
-        c_edge = 2
-        c_out = 2
+        
+        c_in = 12  # pos (2) + node_type (7) + vel0 (2) + pres0 (1)
+        c_edge = 2 # x, y
+        c_out = 3  # vel1 (2), pres1 (1)
+        if cfg.dataset == 'airfoil':
+            c_in += 1  # density0
+            c_out += 1 # density1
+        
         cond = True
+
+        if GLOBAL_RANK == 0:
+            print(f"Loaded {cfg.dataset} dataset with {_data.num_cases} train and {data_.num_cases} test cases.")
+            print(f"Number of time-steps: {_data.trajectory_length}")
+    
+            for graph in _data:
+                print(graph)
+                break
+
     else:
         print(f"Dataset {cfg.dataset} not found.")
         exit()
-
-    if GLOBAL_RANK == 0:
-        print(f"Loaded {cfg.dataset} dataset with {len(_data)} train and {len(data_)} test cases.")
-    
+        
     #=================#
     # MODEL
     #=================#
@@ -80,9 +100,10 @@ def main(cfg, device):
                 num_slices=cfg.num_slices,
                 act=cfg.act,
             )
+        elif cfg.model_type == -1:
+            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
         else:
-            print(f"No conditioned model selected.")
-            raise NotImplementedError()
+            raise NotImplementedError("No conditioned model selected.")
     else:
         if cfg.model_type == 0:
             model = bench.Transolver(
@@ -99,11 +120,10 @@ def main(cfg, device):
                 num_slices=cfg.num_slices,
                 k_val=cfg.topk,
             )
-        elif cfg.model_type == 999:
+        elif cfg.model_type == -1:
             model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
         else:
-            print(f"No unconditioned model selected.")
-            raise NotImplementedError()
+            raise NotImplementedError("No unconditioned model selected.")
 
     #=================#
     # TRAIN
@@ -111,17 +131,25 @@ def main(cfg, device):
 
     lossfun  = torch.nn.MSELoss()
     callback = bench.Callback(case_dir,)
-    if cfg.model_type in [1,]:
+    if cfg.model_type in [1,] and (cond == False):
         callback = bench.TSCallback(case_dir,)
+    if cfg.dataset in ['airfoil', 'cylinder_flow']:
+        callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type == -1)
 
     if cfg.train and cfg.epochs > 0:
 
         _batch_size  = cfg.batch_size
-        batch_size_  = 200 # len(data_)
-        _batch_size_ = 200 # len(_data)
+        if cfg.dataset == 'airfoil':
+            batch_size_ = _batch_size_ = 50
+        elif cfg.dataset == 'cylinder_flow':
+            batch_size_ = _batch_size_ = 80
+        elif cfg.dataset == 'elasticity':
+            batch_size_ = _batch_size_ = 200
+        
+        gnn_loader = cfg.dataset in ['airfoil', 'cylinder_flow']
 
         kw = dict(
-            device=device, gnn_loader=False, stats_every=cfg.epochs//10,
+            device=device, gnn_loader=gnn_loader, stats_every=cfg.epochs//10,
             Opt='AdamW', weight_decay=cfg.weight_decay, epochs=cfg.epochs,
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
             lossfun=lossfun, clip_grad_norm=1.,
@@ -199,12 +227,13 @@ class Config:
     cond: bool = False
     restart_file: str = None
     dataset: str = None
+    force_reload: bool = False
 
     exp_name: str = 'exp'
     seed: int = 0
 
     # model
-    model_type: int = 0 # 0: Transolver, 1: TS1, ..., 999: MeshGraphNet
+    model_type: int = 0 # 0: Transolver, 1: TS1, ..., -1: MeshGraphNet
     act: str = 'gelu'
     hidden_dim: int = 128
     num_layers: int = 5

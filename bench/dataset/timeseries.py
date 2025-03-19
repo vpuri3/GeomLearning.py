@@ -10,6 +10,152 @@ __all__ = [
     'TimeseriesDataset',
 ]
 #======================================================================#
+class TimeseriesDatasetTransform:
+    def __init__(
+        self,
+        mesh=False, cells=False,
+        orig=False, metadata=False,
+        vel=True, pres=True, dens=True,
+    ):
+        self.mesh = mesh
+        self.cells = cells
+        self.orig  = orig
+        self.metadata = metadata
+
+        self.vel = vel
+        self.pres = pres
+        self.dens = dens
+        self.nfields = 2 * vel + pres + dens
+
+        self.pos_scale = torch.tensor([1., 1.])
+        self.vel_scale  = torch.tensor([1., 1.])
+        self.pres_scale  = torch.tensor([1.])
+        self.dens_scale  = torch.tensor([1.])
+
+        scale = []
+        scale = [*scale, self.vel_scale ] if self.vel  else scale
+        scale = [*scale, self.pres_scale] if self.pres else scale
+        scale = [*scale, self.dens_scale ] if self.dens  else scale
+        self.scale = torch.cat(scale, dim=-1)
+
+        assert self.nfields == len(self.scale), f"{self.nfields} != {len(self.scale)}"
+
+        return
+
+    def normalize_fields(self, graph):
+        pos   = graph.pos     / self.pos_scale
+        vel  = graph.velocity / self.vel_scale
+        pres = graph.pressure / self.pres_scale
+        dens = graph.density  / self.dens_scale if hasattr(graph, 'density') else None
+        edge_attr = graph.edge_attr / self.pos_scale
+        return pos, vel, pres, dens, edge_attr
+    
+    def make_pyg_data(self, graph, edge_attr, **kw):
+        data = pyg.data.Data(**kw)
+
+        if self.mesh:
+            data.edge_attr  = edge_attr
+            data.edge_index = graph.edge_index
+        if self.cells:
+            data.cells = graph.cells
+        if self.orig:
+            data.pos   = graph.pos
+            data.vel  = graph.vel
+            data.pres = graph.pres
+            data.dens = graph.dens
+        if self.metadata:
+            data.metadata = graph.metadata
+
+        return data
+
+    def makefields(self, data, time_step, scale=False):
+
+        xs = []
+        xs = [*xs, data.vel[ time_step]] if self.vel  else xs
+        xs = [*xs, data.pres[time_step]] if self.pres else xs
+        xs = [*xs, data.dens[time_step]] if self.dens else xs
+
+        out = torch.cat(xs, dim=-1)
+        
+        if scale:
+            out = out / self.scale.to(xs[0].device).view(-1, 1)
+
+        return out
+
+    def __call__(self, graph):
+
+        N  = graph.pos.size(0)
+        md = graph.metadata
+        time_step  = md['time_step'] # zero indexed
+        time_steps = md['time_steps']
+        last_step  = (time_step + 1) == time_steps
+        
+        # normalize fields
+        pos, vel, pres, dens, edge_attr = self.normalize_fields(graph)
+
+        # time
+        t_val = md['dt'] * time_step
+        t  = torch.full((N, 1), t_val)
+
+        if last_step:
+
+            vel_in  = torch.zeros((N, 2))
+            vel_out = torch.zeros((N, 2))
+
+            pres_in  = torch.zeros((N, 1))
+            pres_out = torch.zeros((N, 1))
+
+            dens_in  = torch.zeros((N, 1)) if dens is not None else None
+            dens_out = torch.zeros((N, 1)) if dens is not None else None
+        else:
+
+            vel0  = vel[ time_step]
+            pres0 = pres[time_step]
+            dens0 = dens[time_step] if dens is not None else None
+
+            vel1  = vel[ time_step + 1]
+            pres1 = pres[time_step + 1]
+            dens1 = dens[time_step + 1] if dens is not None else None
+
+            vel_in  = vel0
+            pres_in  = pres0
+            dens_in  = dens0 if dens is not None else None
+
+            vel_out  = vel1  - vel0
+            pres_out = pres1 - pres0
+            dens_out = dens1 - dens0 if dens is not None else None
+
+        # features / labels
+        xs = [pos, graph.node_type_onehot]
+        ys = []
+
+        if self.vel:
+            xs.append(vel_in)
+            ys.append(vel_out)
+        if self.pres:
+            xs.append(pres_in)
+            ys.append(pres_out)
+        if self.dens:
+            xs.append(dens_in)
+            ys.append(dens_out)
+
+        x = torch.cat(xs, dim=-1)
+        y = torch.cat(ys, dim=-1)
+
+        assert y.size(-1) == self.nfields, f"At least one of vel, pres, dens must be True. Got {self.vel}, {self.pres}, {self.dens}."
+
+        data = self.make_pyg_data(
+            graph,
+            edge_attr,
+            x=x, y=y,
+            t=t, t_val=t_val,
+        )
+        
+        del graph
+
+        return data
+
+#======================================================================#
 
 class TimeseriesDataset(pyg.data.Dataset):
     def __init__(
@@ -57,9 +203,12 @@ class TimeseriesDataset(pyg.data.Dataset):
         super().__init__(transform=transform, force_reload=force_reload)
         
         # load in num_cases
-        self.num_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
+        self.set_num_cases()
         assert self.num_cases > 0
         
+    def set_num_cases(self):
+        self.num_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
+
     @property
     def raw_paths(self):
         return [os.path.join(self.DATADIR, f'{self.dataset_split}.tfrecord'),]
@@ -75,7 +224,9 @@ class TimeseriesDataset(pyg.data.Dataset):
         metadata_path = os.path.join(self.processed_dir, 'metadata.pt')
         if not os.path.exists(metadata_path):
             return [metadata_path]
-        return [metadata_path] + [os.path.join(self.processed_dir, f'case_{icase}.pt') for icase in range(self.num_cases)]
+        else:
+            self.set_num_cases()
+            return [metadata_path] + [os.path.join(self.processed_dir, f'case_{icase}.pt') for icase in range(self.num_cases)]
 
     def process(self):
         print(f"Processing {self.raw_paths[0]}...")
@@ -115,8 +266,13 @@ class TimeseriesDataset(pyg.data.Dataset):
         
         case_file = os.path.join(self.processed_dir, f'case_{case_idx}.pt')
         case_data = torch.load(case_file, weights_only=False, mmap=True)
+        case_data.metadata = {
+            'dt': self.meta['dt'],
+            'time_steps': self.meta['trajectory_length'],
+            'time_step': time_step,
+        }
         
-        return case_data[time_step]
+        return case_data
 
 #======================================================================#
 def load_tfrecord(path, meta):
@@ -179,28 +335,24 @@ def convert_to_pyg_data(graph_dict):
     dy = pos[edge_index[0], 1] - pos[edge_index[1], 1]
     edge_attr = torch.stack([dx, dy], dim=-1)
 
-    # Get full velocity sequence [n_steps, n_nodes, 2]
-    velocity = torch.tensor(graph_dict['velocity'], dtype=torch.float)
-    n_steps = velocity.shape[0]
-    
-    # Create training pairs for autoregressive rollout
-    for t in range(n_steps - 1):
-        x = torch.cat([pos, velocity[t], node_type_onehot,], dim=-1)
-        y = velocity[t + 1]
+    velocity = torch.tensor(graph_dict['velocity'], dtype=torch.float) # [n_steps, n_nodes, 2]
+    pressure = torch.tensor(graph_dict['pressure'], dtype=torch.float) # [n_steps, n_nodes, 1]
+    if "density" in graph_dict:
+        density = torch.tensor(graph_dict['density'], dtype=torch.float) # [n_steps, n_nodes, 1]
+    else:
+        density = None
         
-        if "pressure" in graph_dict:
-            x = torch.cat([x, torch.tensor(graph_dict['pressure'][t], dtype=torch.float)], dim=-1)
-            y = torch.cat([y, torch.tensor(graph_dict['pressure'][t + 1], dtype=torch.float)], dim=-1)
-        if "density" in graph_dict:
-            x = torch.cat([x, torch.tensor(graph_dict['density'][t], dtype=torch.float)], dim=-1)
-            y = torch.cat([y, torch.tensor(graph_dict['density'][t + 1], dtype=torch.float)], dim=-1)
-
-        data = pyg.data.Data(
-            x=x, y=y, edge_attr=edge_attr, edge_index=edge_index,
-            pos=pos, cells=cells, node_type=node_type,
-            time_step=t,
-        )
-    
+    data = pyg.data.Data(
+        cells=cells,
+        pos=pos,
+        node_type=node_type,
+        node_type_onehot=node_type_onehot,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        velocity=velocity,
+        pressure=pressure,
+        density=density,
+    )
     return data
 
 #======================================================================#
