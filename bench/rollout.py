@@ -12,15 +12,12 @@ __all__ = [
 @torch.no_grad()
 def rollout(
     model, case_data, transform,
-    autoreg=True, K=1, verbose=False, device=None, tol=1e-4,
+    verbose=False, device=None,
 ):
 
     if device is None:
         device = mlutils.select_device(device)
     model.to(device)
-
-    if not autoreg:
-        K = 1
 
     nf = transform.nfields
 
@@ -36,13 +33,12 @@ def rollout(
         l2s.append(0.)
         r2s.append(1.)
 
-    for k in range(K, len(eval_data)):
+    for k in range(1, len(eval_data)):
         _data = eval_data[k-1].to(device) # given (k-1)-th step
         data  = eval_data[k  ].to(device) # predict k-th step
         
-        if autoreg:
-            _data = _data.clone()
-            _data.x[:, -nf:] = _data.y[:, -nf:]
+        _data = _data.clone()
+        _data.x[:, -nf:] = _data.y[:, -nf:]
 
         target = transform.makefields(data, k, scale=True)
         data.y = model(_data) + _data.x[:, -nf:]

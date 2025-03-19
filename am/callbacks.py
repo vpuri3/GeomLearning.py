@@ -348,8 +348,10 @@ def timeseries_statistics_plot(df, mode, filename=None, dpi=175):
         plt.ylim(-1, 1)
         plt.ylabel('R-Squared')
     elif mode == 'l2':
-        plt.ylim(0, 1e-2) # 10%
-        plt.ylabel('MSE')
+        plt.ylim(0, 1e-1) # 10%
+        plt.ylabel('RMSE')
+        df = df.apply(lambda x: np.sqrt(x))
+        plt.title('Mean RMSE: {:.2e}'.format(df.mean().mean()))
 
     medians = df.median(axis=1)
     q1 = df.quantile(0.25, axis=1)

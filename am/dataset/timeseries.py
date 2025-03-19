@@ -111,7 +111,6 @@ class TimeseriesDatasetTransform(DatasetTransform):
         istep  = md['time_step'] # zero indexed
         nsteps = md['time_steps']
 
-        first_step = istep == 0
         last_step  = (istep + 1) == nsteps
         
         # interface mask (hide inactive layers)
@@ -121,13 +120,6 @@ class TimeseriesDatasetTransform(DatasetTransform):
         else:
             mask = torch.full((N,), True)
 
-        # bulk mask
-        dz = 1
-        fmin = 0.1
-        zi = md['zmax'][istep]
-        zz = (graph.pos[:, 2] - zi + 20 * dz) / (self.pos_scale[2] / 10)
-        mask_bulk = fmin + (1 + torch.tanh(zz)) * (1 - fmin) / 2
-
         # normalize fields
         pos, disp, vmstr, temp, edge_dxyz = self.normalize_fields(graph)
 
@@ -135,11 +127,12 @@ class TimeseriesDatasetTransform(DatasetTransform):
         if nsteps == 1:
             t, dt = 1., 0.
         else:
-            T = md['zmax'][-1] / self.pos_scale[2]
-            dt_val = T / (nsteps - 1)
-            t_val = istep * dt_val
+            T_val  = md['zmax'][-1] / self.pos_scale[2]
+            dt_val = T_val / (nsteps - 1)
+            t_val  = istep * dt_val
         
         t  = torch.full((N, 1), t_val)
+        T  = torch.full((N, 1), T_val)
         dt = torch.full((N, 1), dt_val)
 
         # fields (works for merged=True)
@@ -206,11 +199,13 @@ class TimeseriesDatasetTransform(DatasetTransform):
         data = self.make_pyg_data(
             graph,
             edge_attr,
-            x=x, y=y, t=t, dt=dt,
-            t_val=t_val, dt_val=dt_val,
+            x=x, y=y,
+            t=t, T=T, dt=dt,
+            t_val=t_val, T_val=T_val, dt_val=dt_val,
             mask=mask,
-            mask_bulk=mask_bulk,
         )
+        
+        del graph
 
         return data
 

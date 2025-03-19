@@ -48,6 +48,7 @@ def main(cfg, device):
         force_reload=cfg.force_reload,
         mesh=cfg.model_type == -1,
         max_cases=cfg.max_cases,
+        max_steps=cfg.max_steps,
     )
     
     if cfg.dataset in ['elasticity', 'darcy']:
@@ -60,9 +61,9 @@ def main(cfg, device):
     
     elif cfg.dataset in ['airfoil', 'cylinder_flow']:
         
-        c_in = 12  # pos (2) + node_type (7) + vel0 (2) + pres0 (1)
+        c_in = 11  # pos (2) + node_type (7) + vel0 (2)
         c_edge = 2 # x, y
-        c_out = 3  # vel1 (2), pres1 (1)
+        c_out = 2  # vel1 (2)
         if cfg.dataset == 'airfoil':
             c_in += 1  # density0
             c_out += 1 # density1
@@ -86,9 +87,11 @@ def main(cfg, device):
     #=================#
 
     if cond:
-        if cfg.model_type == 0:
-            model = bench.Transolver(
-                space_dim=c_in+2, out_dim=c_out, fun_dim=0,
+        if cfg.model_type == -1:
+            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
+        elif cfg.model_type == 0:
+            model = am.Transolver(
+                space_dim=c_in+1, out_dim=c_out, fun_dim=0,
                 n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 slice_num=cfg.num_slices,
@@ -101,12 +104,12 @@ def main(cfg, device):
                 num_slices=cfg.num_slices,
                 act=cfg.act,
             )
-        elif cfg.model_type == -1:
-            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
         else:
             raise NotImplementedError("No conditioned model selected.")
     else:
-        if cfg.model_type == 0:
+        if cfg.model_type == -1:
+            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
+        elif cfg.model_type == 0:
             model = bench.Transolver(
                 space_dim=c_in, out_dim=c_out, fun_dim=0,
                 n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
@@ -121,22 +124,25 @@ def main(cfg, device):
                 num_slices=cfg.num_slices,
                 k_val=cfg.topk,
             )
-        elif cfg.model_type == -1:
-            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
         else:
             raise NotImplementedError("No unconditioned model selected.")
+        
+    # Use masked model for timeseries datasets
+    if cfg.dataset in ['airfoil', 'cylinder_flow']:
+        if GLOBAL_RANK == 0:
+            print(f"Using masked model for timeseries datasets {cfg.dataset}")
+        model = am.MaskedModel(model, mask=True, reduce_graph=False)
 
     #=================#
     # TRAIN
     #=================#
 
-    lossfun  = torch.nn.MSELoss()
     callback = bench.Callback(case_dir,)
     if cfg.model_type in [1,] and (cond == False):
         callback = bench.TSCallback(case_dir,)
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
         callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type == -1)
-
+        
     if cfg.train and cfg.epochs > 0:
 
         _batch_size  = cfg.batch_size
@@ -147,6 +153,7 @@ def main(cfg, device):
         elif cfg.dataset == 'elasticity':
             batch_size_ = _batch_size_ = 200
         
+        lossfun = torch.nn.MSELoss()
         gnn_loader = cfg.dataset in ['airfoil', 'cylinder_flow']
 
         kw = dict(
@@ -173,30 +180,44 @@ def main(cfg, device):
         kw['noise_schedule'] = cfg.noise_schedule
         kw['noise_init'] = cfg.noise_init
 
+        #-------------#
+        # make Trainer
+        #-------------#
+
         trainer = mlutils.Trainer(model, _data, data_, **kw)
+        trainer.add_callback('epoch_end', callback)
 
-        gamma_schedule = mlutils.DecayScheduler(
-            init_val=cfg.gamma_init, min_val=cfg.gamma_min,
-            total_steps=trainer.total_steps // 2,
-            decay_type=cfg.gamma_schedule,
-        )
+        #-------------#
+        # batch_lossfun
+        #-------------#
+        if (cfg.model_type == 1) and cfg.dataset == 'elasticity':
+            gamma_schedule = mlutils.DecayScheduler(
+                init_val=cfg.gamma_init, min_val=cfg.gamma_min,
+                total_steps=trainer.total_steps // 2,
+                decay_type=cfg.gamma_schedule,
+            )
 
-        def batch_lossfun(trainer, model, batch):
-            x, y = batch
+            def batch_lossfun(trainer, model, batch):
+                x, y = batch
+                if model.training:
+                    gamma_schedule.step()
+                    gamma = gamma_schedule.get_current_val()
+                    yh = model(x, gamma=gamma)
+                else:
+                    yh = model(x)
+                return lossfun(yh, y)
 
-            if model.training:
-                gamma_schedule.step()
-                gamma = gamma_schedule.get_current_val()
-                yh = model(x, gamma=gamma)
-            else:
-                yh = model(x)
-
-            return lossfun(yh, y)
-        
-        if cfg.model_type == 1:
+            trainer.batch_lossfun = batch_lossfun
+            
+        if cfg.dataset in ['airfoil', 'cylinder_flow']:
+            if GLOBAL_RANK == 0:
+                print(f"Using masked loss for timeseries datasets {cfg.dataset}")
+            batch_lossfun = am.MaskedLoss(mask=True)
             trainer.batch_lossfun = batch_lossfun
 
-        trainer.add_callback('epoch_end', callback)
+        #-------------#
+        # load snapshot and train
+        #-------------#
 
         if cfg.restart_file is not None:
             trainer.load(cfg.restart_file)
@@ -234,7 +255,8 @@ class Config:
     # dataset
     dataset: str = None
     force_reload: bool = False
-    max_cases: int = None
+    max_cases: int = 10
+    max_steps: int = 50
 
     # model
     model_type: int = 0 # 0: Transolver, 1: TS1, ..., -1: MeshGraphNet

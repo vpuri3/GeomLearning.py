@@ -63,8 +63,8 @@ class Callback:
             if self.save_every is None:
                 self.save_every = trainer.stats_every
             if trainer.epoch == 0:
-                return
-                # pass
+                # return
+                pass
             if (trainer.epoch % self.save_every) != 0:
                 return
         #------------------------#
@@ -236,7 +236,9 @@ class TimeseriesCallback(Callback):
         if trainer.DDP:
             torch.distributed.barrier()
 
-        # make plots
+        # write plots and stats
+        rollout_stats = dict()
+
         for split in ['train', 'test']:
             df_l2 = pd.read_csv(os.path.join(ckpt_dir, f'l2_stats_{split}.txt'))
             df_r2 = pd.read_csv(os.path.join(ckpt_dir, f'r2_stats_{split}.txt'))
@@ -246,6 +248,8 @@ class TimeseriesCallback(Callback):
                 timeseries_statistics_plot(df_r2, 'r2', filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
                 timeseries_statistics_plot(df_l2, 'l2', filename=os.path.join(ckpt_dir, f'l2_plot_{split}.png'))
 
+                timeseries_statistics_plot(df_r2, 'r2', filename=os.path.join(ckpt_dir, '..', f'r2_plot_{split}.png'))
+                timeseries_statistics_plot(df_l2, 'l2', filename=os.path.join(ckpt_dir, '..', f'l2_plot_{split}.png'))
         return
 
 

@@ -18,10 +18,10 @@ class MaskedLoss(torch.nn.Module):
     2.  Computes batch loss over the active elements of the graph,
         i.e., regions where batch.mask == True.
     """
-    def __init__(self, mask: bool):
+    def __init__(self, mask: bool, tol: float = 1e-5):
         super().__init__()
 
-        self.tol = 1e-4
+        self.tol = tol
         self.mask = mask
         self.lossfun = nn.MSELoss()
 
@@ -29,7 +29,7 @@ class MaskedLoss(torch.nn.Module):
         yh = model(batch)
 
         # (1)
-        last_step_mask = (batch.t <= 1. - self.tol).view(-1, 1)
+        last_step_mask = (batch.t <= batch.T - self.tol).view(-1, 1)
         yh = yh * last_step_mask
 
         # (2)
@@ -45,17 +45,16 @@ class MaskedLoss(torch.nn.Module):
 #======================================================================#
 class MaskedModel(nn.Module):
     """
-    Model that masks out predictions made at the final step
-    because next step prediction doesn't make any sense there.
+    Reduces the graph to a subgraph of active elements.
     """
-    def __init__(self, model, mask=True, mask_bulk=False):
+    def __init__(self, model, mask=True, reduce_graph=True):
         super().__init__()
         self.mask = mask
+        self.reduce_graph = reduce_graph
         self.model = model
-        self.mask_bulk = mask_bulk
 
     @torch.no_grad()
-    def reduce_graph(self, graph):
+    def _reduce_graph(self, graph):
 
         if hasattr(graph, 'edge_index'):
             if graph.edge_index is None:
@@ -80,15 +79,11 @@ class MaskedModel(nn.Module):
     def forward(self, graph):
         if self.mask:
             mask = graph.mask.view(-1, 1)
-            subgraph = self.reduce_graph(graph)
-            x = self.model(subgraph)
+            graph = self._reduce_graph(graph) if self.reduce_graph else graph
+            x = self.model(graph)
             x = x * mask
         else:
             x = self.model(graph)
-
-        if self.mask_bulk:
-            mask_bulk = graph.mask_bulk.view(-1, 1)
-            x = x * mask_bulk
 
         return x
 

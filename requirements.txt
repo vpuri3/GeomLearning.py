@@ -17,3 +17,6 @@ matplotlib
 trimesh
 rtree # needed for trimesh
 open3d
+
+# bench
+tensorflow

@@ -131,7 +131,7 @@ def train_timeseries(cfg, device):
         print(f"No model selected. Choose between GNN or TRA.")
         raise NotImplementedError()
 
-    model = am.MaskedModel(model, mask=cfg.mask, mask_bulk=cfg.mask_bulk)
+    model = am.MaskedModel(model, mask=cfg.mask)
     
     #=================#
     # TRAIN
@@ -471,7 +471,6 @@ class Config:
     merge: bool = True
     mask: bool = True
     blend: bool = False
-    mask_bulk: bool = False
     interpolate: bool = False
 
     # eval arguments

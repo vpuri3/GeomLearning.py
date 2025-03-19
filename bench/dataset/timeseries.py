@@ -95,7 +95,9 @@ class TimeseriesDatasetTransform:
 
         # time
         t_val = md['dt'] * time_step
-        t  = torch.full((N, 1), t_val)
+        T_val = md['dt'] * time_steps
+        t = torch.full((N, 1), t_val)
+        T = torch.full((N, 1), T_val)
 
         if last_step:
 
@@ -143,12 +145,21 @@ class TimeseriesDatasetTransform:
         y = torch.cat(ys, dim=-1)
 
         assert y.size(-1) == self.nfields, f"At least one of vel, pres, dens must be True. Got {self.vel}, {self.pres}, {self.dens}."
+        
+        # make prediction only on NORMAL and OUTFLOW nodes
+        # https://github.com/google-deepmind/deepmind-research/blob/master/meshgraphnets/common.py
+        mask = torch.zeros(N, dtype=torch.bool)
+        mask[graph.node_type == 0] = True
+        mask[graph.node_type == 5] = True
+        
+        # Training noise? See MeshGraphNets paper
 
         data = self.make_pyg_data(
             graph,
             edge_attr,
             x=x, y=y,
-            t=t, t_val=t_val,
+            t=t, T=T,
+            mask=mask
         )
         
         del graph
@@ -162,10 +173,10 @@ class TimeseriesDataset(pyg.data.Dataset):
         self, 
         DATADIR: str, 
         dataset_split: str,
-        num_workers: Optional[int] = None,
         transform=None, 
         force_reload=False,
         max_cases: int = None,
+        max_steps: int = None,
     ):
         """
         Create dataset of time-series data from TFRecord files.
@@ -177,8 +188,9 @@ class TimeseriesDataset(pyg.data.Dataset):
             force_reload (bool): Whether to force reprocessing of data
         """
 
-        self.num_workers = num_workers if num_workers is not None else mp.cpu_count() // 2
         self.max_cases = max_cases
+        self.max_steps = max_steps
+
         self.DATADIR = DATADIR
         self.dataset_name = DATADIR.split('/')[-1]
         self.dataset_split = dataset_split
@@ -195,8 +207,9 @@ class TimeseriesDataset(pyg.data.Dataset):
         with open(meta_path, 'r') as fp:
             self.meta = json.loads(fp.read())
         self.trajectory_length = self.meta['trajectory_length']
-        self.num_steps = self.trajectory_length - 1
+
         self.num_cases = None
+        self.num_steps = self.trajectory_length
         
         # Ensure processed directory exists
         os.makedirs(self.processed_dir, exist_ok=True)
@@ -207,6 +220,11 @@ class TimeseriesDataset(pyg.data.Dataset):
         self.set_num_cases()
         assert self.num_cases > 0
         
+        # set num_steps
+        if self.max_steps is not None:
+            print(f"Limiting {self.dataset_split} dataset to {self.max_steps} steps")
+            self.num_steps = min(self.num_steps, self.max_steps)
+
     def set_num_cases(self):
         self.num_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
         if self.max_cases is not None:
@@ -260,11 +278,10 @@ class TimeseriesDataset(pyg.data.Dataset):
     def case_range(self, case: int):
         """Get the range of indices for a specific case."""
         i0 = case * self.num_steps
-        i1 = i0 + self.num_steps
+        i1 = i0 + self.num_steps - 1
         return range(i0, i1)
     
     def get(self, idx):
-        """Get a single graph by global index."""
         case_idx = idx // self.num_steps
         time_step = idx % self.num_steps
         
