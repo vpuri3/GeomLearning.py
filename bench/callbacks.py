@@ -86,11 +86,13 @@ class Callback:
         if trainer.GLOBAL_RANK == 0:
             print(f"Saving loss plot to {self.case_dir}/training_loss.png")
             plt.figure(figsize=(8, 4), dpi=175)
-            plt.plot(trainer.training_loss)
+            plt.plot(trainer.training_loss, color='k', label='Training Loss')
             plt.xlabel('Step')
             plt.ylabel('Loss')
             plt.yscale('log')
             plt.title('Training Loss')
+            plt.legend()
+            plt.tight_layout()
             plt.savefig(os.path.join(self.case_dir, 'training_loss.png'))
             plt.close()
 

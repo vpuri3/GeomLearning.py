@@ -256,18 +256,24 @@ class TS2(nn.Module):
         x = data.x.unsqueeze(0) # space dim [B=1, N, C]
 
         assert x.ndim == 3, "x must be [N, C], that is batch size must be 1"
-        if data.get('t_val', None) is None or data.get('dt_val', None) is None:
-            raise RuntimeError(f't or d is None in {data}')
+
+        if data.get('t_val', None) is not None:
+            t = data.t_val.item()
+        elif data.get('t', None) is not None:
+            t = data.t[0].item()
+        else:
+            raise RuntimeError(f't_val, t is None in {data}')
         
-        t = data.t_val.item()
         t = torch.tensor([t], dtype=x.dtype, device=x.device) # [B=1]
         t = self.t_embedding(t)
+        c = t # [B=1, C]
         
-        d = data.dt_val.item()
-        d = torch.tensor([d], dtype=x.dtype, device=x.device) # [B=1]
-        d = self.d_embedding(d)
+        if data.get('dt_val', None) is not None:
+            d = data.dt_val.item()
+            d = torch.tensor([d], dtype=x.dtype, device=x.device) # [B=1]
+            d = self.d_embedding(d)
+            c = c + d
         
-        c = t + d               # [B=1, C]
         x = self.x_embedding(x) # [B=1, N, C]
         for block in self.blocks:
             x = block(x, c)

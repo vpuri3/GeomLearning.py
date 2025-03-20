@@ -3,7 +3,6 @@ import torch
 
 import os
 import yaml
-from tqdm import tqdm
 from jsonargparse import CLI
 from dataclasses import dataclass
 
@@ -54,7 +53,7 @@ def main(cfg, device):
     if cfg.dataset in ['elasticity', 'darcy']:
         c_in = 2
         c_out = 1
-        cond = False
+        time_cond = False
 
         if GLOBAL_RANK == 0:
             print(f"Loaded {cfg.dataset} dataset with {len(_data)} train and {len(data_)} test cases.")
@@ -68,7 +67,7 @@ def main(cfg, device):
             c_in += 1  # density0
             c_out += 1 # density1
         
-        cond = True
+        time_cond = True
 
         if GLOBAL_RANK == 0:
             print(f"Loaded {cfg.dataset} dataset with {_data.num_cases} train and {data_.num_cases} test cases.")
@@ -86,7 +85,7 @@ def main(cfg, device):
     # MODEL
     #=================#
 
-    if cond:
+    if time_cond:
         if cfg.model_type == -1:
             model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
         elif cfg.model_type == 0:
@@ -97,15 +96,28 @@ def main(cfg, device):
                 slice_num=cfg.num_slices,
             )
         elif cfg.model_type == 1:
-            model = bench.TS1(
+            model = am.TS1( # Physics attention + AdaLN conditioning
                 in_dim=c_in, out_dim=c_out,
-                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
-                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
+                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
-                act=cfg.act,
+            )
+        elif cfg.model_type == 2:
+            model = am.TS2( # Slice attention + AdaLN conditioning (query size [M, D])
+                in_dim=c_in, out_dim=c_out,
+                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
+                num_slices=cfg.num_slices,
+            )
+        elif cfg.model_type == 3:
+            model = am.TS3( # Slice attention + slice query conditioning (query size [M, D])
+                in_dim=c_in, out_dim=c_out,
+                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
+                num_slices=cfg.num_slices,
             )
         else:
-            raise NotImplementedError("No conditioned model selected.")
+            raise NotImplementedError("No time-conditioned model selected.")
     else:
         if cfg.model_type == -1:
             model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
@@ -138,7 +150,7 @@ def main(cfg, device):
     #=================#
 
     callback = bench.Callback(case_dir,)
-    if cfg.model_type in [1,] and (cond == False):
+    if cfg.model_type in [1,] and (time_cond == False):
         callback = bench.TSCallback(case_dir,)
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
         callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type == -1)
@@ -246,9 +258,7 @@ class Config:
     # case configuration
     train: bool = False
     eval: bool = False
-    cond: bool = False
     restart_file: str = None
-
     exp_name: str = 'exp'
     seed: int = 0
 

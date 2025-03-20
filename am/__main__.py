@@ -107,21 +107,21 @@ def train_timeseries(cfg, device):
             slice_num=cfg.tra_num_slices,
         )
     elif cfg.TRA == 1:
-        model = am.TS1(
+        model = am.TS1( # Physics attention + AdaLN conditioning
             in_dim=ci, out_dim=co,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
             num_slices=cfg.tra_num_slices,
         )
     elif cfg.TRA == 2:
-        model = am.TS2(
+        model = am.TS2( # Slice attention + AdaLN conditioning (query size [M, D])
             in_dim=ci, out_dim=co,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
             num_slices=cfg.tra_num_slices,
         )
     elif cfg.TRA == 3:
-        model = am.TS3(
+        model = am.TS3( # Slice attention + slice query conditioning (query size [M, D])
             in_dim=ci, out_dim=co,
             n_hidden=cfg.tra_width, n_layers=cfg.tra_num_layers,
             n_head=cfg.tra_num_heads, mlp_ratio=cfg.tra_mlp_ratio,
