@@ -60,7 +60,7 @@ def main(cfg, device):
     
     elif cfg.dataset in ['airfoil', 'cylinder_flow']:
         
-        c_in = 11  # pos (2) + node_type (7) + vel0 (2)
+        c_in = 11  # node_type (7) + pos (2) + vel0 (2)
         c_edge = 2 # x, y
         c_out = 2  # vel1 (2)
         if cfg.dataset == 'airfoil':
@@ -72,6 +72,11 @@ def main(cfg, device):
         if GLOBAL_RANK == 0:
             print(f"Loaded {cfg.dataset} dataset with {_data.num_cases} train and {data_.num_cases} test cases.")
             print(f"Number of time-steps: {_data.trajectory_length}")
+            
+            if cfg.max_steps is not None:
+                print(f"Limiting to {cfg.max_steps} time-steps")
+            if cfg.max_cases is not None:
+                print(f"Limiting to {cfg.max_cases} cases")
     
             for graph in _data:
                 print(graph)
@@ -161,7 +166,7 @@ def main(cfg, device):
         if cfg.dataset == 'airfoil':
             batch_size_ = _batch_size_ = 50
         elif cfg.dataset == 'cylinder_flow':
-            batch_size_ = _batch_size_ = 80
+            batch_size_ = _batch_size_ = 50
         elif cfg.dataset == 'elasticity':
             batch_size_ = _batch_size_ = 200
         
@@ -239,12 +244,13 @@ def main(cfg, device):
     #=================#
     # ANALYSIS
     #=================#
-
-    # if device != 'cpu' and device != torch.device('cpu'):
-    #     torch.cuda.empty_cache()
-    # trainer = mlutils.Trainer(model, _data, data_, device=device)
-    # callback.load(trainer)
-    # callback(trainer, final=True)
+    
+    if cfg.eval:
+        if device != 'cpu' and device != torch.device('cpu'):
+            torch.cuda.empty_cache()
+        trainer = mlutils.Trainer(model, _data, data_, device=device)
+        callback.load(trainer)
+        callback(trainer, final=True)
 
     return
 
@@ -265,7 +271,7 @@ class Config:
     # dataset
     dataset: str = None
     force_reload: bool = False
-    max_cases: int = 10
+    max_cases: int = 10 # only used in cylinder_flow and airfoil
     max_steps: int = 50
 
     # model
