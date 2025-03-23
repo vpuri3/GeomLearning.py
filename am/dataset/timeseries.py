@@ -226,10 +226,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         - `merge`: return fields on graph made by merging all the timeseries
         meshes.
         """
-        if num_workers is None:
-            self.num_workers = mp.cpu_count() // 2
-        else:
-            self.num_workers = num_workers
+        self.num_workers = mp.cpu_count() // 2 if num_workers is None else num_workers
 
         self.merge = merge
         self.roots = [roots] if isinstance(roots, str) else roots

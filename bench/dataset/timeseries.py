@@ -181,6 +181,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         force_reload=False,
         max_cases: int = None,
         max_steps: int = None,
+        num_workers: int = None,
     ):
         """
         Create dataset of time-series data from TFRecord files.
@@ -198,6 +199,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         self.DATADIR = DATADIR
         self.dataset_name = DATADIR.split('/')[-1]
         self.dataset_split = dataset_split
+        self.num_workers = mp.cpu_count() // 2 if num_workers is None else num_workers
         
         assert os.path.exists(DATADIR)
         assert dataset_split in ['train', 'test']
@@ -229,7 +231,7 @@ class TimeseriesDataset(pyg.data.Dataset):
             self.num_steps = min(self.num_steps, self.max_steps)
 
         # normalization stats
-        norm_stats = self.compute_normalization_stats(verbose=False)
+        norm_stats = self.compute_normalization_stats(verbose=True)
         self.transform.apply_normalization_stats(norm_stats)
         # self.compute_normalization_stats(verbose=True)
 
@@ -309,41 +311,26 @@ class TimeseriesDataset(pyg.data.Dataset):
         self.transform.orig = True
         
         for graph in self:
-            norm_stats['pos_min'] = torch.tensor([graph.pos[:,0].min(), graph.pos[:,1].min()])
-            norm_stats['pos_max'] = torch.tensor([graph.pos[:,0].max(), graph.pos[:,1].max()])
-
+            norm_stats = dict(pos_min = graph.pos.min(dim=0).values, pos_max = graph.pos.max(dim=0).values,)
             break
 
-        vel_mean, vel_std = 0., 0.
-        y_mean  , y_std   = 0., 0.
-        x_mean  , x_std   = 0., 0.
-
+        # mp.set_start_method('spawn', force=True)
+        stats = GraphNormStats(num_steps=self.num_steps)
         for graph in self:
-            vel_mean += graph.velocity[:self.num_steps].mean(dim=(0,1))
-            vel_std  += graph.velocity[:self.num_steps].std( dim=(0,1))
-
-            x_mean += graph.x.mean(dim=0)[7:]
-            x_std += graph.x.std(dim=0)[7:]
-            y_mean += graph.y.mean(dim=0)
-            y_std += graph.y.std(dim=0)
-
-            del graph
+            stats.update(graph)
         
-        norm_stats['vel_mean'] = vel_mean / len(self)
-        norm_stats['vel_std'] = vel_std / len(self)
-        norm_stats['input_mean'] = x_mean / len(self)
-        norm_stats['input_std']  = x_std  / len(self)
-        norm_stats['output_mean'] = y_mean / len(self)
-        norm_stats['output_std']  = y_std  / len(self)
-        
+        assert stats.num_graphs == len(self)
+        norm_stats = dict(**norm_stats, **stats.compute())
+
         if verbose:
-            # print(f"pos_min: {norm_stats['pos_min']}")
-            # print(f"pos_max: {norm_stats['pos_max']}")
-            # print(f"vel_mean: {norm_stats['vel_mean']}")
-            # print(f"vel_std : {norm_stats['vel_std']}")
+            print(f"pos_min: {norm_stats['pos_min']}")
+            print(f"pos_max: {norm_stats['pos_max']}")
 
-            # print(f"input_mean: {norm_stats['input_mean']}")
-            # print(f"input_std : {norm_stats['input_std']}")
+            print(f"vel_mean: {norm_stats['vel_mean']}")
+            print(f"vel_std : {norm_stats['vel_std']}")
+
+            print(f"input_mean: {norm_stats['input_mean']}")
+            print(f"input_std : {norm_stats['input_std']}")
 
             print(f"output_mean: {norm_stats['output_mean']}")
             print(f"output_std : {norm_stats['output_std']}")
@@ -351,6 +338,55 @@ class TimeseriesDataset(pyg.data.Dataset):
         self.transform.orig = orig
 
         return norm_stats
+
+class GraphNormStats:
+    def __init__(self, num_steps):
+        self.num_graphs = 0
+        self.num_steps  = num_steps
+        
+        self.pos_min = torch.ones(2) *  torch.inf
+        self.pos_max = torch.ones(2) * -torch.inf
+
+        self.vel_mean    = 0.
+        self.vel_std     = 0.
+        self.input_mean  = 0.
+        self.input_std   = 0.
+        self.output_mean = 0.
+        self.output_std  = 0.
+
+    def update(self, graph):
+        self.num_graphs  += 1
+        self.vel_mean    += graph.velocity[:self.num_steps].mean(dim=(0,1))
+        self.vel_std     += graph.velocity[:self.num_steps].std( dim=(0,1))
+        self.input_mean  += graph.x.mean(dim=0)[7:]
+        self.input_std   += graph.x.std(dim=0)[7:]
+        self.output_mean += graph.y.mean(dim=0)
+        self.output_std  += graph.y.std(dim=0)
+        
+        self.pos_min[0] = torch.min(self.pos_min[0], graph.pos[:,0].min())
+        self.pos_min[1] = torch.min(self.pos_min[1], graph.pos[:,1].min())
+
+        self.pos_max[0] = torch.max(self.pos_max[0], graph.pos[:,0].max())
+        self.pos_max[1] = torch.max(self.pos_max[1], graph.pos[:,1].max())
+        
+        if graph.velocity[:self.num_steps].isnan().any():
+            print(f"number of nans: {graph.velocity[:self.num_steps].isnan().sum()}")
+            print(f"number of infs: {graph.velocity[:self.num_steps].isinf().sum()}")
+
+        del graph
+        
+    def compute(self):
+        assert self.num_graphs > 0
+        return {
+            # 'pos_min'    : self.pos_min,
+            # 'pos_max'    : self.pos_max,
+            'vel_mean'   : self.vel_mean    / self.num_graphs,
+            'vel_std'    : self.vel_std     / self.num_graphs,
+            'input_mean' : self.input_mean  / self.num_graphs,
+            'input_std'  : self.input_std   / self.num_graphs,
+            'output_mean': self.output_mean / self.num_graphs,
+            'output_std' : self.output_std  / self.num_graphs,
+        }
 
 #======================================================================#
 def load_tfrecord(path, meta):
