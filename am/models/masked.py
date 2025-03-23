@@ -26,20 +26,23 @@ class MaskedLoss(torch.nn.Module):
         self.lossfun = nn.MSELoss()
 
     def forward(self, trainer, model, batch):
+        y  = batch.y
         yh = model(batch)
 
-        # (1)
+        # (1) last step mask
         last_step_mask = (batch.t <= batch.T - self.tol).view(-1, 1)
         yh = yh * last_step_mask
-
-        # (2)
+        y  = y  * last_step_mask
+        
+        # (2) remove inactive elements
         if self.mask:
             mask = batch.mask.view(-1,1)
-            denom = mask.sum() * batch.y.size(1)
-            loss = (mask * (yh - batch.y) ** 2).sum() / denom
+            yh = yh * mask
+            y  = y  * mask
+            loss = self.lossfun(yh, y) * yh.numel() / (mask.sum() + 1e-5)
         else:
-            loss = self.lossfun(yh, batch.y)
-
+            loss = self.lossfun(yh, y)
+            
         return loss
 
 #======================================================================#

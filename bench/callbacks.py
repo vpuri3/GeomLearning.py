@@ -86,11 +86,18 @@ class Callback:
         if trainer.GLOBAL_RANK == 0:
             print(f"Saving loss plot to {self.case_dir}/training_loss.png")
             plt.figure(figsize=(8, 4), dpi=175)
-            plt.plot(trainer.training_loss, color='k', label='Training Loss')
+            training_loss = trainer.training_loss
+            if isinstance(training_loss, list):
+                training_loss = torch.tensor(training_loss)
+            training_loss[training_loss < 1e-12] = torch.nan
+            plt.plot(training_loss, color='k', label='Training Loss')
             plt.xlabel('Step')
             plt.ylabel('Loss')
             plt.yscale('log')
-            plt.title('Training Loss')
+            if trainer.stat_vals['train_loss'] is not None:
+                plt.title('Training Loss, final: {:.2e}'.format(trainer.stat_vals['train_loss']))
+            else:
+                plt.title('Training Loss')
             plt.legend()
             plt.tight_layout()
             plt.savefig(os.path.join(self.case_dir, 'training_loss.png'))
@@ -237,9 +244,6 @@ class TimeseriesCallback(Callback):
             
         if trainer.DDP:
             torch.distributed.barrier()
-
-        # write plots and stats
-        rollout_stats = dict()
 
         for split in ['train', 'test']:
             df_l2 = pd.read_csv(os.path.join(ckpt_dir, f'l2_stats_{split}.txt'))
