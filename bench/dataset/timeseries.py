@@ -231,9 +231,8 @@ class TimeseriesDataset(pyg.data.Dataset):
             self.num_steps = min(self.num_steps, self.max_steps)
 
         # normalization stats
-        norm_stats = self.compute_normalization_stats(verbose=True)
+        norm_stats = self.compute_normalization_stats(verbose=False)
         self.transform.apply_normalization_stats(norm_stats)
-        # self.compute_normalization_stats(verbose=True)
 
     def set_num_cases(self):
         self.num_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
@@ -314,12 +313,19 @@ class TimeseriesDataset(pyg.data.Dataset):
             norm_stats = dict(pos_min = graph.pos.min(dim=0).values, pos_max = graph.pos.max(dim=0).values,)
             break
 
-        # mp.set_start_method('spawn', force=True)
         stats = GraphNormStats(num_steps=self.num_steps)
+
+        # mp.set_start_method('spawn', force=True)
+        # with mp.Pool(self.num_workers) as pool:
+        #     list(tqdm(
+        #         pool.imap_unordered(stats.update, self), total=len(self),
+        #         desc=f'Computing normalization for {self.dataset_split}',
+        #         ncols=80,
+        #     ))
         for graph in self:
             stats.update(graph)
         
-        assert stats.num_graphs == len(self)
+        assert stats.num_graphs == len(self), f"Number of graphs processed {stats.num_graphs} != {len(self)}"
         norm_stats = dict(**norm_stats, **stats.compute())
 
         if verbose:
