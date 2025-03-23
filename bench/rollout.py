@@ -25,31 +25,42 @@ def rollout(
     l2s = []
     r2s = []
 
+    out_scale = transform.out_scale.to(device)
+    out_shift = transform.out_shift.to(device)
+    vel_shift = transform.vel_shift.to(device)
+    vel_scale = transform.vel_scale.to(device)
+    
     for (istep, data) in enumerate(case_data):
         data = data.clone()
-        data.y = transform.makefields(data, istep, scale=True)
-        data.e = torch.zeros_like(data.y)
+        data.y = transform.make_fields(data, istep) # normalized velocity field
         eval_data.append(data)
         l2s.append(0.)
         r2s.append(1.)
-
-    for k in range(1, len(eval_data)):
-        _data = eval_data[k-1].to(device) # given (k-1)-th step
-        data  = eval_data[k  ].to(device) # predict k-th step
         
-        _data = _data.clone()
+    for k in range(1, len(eval_data)):
+        _data = eval_data[k-1].clone().to(device) # given (k-1)-th step
+        data  = eval_data[k  ].to(device)         # predict k-th step
+        
         _data.x[:, -nf:] = _data.y[:, -nf:]
 
-        target = transform.makefields(data, k, scale=True)
-        data.y = model(_data) + _data.x[:, -nf:]
+        delta = model(_data)
+        delta = (delta * out_scale + out_shift) / vel_scale
+        target = transform.make_fields(data, k) # normalized velocity field
+
+        data.y = _data.x[:, -nf:] + delta
         data.e = data.y - target
 
         l2s[k] = nn.MSELoss()(data.e, 0 * data.e).item()
         r2s[k] = mlutils.r2(data.y, target)
-
+        
         if verbose:
             print(f'Step {k}: {l2s[k], r2s[k]}')
-
+        
+        del _data
+    
+    del out_scale, out_shift, vel_shift, vel_scale
+            
     return eval_data, l2s, r2s
 
 #======================================================================#
+#

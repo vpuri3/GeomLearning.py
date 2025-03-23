@@ -55,8 +55,8 @@ def load_dataset(
             # dens=dataset_name == 'airfoil',
         )
 
-        train_transform = TimeseriesDatasetTransform(**transform_kwargs)
-        test_transform  = TimeseriesDatasetTransform(**transform_kwargs)
+        train_transform = TimeseriesDatasetTransform(dataset_name, **transform_kwargs)
+        test_transform  = TimeseriesDatasetTransform(dataset_name, **transform_kwargs)
 
         train_data = TimeseriesDataset(DATADIR, 'train', force_reload=force_reload, transform=train_transform, max_cases=max_cases, max_steps=max_steps)
         test_data  = TimeseriesDataset(DATADIR, 'test' , force_reload=force_reload, transform=test_transform , max_cases=max_cases, max_steps=max_steps)

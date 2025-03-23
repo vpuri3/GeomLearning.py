@@ -13,10 +13,13 @@ __all__ = [
 class TimeseriesDatasetTransform:
     def __init__(
         self,
+        dataset_name: str,
         mesh=False, cells=False,
         orig=False, metadata=False,
-        vel=True, pres=True, dens=True,
+        vel=True, pres=False, dens=False,
     ):
+        self.dataset_name = dataset_name
+
         self.mesh = mesh
         self.cells = cells
         self.orig  = orig
@@ -26,30 +29,51 @@ class TimeseriesDatasetTransform:
         self.pres = pres
         self.dens = dens
         self.nfields = 2 * vel + pres + dens
+            
+        # normalization stats
+        self.pos_min = torch.tensor([0., 0.])
+        self.pos_max = torch.tensor([1., 1.])
 
-        self.pos_scale = torch.tensor([1., 1.])
-        self.vel_scale  = torch.tensor([1., 1.])
-        self.pres_scale  = torch.tensor([1.])
-        self.dens_scale  = torch.tensor([1.])
+        self.vel_shift = torch.tensor([0., 0.])
+        self.vel_scale = torch.tensor([1., 1.])
+        
+        self.pres_shift = torch.tensor([0.])
+        self.pres_scale = torch.tensor([1.])
 
-        scale = []
-        scale = [*scale, self.vel_scale ] if self.vel  else scale
-        scale = [*scale, self.pres_scale] if self.pres else scale
-        scale = [*scale, self.dens_scale ] if self.dens  else scale
-        self.scale = torch.cat(scale, dim=-1)
-
-        assert self.nfields == len(self.scale), f"{self.nfields} != {len(self.scale)}"
-
-        return
-
-    def normalize_fields(self, graph):
-        pos   = graph.pos     / self.pos_scale
-        vel  = graph.velocity / self.vel_scale
-        pres = graph.pressure / self.pres_scale
-        dens = graph.density  / self.dens_scale if hasattr(graph, 'density') else None
-        edge_attr = graph.edge_attr / self.pos_scale
-        return pos, vel, pres, dens, edge_attr
+        self.dens_shift = torch.tensor([0.])
+        self.dens_scale = torch.tensor([1.])
     
+        self.out_shift = torch.tensor([0.])
+        self.out_scale = torch.tensor([1.])
+        
+    def apply_normalization_stats(self, norm_stats):
+        self.pos_min = norm_stats['pos_min']
+        self.pos_max = norm_stats['pos_max']
+
+        self.vel_shift = norm_stats['vel_mean']
+        self.vel_scale = norm_stats['vel_std']
+        
+        self.out_shift = norm_stats['output_mean'] * 0.
+        self.out_scale = norm_stats['output_std']
+
+    def make_fields(self, data, time_step):
+        device = data.velocity.device
+
+        xs = []
+        if self.vel:
+            vel = (data.velocity[time_step] - self.vel_shift.to(device)) / self.vel_scale.to(device)
+            xs = [*xs, vel]
+        if self.pres:
+            pres = (data.pressure[time_step] - self.pres_shift.to(device)) / self.pres_scale.to(device)
+            xs = [*xs, pres]
+        if self.dens:
+            dens = (data.density[time_step] - self.dens_shift.to(device)) / self.dens_scale.to(device)
+            xs = [*xs, dens]
+
+        out = torch.cat(xs, dim=-1)
+        
+        return out
+
     def make_pyg_data(self, graph, edge_attr, **kw):
         data = pyg.data.Data(**kw)
 
@@ -62,25 +86,11 @@ class TimeseriesDatasetTransform:
             data.pos = graph.pos
             data.velocity = graph.velocity
             data.pressure = graph.pressure
-            data.density  = graph.density if hasattr(graph, 'density') else None
+            data.density  = graph.density if graph.get('density', None) is not None else None
         if self.metadata:
             data.metadata = graph.metadata
 
         return data
-
-    def makefields(self, data, time_step, scale=False):
-
-        xs = []
-        xs = [*xs, data.velocity[time_step]] if self.vel  else xs
-        xs = [*xs, data.pressure[time_step]] if self.pres else xs
-        xs = [*xs, data.density[time_step] ] if self.dens else xs
-
-        out = torch.cat(xs, dim=-1)
-        
-        if scale:
-            out = out / self.scale.to(xs[0].device)
-
-        return out
 
     def __call__(self, graph):
 
@@ -90,45 +100,39 @@ class TimeseriesDatasetTransform:
         time_steps = md['time_steps']
         last_step  = (time_step + 1) == time_steps
         
-        # normalize fields
-        pos, vel, pres, dens, edge_attr = self.normalize_fields(graph)
-
         # time
         t_val = md['dt'] * time_step
-        T_val = md['dt'] * time_steps
+        T_val = md['dt'] * (time_steps - 1)
         t = torch.full((N, 1), t_val)
         T = torch.full((N, 1), T_val)
+        
+        # get fields
+
+        pos = (graph.pos - self.pos_min) / (self.pos_max - self.pos_min)
+        edge_attr = graph.edge_attr / (self.pos_max - self.pos_min)
 
         if last_step:
-
+            
             vel_in  = torch.zeros((N, 2))
             vel_out = torch.zeros((N, 2))
 
             pres_in  = torch.zeros((N, 1))
             pres_out = torch.zeros((N, 1))
 
-            dens_in  = torch.zeros((N, 1)) if dens is not None else None
-            dens_out = torch.zeros((N, 1)) if dens is not None else None
+            dens_in  = torch.zeros((N, 1))
+            dens_out = torch.zeros((N, 1))
         else:
 
-            vel0  = vel[ time_step]
-            pres0 = pres[time_step]
-            dens0 = dens[time_step] if dens is not None else None
+            vel_in  = (graph.velocity[time_step] - self.vel_shift ) / self.vel_scale
+            pres_in = (graph.pressure[time_step] - self.pres_shift) / self.pres_scale
+            dens_in = (graph.density[ time_step] - self.dens_shift) / self.dens_scale if graph.get('density', None) is not None else None
 
-            vel1  = vel[ time_step + 1]
-            pres1 = pres[time_step + 1]
-            dens1 = dens[time_step + 1] if dens is not None else None
-
-            vel_in  = vel0
-            pres_in  = pres0
-            dens_in  = dens0 if dens is not None else None
-
-            vel_out  = vel1  - vel0
-            pres_out = pres1 - pres0
-            dens_out = dens1 - dens0 if dens is not None else None
-
+            vel_out  = graph.velocity[time_step + 1] - graph.velocity[time_step]
+            pres_out = graph.pressure[time_step + 1] - graph.pressure[time_step]
+            dens_out = graph.density[ time_step + 1] - graph.density[ time_step] if graph.get('density', None) is not None else None
+            
         # features / labels
-        xs = [pos, graph.node_type_onehot]
+        xs = [graph.node_type_onehot, pos,]
         ys = []
 
         if self.vel:
@@ -143,9 +147,9 @@ class TimeseriesDatasetTransform:
 
         x = torch.cat(xs, dim=-1)
         y = torch.cat(ys, dim=-1)
-
-        assert y.size(-1) == self.nfields, f"At least one of vel, pres, dens must be True. Got {self.vel}, {self.pres}, {self.dens}."
         
+        y = (y - self.out_shift) / self.out_scale
+
         # make prediction only on NORMAL and OUTFLOW nodes
         # https://github.com/google-deepmind/deepmind-research/blob/master/meshgraphnets/common.py
         mask = torch.zeros(N, dtype=torch.bool)
@@ -222,13 +226,16 @@ class TimeseriesDataset(pyg.data.Dataset):
         
         # set num_steps
         if self.max_steps is not None:
-            print(f"Limiting {self.dataset_split} dataset to {self.max_steps} steps")
             self.num_steps = min(self.num_steps, self.max_steps)
+
+        # normalization stats
+        norm_stats = self.compute_normalization_stats(verbose=False)
+        self.transform.apply_normalization_stats(norm_stats)
+        # self.compute_normalization_stats(verbose=True)
 
     def set_num_cases(self):
         self.num_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
         if self.max_cases is not None:
-            print(f"Limiting {self.dataset_split} dataset to {self.max_cases} cases")
             self.num_cases = min(self.num_cases, self.max_cases)
 
     @property
@@ -289,11 +296,61 @@ class TimeseriesDataset(pyg.data.Dataset):
         case_data = torch.load(case_file, weights_only=False, mmap=True)
         case_data.metadata = {
             'dt': self.meta['dt'],
-            'time_steps': self.meta['trajectory_length'],
+            'time_steps': self.num_steps,
             'time_step': time_step,
         }
         
         return case_data
+
+    def compute_normalization_stats(self, verbose=True):
+        norm_stats = {}
+
+        orig = self.transform.orig
+        self.transform.orig = True
+        
+        for graph in self:
+            norm_stats['pos_min'] = torch.tensor([graph.pos[:,0].min(), graph.pos[:,1].min()])
+            norm_stats['pos_max'] = torch.tensor([graph.pos[:,0].max(), graph.pos[:,1].max()])
+
+            break
+
+        vel_mean, vel_std = 0., 0.
+        y_mean  , y_std   = 0., 0.
+        x_mean  , x_std   = 0., 0.
+
+        for graph in self:
+            vel_mean += graph.velocity[:self.num_steps].mean(dim=(0,1))
+            vel_std  += graph.velocity[:self.num_steps].std( dim=(0,1))
+
+            x_mean += graph.x.mean(dim=0)[7:]
+            x_std += graph.x.std(dim=0)[7:]
+            y_mean += graph.y.mean(dim=0)
+            y_std += graph.y.std(dim=0)
+
+            del graph
+        
+        norm_stats['vel_mean'] = vel_mean / len(self)
+        norm_stats['vel_std'] = vel_std / len(self)
+        norm_stats['input_mean'] = x_mean / len(self)
+        norm_stats['input_std']  = x_std  / len(self)
+        norm_stats['output_mean'] = y_mean / len(self)
+        norm_stats['output_std']  = y_std  / len(self)
+        
+        if verbose:
+            # print(f"pos_min: {norm_stats['pos_min']}")
+            # print(f"pos_max: {norm_stats['pos_max']}")
+            # print(f"vel_mean: {norm_stats['vel_mean']}")
+            # print(f"vel_std : {norm_stats['vel_std']}")
+
+            # print(f"input_mean: {norm_stats['input_mean']}")
+            # print(f"input_std : {norm_stats['input_std']}")
+
+            print(f"output_mean: {norm_stats['output_mean']}")
+            print(f"output_std : {norm_stats['output_std']}")
+
+        self.transform.orig = orig
+
+        return norm_stats
 
 #======================================================================#
 def load_tfrecord(path, meta):
@@ -328,7 +385,6 @@ def load_tfrecord(path, meta):
         data.append(sample)
     return data
 
-#======================================================================#
 def convert_to_pyg_data(graph_dict):
     """Convert raw MeshGraphNets data to PyTorch Geometric Data objects."""
     
