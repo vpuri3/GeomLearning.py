@@ -175,7 +175,7 @@ class Trainer:
             )
             self.update_schedule_every_epoch = False
         elif Schedule == "CosineAnnealingLR":
-            self.schedule = optim.lr_scheduler.CosineAnnealingLR(self.opt, T_max=self.epochs, eta_min=1e-6)
+            self.schedule = optim.lr_scheduler.CosineAnnealingLR(self.opt, T_max=self.epochs, eta_min=0.)
             self.update_schedule_every_epoch = True
         elif Schedule is None:
             self.schedule = optim.lr_scheduler.ConstantLR(self.opt, factor=1.0, total_iters=1e10)
@@ -190,44 +190,24 @@ class Trainer:
             min_val=noise_min,
         )
         
-        self.config = {
-            "device" : device,
-            "gnn_loader" : self.gnn_loader,
-
-            "data_size" : len(self._data),
-            "num_batches" : len(self._data) // self._batch_size,
-            "batch_size" : _batch_size,
-
-            "num_parameters" : num_parameters(self.model),
-
-            "learning_rate" : lr,
-            "weight_decay" : weight_decay,
-            # "optimizer" : str(self.opt),
-            "schedule"  : str(self.schedule),
-
-            "epochs" : self.epochs,
-            "lossfun" : str(self.lossfun),
-        }
-
-        if verbose and print_config and (self.GLOBAL_RANK == 0):
-            print(model)
-            print(f"Trainer config:")
-            for (k, v) in config.items():
-                print(f"{k} : {v}")
-
         ###
         # STATISTICS
         ###
 
-        self.training_loss = []
         self.statsfun = statsfun
-        self.callbacks = collections.defaultdict(list)
+        self.training_loss = []
         self.stat_vals = {
             "train_loss" : None,
             "test_loss" : None,
             "train_stats" : None,
             "test_stats" : None,
         }
+        
+        ###
+        # Callbacks
+        ###
+
+        self.callbacks = collections.defaultdict(list)
 
     #------------------------#
     # CALLBACKS
@@ -301,8 +281,8 @@ class Trainer:
 
         if self.DDP:
             DS = torch.utils.data.distributed.DistributedSampler
-            _shuffle, __shuffle = False, False
-            _sampler, __sampler = DS(self._data), DS(self._data, shuffle=False)
+            _shuffle, _shuffle_ = False, False
+            _sampler, _sampler_ = DS(self._data), DS(self._data, shuffle=False)
 
             if self.data_ is not None:
                 shuffle_ = False
@@ -311,15 +291,15 @@ class Trainer:
                 shuffle_ = False
                 sampler_ = None
         else:
-            _shuffle, __shuffle, shuffle_ = True, False, False
-            _sampler, __sampler, sampler_ = None, None , None
+            _shuffle, _shuffle_, shuffle_ = True, False, False
+            _sampler, _sampler_, sampler_ = None, None , None
 
         _args  = dict(shuffle= _shuffle, sampler= _sampler)
-        __args = dict(shuffle=__shuffle, sampler=__sampler)
+        _args_ = dict(shuffle=_shuffle_, sampler=_sampler_)
         args_  = dict(shuffle=shuffle_ , sampler=sampler_ )
 
         self._loader  = DL(self._data, batch_size=self._batch_size , collate_fn=self.collate_fn, **_args,)
-        self._loader_ = DL(self._data, batch_size=self._batch_size_, collate_fn=self.collate_fn, **__args,)
+        self._loader_ = DL(self._data, batch_size=self._batch_size_, collate_fn=self.collate_fn, **_args_,)
 
         if self.data_ is not None:
             self.loader_ = DL(self.data_, batch_size=self.batch_size_, collate_fn=self.collate_fn, **args_)
@@ -511,7 +491,7 @@ class Trainer:
             "train_stats" : _stats,
             "test_stats" : stats_,
         }
-
+        
         return
 #======================================================================#
 #
