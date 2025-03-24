@@ -304,8 +304,9 @@ class TimeseriesDataset(pyg.data.Dataset):
         return case_data
 
     def compute_normalization_stats(self, verbose=True):
-        norm_stats = {}
+        print(f"Computing normalization stats for {self.dataset_split}...")
 
+        norm_stats = {}
         orig = self.transform.orig
         self.transform.orig = True
         
