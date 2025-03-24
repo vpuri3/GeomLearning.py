@@ -11,8 +11,12 @@ __all__ = [
 #======================================================================#
 @torch.no_grad()
 def rollout(
-    model, case_data, transform,
-    verbose=False, device=None,
+    model,
+    case_data,
+    transform,
+    verbose=False,
+    device=None,
+    init_step=0,
 ):
 
     if device is None:
@@ -32,7 +36,7 @@ def rollout(
     
     for (istep, data) in enumerate(case_data):
         data = data.clone()
-        data.y = transform.make_fields(data, istep) # normalized velocity field
+        data.y = transform.make_fields(data, init_step + istep) # normalized velocity field
         eval_data.append(data)
         l2s.append(0.)
         r2s.append(1.)
@@ -45,7 +49,7 @@ def rollout(
 
         delta = model(_data)
         delta = (delta * out_scale + out_shift) / vel_scale
-        target = transform.make_fields(data, k) # normalized velocity field
+        target = transform.make_fields(data, k + init_step) # normalized velocity field
 
         data.y = _data.x[:, -nf:] + delta
         data.e = data.y - target

@@ -48,6 +48,7 @@ def main(cfg, device):
         mesh=cfg.model_type == -1,
         max_cases=cfg.max_cases,
         max_steps=cfg.max_steps,
+        init_step=cfg.init_step,
     )
     
     if cfg.dataset in ['elasticity', 'darcy']:
@@ -63,9 +64,6 @@ def main(cfg, device):
         c_in = 11  # node_type (7) + pos (2) + vel0 (2)
         c_edge = 2 # x, y
         c_out = 2  # vel1 (2)
-        if cfg.dataset == 'airfoil':
-            c_in += 1  # density0
-            c_out += 1 # density1
         
         time_cond = True
 
@@ -164,7 +162,7 @@ def main(cfg, device):
 
         _batch_size  = cfg.batch_size
         if cfg.dataset == 'airfoil':
-            batch_size_ = _batch_size_ = 50
+            batch_size_ = _batch_size_ = 20
         elif cfg.dataset == 'cylinder_flow':
             batch_size_ = _batch_size_ = 50
         elif cfg.dataset == 'elasticity':
@@ -272,16 +270,8 @@ class Config:
     dataset: str = None
     force_reload: bool = False
     max_cases: int = 10 # only used in cylinder_flow and airfoil
-    max_steps: int = 50
-
-    # model
-    model_type: int = 0 # 0: Transolver, 1: TS1, ..., -1: MeshGraphNet
-    act: str = 'gelu'
-    hidden_dim: int = 128
-    num_layers: int = 5
-    num_heads: int = 8
-    mlp_ratio: float = 2.0
-    num_slices: int = 32
+    max_steps: int = 51
+    init_step: int = 300
 
     # training arguments
     epochs: int = 100
@@ -293,6 +283,15 @@ class Config:
     one_cycle_div_factor: float = 25
     one_cycle_final_div_factor: float = 40
     one_cycle_three_phase: bool = False
+
+    # model
+    model_type: int = 0 # 0: Transolver, 1: TS1, ..., -1: MeshGraphNet
+    act: str = 'gelu'
+    hidden_dim: int = 128
+    num_layers: int = 5
+    num_heads: int = 8
+    mlp_ratio: float = 2.0
+    num_slices: int = 32
 
     topk: int = 0
     gamma_min: float = 0e-4

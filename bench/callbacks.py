@@ -15,6 +15,10 @@ import matplotlib.pyplot as plt
 
 import mlutils
 
+from bench.rollout import rollout
+from am.callbacks import timeseries_statistics_plot
+from am.callbacks import hstack_dataframes_across_ranks, vstack_dataframes_across_ranks
+
 __all__ = [
     'Callback',
     'TimeseriesCallback',
@@ -123,10 +127,6 @@ class Callback:
         pass
 
 #======================================================================#
-from bench.rollout import rollout
-from am.callbacks import timeseries_statistics_plot
-from am.callbacks import hstack_dataframes_across_ranks, vstack_dataframes_across_ranks
-
 class TimeseriesCallback(Callback):
     def __init__(
         self,
@@ -198,16 +198,17 @@ class TimeseriesCallback(Callback):
             for icase in range(icase0, icase1):
                 case_idx = dataset.case_range(icase)
                 case_data = dataset[case_idx]
+                
+                assert len(case_data) == dataset.num_steps, f"got {len(case_data)} steps, expected {dataset.num_steps} steps for case_idx = {case_idx}"
 
-                case_nums.append(icase)
-
-                eval_data, l2s, r2s = rollout(model, case_data, transform)
+                eval_data, l2s, r2s = rollout(model, case_data, transform, init_step=dataset.init_step)
 
                 # case_dir = os.path.join(split_dir, f"{split}{str(icase).zfill(3)}-{ext}")
                 # file_name = f'{os.path.basename(self.case_dir)}-{split}{str(icase).zfill(4)}-{ext}'
                 # if self.final and len(case_nums) < self.num_eval_cases:
                 #     visualize_timeseries_pyv(eval_data, case_dir, merge=True, name=file_name)
 
+                case_nums.append(icase)
                 l2_cases.append(l2s)
                 r2_cases.append(r2s)
 

@@ -15,6 +15,7 @@ def load_dataset(
         cells: bool = False,
         max_cases: int = None,
         max_steps: int = None,
+        init_step: int = None,
     ):
     """Load a dataset by name.
     
@@ -52,14 +53,20 @@ def load_dataset(
         transform_kwargs = dict(
             mesh=mesh, cells=cells,
             vel=True, pres=False, dens=False,
-            # dens=dataset_name == 'airfoil',
+        )
+        
+        dataset_kwargs = dict(
+            force_reload=force_reload,
+            max_cases=max_cases,
+            max_steps=max_steps,
+            init_step=init_step,
         )
 
         train_transform = TimeseriesDatasetTransform(dataset_name, **transform_kwargs)
         test_transform  = TimeseriesDatasetTransform(dataset_name, **transform_kwargs)
 
-        train_data = TimeseriesDataset(DATADIR, 'train', force_reload=force_reload, transform=train_transform, max_cases=max_cases, max_steps=max_steps)
-        test_data  = TimeseriesDataset(DATADIR, 'test' , force_reload=force_reload, transform=test_transform , max_cases=max_cases, max_steps=max_steps)
+        train_data = TimeseriesDataset(DATADIR, 'train', transform=train_transform, **dataset_kwargs)
+        test_data  = TimeseriesDataset(DATADIR, 'test' , transform=test_transform , **dataset_kwargs)
         
         return train_data, test_data
         

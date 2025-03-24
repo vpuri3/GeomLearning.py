@@ -96,23 +96,30 @@ class TimeseriesDatasetTransform:
 
         N  = graph.pos.size(0)
         md = graph.metadata
-        time_step  = md['time_step'] # zero indexed
-        time_steps = md['time_steps']
-        last_step  = (time_step + 1) == time_steps
+        dt = md['dt']
+        time_idx  = md['time_idx']  # {0, num_steps-1} == range(0, num_steps)
+        init_step = md['init_step']
+        num_steps = md['num_steps']
+        last_step = (time_idx + 1) == num_steps
+        time_step = time_idx + init_step
         
-        # time
-        t_val = md['dt'] * time_step
-        T_val = md['dt'] * (time_steps - 1)
+        t0 = dt * init_step
+        tt = dt * (init_step + time_idx)
+        tf = dt * (init_step + num_steps - 1)
+
+        t_val = (tt - t0) / (tf - t0)
+        T_val = (tf - t0) / (tf - t0)
+        
         t = torch.full((N, 1), t_val)
         T = torch.full((N, 1), T_val)
         
         # get fields
-
         pos = (graph.pos - self.pos_min) / (self.pos_max - self.pos_min)
         edge_attr = graph.edge_attr / (self.pos_max - self.pos_min)
 
+        # print(f"init_step: {init_step}, time_idx: {time_idx}, num_steps: {num_steps}, time_step: {time_step}, t: {t_val}, T: {T_val}, last_step: {last_step}")
+
         if last_step:
-            
             vel_in  = torch.zeros((N, 2))
             vel_out = torch.zeros((N, 2))
 
@@ -181,6 +188,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         force_reload=False,
         max_cases: int = None,
         max_steps: int = None,
+        init_step: int = None,
         num_workers: int = None,
     ):
         """
@@ -216,6 +224,7 @@ class TimeseriesDataset(pyg.data.Dataset):
 
         self.num_cases = None
         self.num_steps = self.trajectory_length
+        self.init_step = init_step if init_step is not None else 0
         
         # Ensure processed directory exists
         os.makedirs(self.processed_dir, exist_ok=True)
@@ -286,25 +295,26 @@ class TimeseriesDataset(pyg.data.Dataset):
     def case_range(self, case: int):
         """Get the range of indices for a specific case."""
         i0 = case * self.num_steps
-        i1 = i0 + self.num_steps - 1
+        i1 = i0 + self.num_steps
         return range(i0, i1)
     
     def get(self, idx):
         case_idx = idx // self.num_steps
-        time_step = idx % self.num_steps
+        time_idx = idx %  self.num_steps
         
         case_file = os.path.join(self.processed_dir, f'case_{case_idx}.pt')
         case_data = torch.load(case_file, weights_only=False, mmap=True)
         case_data.metadata = {
             'dt': self.meta['dt'],
-            'time_steps': self.num_steps,
-            'time_step': time_step,
+            'time_idx': time_idx,
+            'init_step': self.init_step,
+            'num_steps': self.num_steps,
         }
         
         return case_data
 
     def compute_normalization_stats(self, verbose=True):
-        print(f"Computing normalization stats for {self.dataset_split}...")
+        print(f"Computing normalization stats for {self.dataset_split} dataset...")
 
         norm_stats = {}
         orig = self.transform.orig
@@ -314,7 +324,7 @@ class TimeseriesDataset(pyg.data.Dataset):
             norm_stats = dict(pos_min = graph.pos.min(dim=0).values, pos_max = graph.pos.max(dim=0).values,)
             break
 
-        stats = GraphNormStats(num_steps=self.num_steps)
+        stats = GraphNormStats(num_steps=self.num_steps, init_step=self.init_step)
 
         # mp.set_start_method('spawn', force=True)
         # with mp.Pool(self.num_workers) as pool:
@@ -347,9 +357,11 @@ class TimeseriesDataset(pyg.data.Dataset):
         return norm_stats
 
 class GraphNormStats:
-    def __init__(self, num_steps):
+    def __init__(self, num_steps, init_step):
         self.num_graphs = 0
         self.num_steps  = num_steps
+        self.init_step  = init_step
+        self.idx_range  = range(init_step, init_step + num_steps)
         
         self.pos_min = torch.ones(2) *  torch.inf
         self.pos_max = torch.ones(2) * -torch.inf
@@ -360,11 +372,11 @@ class GraphNormStats:
         self.input_std   = 0.
         self.output_mean = 0.
         self.output_std  = 0.
-
+        
     def update(self, graph):
         self.num_graphs  += 1
-        self.vel_mean    += graph.velocity[:self.num_steps].mean(dim=(0,1))
-        self.vel_std     += graph.velocity[:self.num_steps].std( dim=(0,1))
+        self.vel_mean    += graph.velocity[self.idx_range].mean(dim=(0,1))
+        self.vel_std     += graph.velocity[self.idx_range].std( dim=(0,1))
         self.input_mean  += graph.x.mean(dim=0)[7:]
         self.input_std   += graph.x.std(dim=0)[7:]
         self.output_mean += graph.y.mean(dim=0)
