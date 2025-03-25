@@ -16,6 +16,7 @@ def load_dataset(
         max_cases: int = None,
         max_steps: int = None,
         init_step: int = None,
+        init_case: int = None,
     ):
     """Load a dataset by name.
     
@@ -65,7 +66,7 @@ def load_dataset(
         train_transform = TimeseriesDatasetTransform(dataset_name, **transform_kwargs)
         test_transform  = TimeseriesDatasetTransform(dataset_name, **transform_kwargs)
 
-        train_data = TimeseriesDataset(DATADIR, 'train', transform=train_transform, **dataset_kwargs)
+        train_data = TimeseriesDataset(DATADIR, 'train', transform=train_transform, **dataset_kwargs, init_case=init_case)
         test_data  = TimeseriesDataset(DATADIR, 'test' , transform=test_transform , **dataset_kwargs)
         
         return train_data, test_data

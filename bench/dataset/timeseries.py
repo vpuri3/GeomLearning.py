@@ -189,6 +189,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         max_cases: int = None,
         max_steps: int = None,
         init_step: int = None,
+        init_case: int = None,
         num_workers: int = None,
     ):
         """
@@ -224,8 +225,10 @@ class TimeseriesDataset(pyg.data.Dataset):
 
         self.num_cases = None
         self.num_steps = self.trajectory_length
+
         self.init_step = init_step if init_step is not None else 0
-        
+        self.init_case = init_case if init_case is not None else 0
+
         # Ensure processed directory exists
         os.makedirs(self.processed_dir, exist_ok=True)
         
@@ -299,7 +302,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         return range(i0, i1)
     
     def get(self, idx):
-        case_idx = idx // self.num_steps
+        case_idx = idx // self.num_steps + self.init_case
         time_idx = idx %  self.num_steps
         
         case_file = os.path.join(self.processed_dir, f'case_{case_idx}.pt')

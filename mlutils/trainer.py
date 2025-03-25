@@ -299,7 +299,7 @@ class Trainer:
         args_  = dict(shuffle=shuffle_ , sampler=sampler_ )
 
         self._loader  = DL(self._data, batch_size=self._batch_size , collate_fn=self.collate_fn, **_args,)
-        self._loader_ = DL(self._data, batch_size=self._batch_size_, collate_fn=self.collate_fn, **_args_,)
+        self._loader_ = DL(self._data, batch_size=self._batch_size_, collate_fn=self.collate_fn, **_args_)
 
         if self.data_ is not None:
             self.loader_ = DL(self.data_, batch_size=self.batch_size_, collate_fn=self.collate_fn, **args_)
@@ -428,11 +428,9 @@ class Trainer:
 
         return loss
 
-    def get_batch_size(self, batch):
-        if self.gnn_loader:
-            return batch.y.size(0)
-        else:
-            return batch[1].size(0)
+    def get_batch_size(self, batch, loader):
+        bs = batch.num_graphs if self.gnn_loader else batch[0].size(0)
+        return min(bs, loader.batch_size)
 
     #------------------------#
     # STATISTICS
@@ -444,7 +442,7 @@ class Trainer:
 
         N, L = 0, 0.0
         for batch in loader:
-            n = self.get_batch_size(batch)
+            n = self.get_batch_size(batch, loader)
             l = self.batch_loss(batch).item()
             N += n
             L += l * n
@@ -464,7 +462,8 @@ class Trainer:
         return loss, None
 
     def statistics(self):
-        _loss, _stats = self.evaluate(self._loader_)
+        # _loss, _stats = self.evaluate(self._loader_)
+        _loss, _stats = self.evaluate(self._loader)
 
         if self.loader_ is not None:
             loss_, stats_ = self.evaluate(self.loader_)

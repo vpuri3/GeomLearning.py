@@ -49,6 +49,7 @@ def main(cfg, device):
         max_cases=cfg.max_cases,
         max_steps=cfg.max_steps,
         init_step=cfg.init_step,
+        init_case=cfg.init_case,
     )
     
     if cfg.dataset in ['elasticity', 'darcy']:
@@ -272,6 +273,7 @@ class Config:
     max_cases: int = 10 # only used in cylinder_flow and airfoil
     max_steps: int = 51
     init_step: int = 300
+    init_case: int = 0
 
     # training arguments
     epochs: int = 100
