@@ -1,6 +1,7 @@
 #
 import torch
 from torch import nn
+import torch.nn.functional as F
 import torch_geometric as pyg
 from mlutils.utils import check_package_version_lteq
 
@@ -23,9 +24,15 @@ class MaskedLoss(torch.nn.Module):
 
         self.tol = tol
         self.mask = mask
-        self.lossfun = nn.MSELoss()
 
-    def forward(self, trainer, model, batch):
+    def forward(self, trainer, model, batch, debug=False):
+        losses = []
+        for graph in batch.to_data_list():
+            losses.append(self.forward_single(trainer, model, graph, debug))
+
+        return sum(losses) / len(losses)
+
+    def forward_single(self, trainer, model, batch, debug=False):
         y  = batch.y
         yh = model(batch)
 
@@ -39,10 +46,12 @@ class MaskedLoss(torch.nn.Module):
             mask = batch.mask.view(-1,1)
             yh = yh * mask
             y  = y  * mask
-            loss = self.lossfun(yh, y) * yh.numel() / (mask.sum() + 1e-5)
-        else:
-            loss = self.lossfun(yh, y)
-            
+
+        # # if loss > 1e1:
+        # #     print(f'loss: {loss}, t: {batch.t[0].item()}, T: {batch.T[0].item()}')
+
+        loss = F.mse_loss(yh, y)
+
         return loss
 
 #======================================================================#
@@ -58,7 +67,7 @@ class MaskedModel(nn.Module):
 
     @torch.no_grad()
     def _reduce_graph(self, graph):
-
+        
         if hasattr(graph, 'edge_index'):
             if graph.edge_index is None:
                 return graph

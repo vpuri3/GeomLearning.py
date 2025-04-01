@@ -274,7 +274,6 @@ class Trainer:
     def make_dataloader(self):
         if self.gnn_loader:
             import torch_geometric as pyg
-
             DL = pyg.loader.DataLoader
         else:
             DL = torch.utils.data.DataLoader
@@ -287,18 +286,18 @@ class Trainer:
             if self.data_ is not None:
                 shuffle_ = False
                 sampler_ = DS(self.data_, shuffle=False)
-            else: # unused
+            else:
                 shuffle_ = False
                 sampler_ = None
         else:
             _shuffle, _shuffle_, shuffle_ = True, False, False
             _sampler, _sampler_, sampler_ = None, None , None
 
-        _args  = dict(shuffle= _shuffle, sampler= _sampler)
+        _args  = dict(shuffle=_shuffle , sampler=_sampler )
         _args_ = dict(shuffle=_shuffle_, sampler=_sampler_)
         args_  = dict(shuffle=shuffle_ , sampler=sampler_ )
 
-        self._loader  = DL(self._data, batch_size=self._batch_size , collate_fn=self.collate_fn, **_args,)
+        self._loader  = DL(self._data, batch_size=self._batch_size , collate_fn=self.collate_fn, **_args )
         self._loader_ = DL(self._data, batch_size=self._batch_size_, collate_fn=self.collate_fn, **_args_)
 
         if self.data_ is not None:
@@ -428,13 +427,13 @@ class Trainer:
 
         return loss
 
-    def get_batch_size(self, batch, loader):
-        bs = batch.num_graphs if self.gnn_loader else batch[0].size(0)
-        return min(bs, loader.batch_size)
-
     #------------------------#
     # STATISTICS
     #------------------------#
+
+    def get_batch_size(self, batch, loader):
+        bs = batch.num_graphs if self.gnn_loader else batch[0].size(0)
+        return min(bs, loader.batch_size)
 
     @torch.no_grad()
     def evaluate(self, loader):
@@ -446,7 +445,7 @@ class Trainer:
             l = self.batch_loss(batch).item()
             N += n
             L += l * n
-
+            
         if self.DDP:
             L = torch.tensor(L, device=self.device)
             N = torch.tensor(N, device=self.device)
@@ -462,8 +461,8 @@ class Trainer:
         return loss, None
 
     def statistics(self):
-        # _loss, _stats = self.evaluate(self._loader_)
-        _loss, _stats = self.evaluate(self._loader)
+        
+        _loss, _stats = self.evaluate(self._loader_)
 
         if self.loader_ is not None:
             loss_, stats_ = self.evaluate(self.loader_)
