@@ -153,7 +153,7 @@ def main(cfg, device):
     # TRAIN
     #=================#
 
-    callback = bench.Callback(case_dir,)
+    callback = mlutils.Callback(case_dir,)
     if cfg.model_type in [1,] and (time_cond == False):
         callback = bench.TSCallback(case_dir,)
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
