@@ -323,7 +323,12 @@ class TimeseriesDataset(pyg.data.Dataset):
     
     def exclude_cases(self):
         df = self.compute_vel_norm()
-        included_cases = (df['vel_x'] < 0.7) & (df['vel_y'] < 0.15)
+        if self.dataset_name == 'cylinder_flow':
+            included_cases = (df['vel_x'] < 0.7) & (df['vel_y'] < 0.15)
+        elif self.dataset_name == 'airfoil':
+            included_cases = (df['vel_x'] < torch.inf) & (df['vel_y'] < torch.inf)
+        else:
+            raise ValueError(f"Dataset {self.dataset_name} not supported")
         self.included_cases = [i for i in self.included_cases if included_cases[i]]
         return
 
