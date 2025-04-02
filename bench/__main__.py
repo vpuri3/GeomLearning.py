@@ -164,9 +164,10 @@ def main(cfg, device):
 
         _batch_size  = cfg.batch_size
         if cfg.dataset == 'airfoil':
-            batch_size_ = _batch_size_ = 20
+            _batch_size = 1
+            batch_size_ = _batch_size_ = 1 # 20
         elif cfg.dataset == 'cylinder_flow':
-            batch_size_ = _batch_size_ = 50
+            batch_size_ = _batch_size_ = 1 # 50
         elif cfg.dataset == 'elasticity':
             batch_size_ = _batch_size_ = 200
         
