@@ -195,13 +195,16 @@ class Trainer:
         ###
 
         self.statsfun = statsfun
-        self.training_loss = []
         self.stat_vals = {
             "train_loss" : None,
             "test_loss" : None,
             "train_stats" : None,
             "test_stats" : None,
         }
+        self.train_loss_per_batch = []
+        self.num_steps_fullbatch  = []
+        self.train_loss_fullbatch = []
+        self.test_loss_fullbatch  = []
         
         ###
         # Callbacks
@@ -240,7 +243,7 @@ class Trainer:
             snapshot['model_state'] = self.model.state_dict()
         snapshot['opt_state'] = self.opt.state_dict()
         snapshot['schedule_state'] = None if (self.schedule is None) else self.schedule.state_dict()
-        snapshot['training_loss'] = self.training_loss
+        snapshot['train_loss_per_batch'] = self.train_loss_per_batch
 
         torch.save(snapshot, save_path)
 
@@ -262,7 +265,7 @@ class Trainer:
             self.model.load_state_dict(snapshot['model_state'])
         self.opt.load_state_dict(snapshot['opt_state'])
         self.schedule.load_state_dict(snapshot['schedule_state'])
-        self.training_loss = snapshot['training_loss']
+        self.train_loss_per_batch = snapshot['train_loss_per_batch']
         
         # noise schedul
         self.noise_schedule.set_current_step(self.epoch * self.steps_per_epoch)
@@ -380,7 +383,7 @@ class Trainer:
             loss = self.batch_loss(batch)
             loss.backward()
 
-            self.training_loss.append(loss.item())
+            self.train_loss_per_batch.append(loss.item())
 
             self.trigger_callbacks("batch_post_grad")
             if self.clip_grad_norm is not None:
@@ -489,6 +492,9 @@ class Trainer:
             "train_stats" : _stats,
             "test_stats" : stats_,
         }
+        self.train_loss_fullbatch.append(_loss)
+        self.test_loss_fullbatch.append(loss_)
+        self.num_steps_fullbatch.append(len(self.train_loss_per_batch))
         
         return
 #======================================================================#

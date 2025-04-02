@@ -74,26 +74,29 @@ class Callback:
             with open(os.path.join(ckpt_dir, 'stats.json'), 'w') as f:
                 json.dump(trainer.stat_vals, f)
 
-        # save training loss plot
+        # save loss plot
         if trainer.GLOBAL_RANK == 0:
             print(f"Saving loss plot to {self.case_dir}/training_loss.png")
             plt.figure(figsize=(8, 4), dpi=175)
-            training_loss = trainer.training_loss
-            if isinstance(training_loss, list):
-                training_loss = torch.tensor(training_loss)
-            training_loss[training_loss < 1e-12] = torch.nan
-            plt.plot(training_loss, color='k', label='Training Loss')
+            train_loss_per_batch = trainer.train_loss_per_batch
+            if isinstance(train_loss_per_batch, list):
+                train_loss_per_batch = torch.tensor(train_loss_per_batch)
+            train_loss_per_batch[train_loss_per_batch < 1e-12] = torch.nan
+            plt.plot(train_loss_per_batch, color='k', label='Train loss (per batch)', alpha=0.5)
+            # plt.scatter(range(len(train_loss_per_batch)), train_loss_per_batch, color='k', label='Train loss (per batch)', marker_size=10)
+            plt.plot(trainer.num_steps_fullbatch, trainer.train_loss_fullbatch, color='r', label='Train loss (full batch)')
+            plt.plot(trainer.num_steps_fullbatch, trainer.test_loss_fullbatch , color='b', label='Test loss (full batch)')
             plt.xlabel('Step')
             plt.ylabel('Loss')
             plt.yscale('log')
             if trainer.stat_vals['train_loss'] is not None:
-                plt.title('Training Loss, final: {:.2e}'.format(trainer.stat_vals['train_loss']))
+                plt.title(f'Train Loss (final): {trainer.stat_vals["train_loss"]:.2e}, Test Loss (final): {trainer.stat_vals["test_loss"]:.2e}')
             else:
-                plt.title('Training Loss')
+                plt.title('Train Loss')
             plt.legend()
             plt.tight_layout()
-            plt.savefig(os.path.join(ckpt_dir, 'training_loss.png'))
-            plt.savefig(os.path.join(self.case_dir, 'training_loss.png'))
+            plt.savefig(os.path.join(ckpt_dir, 'losses.png'))
+            plt.savefig(os.path.join(self.case_dir, 'losses.png'))
             plt.close()
 
         # modify dataset transform
