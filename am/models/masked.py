@@ -25,14 +25,14 @@ class MaskedLoss(torch.nn.Module):
         self.tol = tol
         self.mask = mask
 
-    def forward(self, trainer, model, batch, debug=False):
+    def forward(self, trainer, model, batch):
         losses = []
         for graph in batch.to_data_list():
-            losses.append(self.forward_single(trainer, model, graph, debug))
-
+            losses.append(self.forward_single(trainer, model, graph))
+            
         return sum(losses) / len(losses)
 
-    def forward_single(self, trainer, model, batch, debug=False):
+    def forward_single(self, trainer, model, batch):
         y  = batch.y
         yh = model(batch)
 
@@ -47,10 +47,10 @@ class MaskedLoss(torch.nn.Module):
             yh = yh * mask
             y  = y  * mask
 
-        # # if loss > 1e1:
-        # #     print(f'loss: {loss}, t: {batch.t[0].item()}, T: {batch.T[0].item()}')
-
         loss = F.mse_loss(yh, y)
+
+        # if loss.item() > 1e1:
+        #     print(f'loss: {loss} t: {batch.t[0].item()} T: {batch.T[0].item()} y: {y.norm().item()} yh: {yh.norm().item()}')
 
         return loss
 
