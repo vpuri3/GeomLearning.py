@@ -178,11 +178,11 @@ class TimeseriesDatasetTransform:
         return data
 
 #======================================================================#
-
 class TimeseriesDataset(pyg.data.Dataset):
     def __init__(
         self, 
         DATADIR: str, 
+        PROJDIR: str,
         dataset_split: str,
         transform=None, 
         force_reload=False,
@@ -206,11 +206,13 @@ class TimeseriesDataset(pyg.data.Dataset):
         self.max_steps = max_steps
 
         self.DATADIR = DATADIR
+        self.PROJDIR = PROJDIR
         self.dataset_name = DATADIR.split('/')[-1]
         self.dataset_split = dataset_split
         self.num_workers = mp.cpu_count() // 2 if num_workers is None else num_workers
         
         assert os.path.exists(DATADIR)
+        assert os.path.exists(PROJDIR)
         assert dataset_split in ['train', 'test']
         assert self.dataset_name in ['airfoil', 'cylinder_flow']
         
@@ -224,18 +226,25 @@ class TimeseriesDataset(pyg.data.Dataset):
         self.trajectory_length = self.meta['trajectory_length']
 
         self.num_cases = None
+        self.total_cases = None
+        self.included_cases = None
         self.num_steps = self.trajectory_length
 
         self.init_step = init_step if init_step is not None else 0
         self.init_case = init_case if init_case is not None else 0
-
+        
         # Ensure processed directory exists
         os.makedirs(self.processed_dir, exist_ok=True)
         
         super().__init__(transform=transform, force_reload=force_reload)
         
-        # load in num_cases
-        self.set_num_cases()
+        # set num_cases
+        self.total_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
+        self.included_cases = range(self.total_cases)
+        self.exclude_cases()
+        self.num_cases = len(self.included_cases)
+        if self.max_cases is not None:
+            self.num_cases = min(self.num_cases, self.max_cases)
         assert self.num_cases > 0
         
         # set num_steps
@@ -245,11 +254,6 @@ class TimeseriesDataset(pyg.data.Dataset):
         # normalization stats
         norm_stats = self.compute_normalization_stats(verbose=False)
         self.transform.apply_normalization_stats(norm_stats)
-
-    def set_num_cases(self):
-        self.num_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
-        if self.max_cases is not None:
-            self.num_cases = min(self.num_cases, self.max_cases)
 
     @property
     def raw_paths(self):
@@ -267,8 +271,8 @@ class TimeseriesDataset(pyg.data.Dataset):
         if not os.path.exists(metadata_path):
             return [metadata_path]
         else:
-            self.set_num_cases()
-            return [metadata_path] + [os.path.join(self.processed_dir, f'case_{icase}.pt') for icase in range(self.num_cases)]
+            self.total_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
+            return [metadata_path] + [os.path.join(self.processed_dir, f'case_{icase}.pt') for icase in range(self.total_cases)]
 
     def process(self):
         print(f"Processing {self.raw_paths[0]}...")
@@ -303,6 +307,7 @@ class TimeseriesDataset(pyg.data.Dataset):
     
     def get(self, idx):
         case_idx = idx // self.num_steps + self.init_case
+        case_idx = self.included_cases[case_idx]
         time_idx = idx %  self.num_steps
         
         case_file = os.path.join(self.processed_dir, f'case_{case_idx}.pt')
@@ -315,6 +320,61 @@ class TimeseriesDataset(pyg.data.Dataset):
         }
         
         return case_data
+    
+    def exclude_cases(self):
+        df = self.compute_vel_norm()
+        included_cases = (df['vel_x'] < 0.7) & (df['vel_y'] < 0.15)
+        self.included_cases = [i for i in self.included_cases if included_cases[i]]
+        return
+
+    def compute_vel_norm(self):
+        import numpy as np
+        import seaborn as sns
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        # Create output directory based on mode
+        analysis_dir = os.path.join(self.PROJDIR, 'analysis')
+        os.makedirs(analysis_dir, exist_ok=True)
+        dataset_dir = os.path.join(analysis_dir, self.dataset_name)
+        os.makedirs(dataset_dir, exist_ok=True)
+
+        csv_file = os.path.join(dataset_dir, f'vel_norms_{self.dataset_split}.csv')
+
+        if os.path.exists(csv_file):
+            return pd.read_csv(csv_file)
+        
+        print(f"Computing vel_norm for {self.dataset_split} dataset...")
+        
+        vel_x = []
+        vel_y = []
+        num_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
+        for icase in range(num_cases):
+            case_file = os.path.join(self.processed_dir, f'case_{icase}.pt')
+            case_data = torch.load(case_file, weights_only=False, mmap=True)
+            vel_norm = (case_data.velocity**2).mean(dim=(0,1)).sqrt()
+            vel_x.append(vel_norm[0].item())
+            vel_y.append(vel_norm[1].item())
+        vel_x = torch.tensor(vel_x)
+        vel_y = torch.tensor(vel_y)
+        
+        df = pd.DataFrame({'vel_x': vel_x, 'vel_y': vel_y})
+        df.to_csv(csv_file, index=False)
+        
+        # Create plots
+        plt.figure(figsize=(16, 8))
+        for i, col in enumerate(df.columns):
+            plt.subplot(1, 2, i+1)
+            sns.kdeplot(df[col], fill=True, warn_singular=False)
+            plt.title(f'PDF of {col}', pad=10, fontsize=18)
+            plt.xlabel(col, labelpad=5)
+            plt.ylabel("Density")
+            plt.yticks([])
+            plt.tight_layout(pad=3.0)
+        plt.savefig(os.path.join(dataset_dir, f'vel_norms_{self.dataset_split}.png'))
+        plt.close()
+
+        return df
 
     def compute_normalization_stats(self, verbose=True):
         print(f"Computing normalization stats for {self.dataset_split} dataset...")

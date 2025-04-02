@@ -10,6 +10,7 @@ from bench.dataset.timeseries import TimeseriesDataset, TimeseriesDatasetTransfo
 def load_dataset(
         dataset_name: str,
         DATADIR_BASE: str,
+        PROJDIR: str,
         force_reload: bool = False,
         mesh: bool = False,
         cells: bool = False,
@@ -66,8 +67,8 @@ def load_dataset(
         train_transform = TimeseriesDatasetTransform(dataset_name, **transform_kwargs)
         test_transform  = TimeseriesDatasetTransform(dataset_name, **transform_kwargs)
 
-        train_data = TimeseriesDataset(DATADIR, 'train', transform=train_transform, **dataset_kwargs, init_case=init_case)
-        test_data  = TimeseriesDataset(DATADIR, 'test' , transform=test_transform , **dataset_kwargs)
+        train_data = TimeseriesDataset(DATADIR, PROJDIR, 'train', transform=train_transform, **dataset_kwargs, init_case=init_case)
+        test_data  = TimeseriesDataset(DATADIR, PROJDIR, 'test' , transform=test_transform , **dataset_kwargs)
         
         return train_data, test_data
         

@@ -44,6 +44,7 @@ def main(cfg, device):
     _data, data_ = bench.load_dataset(
         cfg.dataset,
         DATADIR_BASE,
+        PROJDIR,
         force_reload=cfg.force_reload,
         mesh=cfg.model_type == -1,
         max_cases=cfg.max_cases,
@@ -238,6 +239,45 @@ def main(cfg, device):
         if cfg.restart_file is not None:
             trainer.load(cfg.restart_file)
 
+        # import matplotlib.pyplot as plt
+        # _data.transform.orig = True
+        # with torch.no_grad():
+        #     losses = []
+        #     vel_norms = []
+        #     for graph in _data:
+        #         graph = graph.to(device)
+        #         loss = batch_lossfun.forward_single(None, model, graph)
+        #         losses.append(loss.item())
+                
+        #         vel = graph.velocity
+        #         vel_loss = (vel**2).mean(dim=(0,1)).sqrt()
+        #         vel_norms.append(vel_loss[0].item())
+
+        # losses = torch.tensor(losses)
+        # losses[losses < 1e-12] = torch.nan
+
+        # vel_norms = torch.tensor(vel_norms)
+        # vel_norms[vel_norms < 1e-12] = torch.nan
+
+        # fig, ax1 = plt.subplots(figsize=(8, 4))
+
+        # ax1.set_yscale('log')
+        # ax1.scatter(range(len(losses)), losses, color='k', label='Training Loss', s=10)
+        # ax1.set_ylabel('Model Loss', color='k')
+        # ax1.tick_params(axis='y', labelcolor='k')
+        
+        # ax2 = ax1.twinx()
+        # ax2.scatter(range(len(vel_norms)), vel_norms, color='r', label='Velocity Loss', s=10)  # Reduced marker size
+        # ax2.set_ylabel('Velocity Norm', color='r')
+        # ax2.tick_params(axis='y', labelcolor='r')
+        
+        # fig.legend(loc='upper left')
+        # plt.title('Training Loss')
+        # plt.tight_layout()
+        # plt.savefig(os.path.join(PROJDIR, 'losses.png'))
+        # plt.close()
+        # return
+        
         trainer.train()
 
     #=================#
