@@ -4,7 +4,8 @@ import torch
 import torch.multiprocessing as mp
 import torch_geometric as pyg
 from tqdm import tqdm
-from typing import Union, List, Optional
+
+from mlutils.utils import check_package_version_lteq
 
 __all__ = [
     'TimeseriesDataset',
@@ -236,7 +237,10 @@ class TimeseriesDataset(pyg.data.Dataset):
         # Ensure processed directory exists
         os.makedirs(self.processed_dir, exist_ok=True)
         
-        super().__init__(transform=transform, force_reload=force_reload)
+        if check_package_version_lteq('torch', '2.4.0'):
+            super().__init__(transform=transform)
+        else:
+            super().__init__(transform=transform, force_reload=force_reload)
         
         # set num_cases
         self.total_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
