@@ -315,7 +315,10 @@ class TimeseriesDataset(pyg.data.Dataset):
         time_idx = idx %  self.num_steps
         
         case_file = os.path.join(self.processed_dir, f'case_{case_idx}.pt')
-        case_data = torch.load(case_file, weights_only=False, mmap=True)
+        if check_package_version_lteq('torch', '2.4'):
+            case_data = torch.load(case_file)
+        else:
+            case_data = torch.load(case_file, weights_only=False, mmap=True)
         case_data.metadata = {
             'dt': self.meta['dt'],
             'time_idx': time_idx,
@@ -360,7 +363,10 @@ class TimeseriesDataset(pyg.data.Dataset):
         num_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
         for icase in range(num_cases):
             case_file = os.path.join(self.processed_dir, f'case_{icase}.pt')
-            case_data = torch.load(case_file, weights_only=False, mmap=True)
+            if check_package_version_lteq('torch', '2.4'):
+                case_data = torch.load(case_file)
+            else:
+                case_data = torch.load(case_file, weights_only=False, mmap=True)
             vel_norm = (case_data.velocity**2).mean(dim=(0,1)).sqrt()
             vel_x.append(vel_norm[0].item())
             vel_y.append(vel_norm[1].item())
