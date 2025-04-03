@@ -28,7 +28,7 @@ class SwiGLU(nn.Module):
         return u * self.silu(v)
 
 ACTIVATIONS = {
-    'gelu': nn.GELU(approximate='tanh'),
+    'gelu': nn.GELU(),
     'silu': nn.SiLU(),
     'swiglu': SwiGLU(),
 }

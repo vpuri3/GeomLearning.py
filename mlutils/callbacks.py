@@ -83,9 +83,9 @@ class Callback:
                 train_loss_per_batch = torch.tensor(train_loss_per_batch)
             train_loss_per_batch[train_loss_per_batch < 1e-12] = torch.nan
             plt.plot(train_loss_per_batch, color='k', label='Train loss (per batch)', alpha=0.5)
-            # plt.scatter(range(len(train_loss_per_batch)), train_loss_per_batch, color='k', label='Train loss (per batch)', marker_size=10)
-            plt.plot(trainer.num_steps_fullbatch, trainer.train_loss_fullbatch, color='r', label='Train loss (full batch)')
-            plt.plot(trainer.num_steps_fullbatch, trainer.test_loss_fullbatch , color='b', label='Test loss (full batch)')
+            # plt.scatter(range(len(train_loss_per_batch)), train_loss_per_batch, color='k', label='Train loss (per batch)', marker_size=5)
+            plt.plot(trainer.num_steps_fullbatch, trainer.train_loss_fullbatch, color='r', label='Train loss (full batch)', marker='o')
+            plt.plot(trainer.num_steps_fullbatch, trainer.test_loss_fullbatch , color='b', label='Test loss (full batch)', marker='o')
             plt.xlabel('Step')
             plt.ylabel('Loss')
             plt.yscale('log')
