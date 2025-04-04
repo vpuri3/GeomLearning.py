@@ -150,13 +150,13 @@ class TimeseriesCallback(mlutils.Callback):
 
             if trainer.GLOBAL_RANK == 0:
                 print(f"Saving L2/R2 plots to {ckpt_dir}/r2_plot_{split}.png")
-                timeseries_statistics_plot(df_r2, 'r2', filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
-                timeseries_statistics_plot(df_l2, 'l2', filename=os.path.join(ckpt_dir, f'l2_plot_{split}.png'))
+                timeseries_statistics_plot(df_r2, 'r2', 'mean', filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
+                timeseries_statistics_plot(df_l2, 'l2', 'mean', filename=os.path.join(ckpt_dir, f'l2_plot_{split}.png'))
 
-                timeseries_statistics_plot(df_r2, 'r2', filename=os.path.join(ckpt_dir, '..', f'r2_plot_{split}.png'))
-                timeseries_statistics_plot(df_l2, 'l2', filename=os.path.join(ckpt_dir, '..', f'l2_plot_{split}.png'))
+                timeseries_statistics_plot(df_r2, 'r2', 'mean', filename=os.path.join(ckpt_dir, '..', f'r2_plot_{split}.png'))
+                timeseries_statistics_plot(df_l2, 'l2', 'mean', filename=os.path.join(ckpt_dir, '..', f'l2_plot_{split}.png'))
+
         return
-
 
 #======================================================================#
 class TSCallback(mlutils.Callback):

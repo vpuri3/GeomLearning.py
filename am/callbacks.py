@@ -334,38 +334,55 @@ class TimeseriesCallback(Callback):
 
             if trainer.GLOBAL_RANK == 0:
                 print(f"Saving L2/R2 plots to {ckpt_dir}/r2_plot_{split}.png")
-                timeseries_statistics_plot(df_r2, 'r2', filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
-                timeseries_statistics_plot(df_l2, 'l2', filename=os.path.join(ckpt_dir, f'l2_plot_{split}.png'))
+                timeseries_statistics_plot(df_r2, 'r2', 'median', filename=os.path.join(ckpt_dir, f'r2_plot_{split}.png'))
+                timeseries_statistics_plot(df_l2, 'l2', 'median', filename=os.path.join(ckpt_dir, f'l2_plot_{split}.png'))
 
         return
 
 #======================================================================#
 # Plotting functions
 #======================================================================#
-def timeseries_statistics_plot(df, mode, filename=None, dpi=175):
+def timeseries_statistics_plot(df, metric, mode, filename=None, dpi=175):
+
     plt.figure(figsize=(8, 4), dpi=dpi)
     
-    if mode == 'r2':
+    if metric == 'r2':
         plt.ylim(0., 1.)
         plt.ylabel('R-Squared')
-    elif mode == 'l2':
+    elif metric == 'l2':
         plt.ylim(0., 1e-1) # 10% error
         plt.ylabel('RMSE (normalized)')
         df = df.apply(lambda x: np.sqrt(x))
         plt.title('Mean RMSE (normalized): {:.2e}'.format(df.mean().mean()))
 
-    medians = df.median(axis=1)
-    q1 = df.quantile(0.25, axis=1)
-    q3 = df.quantile(0.75, axis=1)
-    tstep = np.arange(len(medians))
+    if mode == 'median':
+        medians = df.median(axis=1)
+        q1 = df.quantile(0.25, axis=1)
+        q3 = df.quantile(0.75, axis=1)
+        tstep = np.arange(len(medians))
+
+        plt.plot(tstep, medians, color='k', label='Median')
+        plt.fill_between(
+            tstep, q1, q3,
+            color='k', alpha=0.2,
+            label='Middle 50%',
+        )
     
-    plt.plot(tstep, medians, color='k', label='Median')
-    plt.fill_between(
-        tstep, q1, q3,
-        color='k', alpha=0.2,
-        label='Middle 50%',
-    )
-    
+    elif mode == 'mean':
+        means = df.mean(axis=1)
+        stds = df.std(axis=1)
+        tstep = np.arange(len(means))
+
+        plt.plot(tstep, means, color='k', label='Mean')
+        plt.fill_between(
+            tstep, means - stds, means + stds,
+            color='k', alpha=0.2,
+            label='1 Std Dev',
+        )
+
+    else:
+        raise ValueError(f"Invalid mode: {mode}")
+
     plt.xlabel('Time Step')
     plt.legend()
     plt.grid(True, alpha=0.3)

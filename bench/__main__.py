@@ -121,6 +121,13 @@ def main(cfg, device):
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
             )
+        elif cfg.model_type == 4:
+            model = am.TS4( # Slice attention + slice query conditioning (query size [H, M, D])
+                in_dim=c_in, out_dim=c_out,
+                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
+                num_slices=cfg.num_slices,
+            )
         else:
             raise NotImplementedError("No time-conditioned model selected.")
     else:
@@ -312,8 +319,8 @@ class Config:
     dataset: str = None
     force_reload: bool = False
     max_cases: int = 10 # only used in cylinder_flow and airfoil
-    max_steps: int = 51
-    init_step: int = 300
+    max_steps: int = 500
+    init_step: int = 100
     init_case: int = 0
 
     # training arguments
