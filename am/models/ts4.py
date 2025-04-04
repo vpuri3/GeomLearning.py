@@ -83,7 +83,7 @@ class SliceAttention(nn.Module):
 
         # (1) Get slice weights
         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
-        self.wt_q_proj = nn.Sequential(nn.SiLU(), nn.Linear(self.hidden_dim, self.head_dim * self.num_slices),)
+        self.wt_q_proj = nn.Sequential(nn.SiLU(), nn.Linear(self.hidden_dim, self.num_heads * self.head_dim * self.num_slices),)
         self.temperature = nn.Parameter(torch.ones([1, self.num_heads, 1, 1]) * 0.5)
 
         # (2) Attention among slice tokens
@@ -104,12 +104,12 @@ class SliceAttention(nn.Module):
 
         xq = self.wt_q_proj(c)
         xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1)
-        xq = rearrange(xq, 'b (m d) -> b m d', m=self.num_slices) # [B, M, D]
+        xq = rearrange(xq, 'b (h m d) -> b h m d', m=self.num_slices, h=self.num_heads) # [B, H, M, D]
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
 
         temperature = self.temperature
-        slice_scores = einsum(xq, xk, 'b m d, b h n d -> b h m n') # [b, h, m, n]
+        slice_scores = einsum(xq, xk, 'b h m d, b h n d -> b h m n') # [b, h, m, n]
         slice_weights = F.softmax(slice_scores / temperature, dim=-2)
         slice_norm = slice_weights.sum(dim=-1) # [B, H, M]
         slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B, H, M, D]
