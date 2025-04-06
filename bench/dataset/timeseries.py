@@ -26,9 +26,6 @@ class TimeseriesDatasetTransform:
         self.orig  = orig
         self.metadata = metadata
 
-        self.vel = vel
-        self.pres = pres
-        self.dens = dens
         self.nfields = 2 * vel + pres + dens
             
         # normalization stats
@@ -38,12 +35,6 @@ class TimeseriesDatasetTransform:
         self.vel_shift = torch.tensor([0., 0.])
         self.vel_scale = torch.tensor([1., 1.])
         
-        self.pres_shift = torch.tensor([0.])
-        self.pres_scale = torch.tensor([1.])
-
-        self.dens_shift = torch.tensor([0.])
-        self.dens_scale = torch.tensor([1.])
-    
         self.out_shift = torch.tensor([0.])
         self.out_scale = torch.tensor([1.])
         
@@ -61,15 +52,8 @@ class TimeseriesDatasetTransform:
         device = data.velocity.device
 
         xs = []
-        if self.vel:
-            vel = (data.velocity[time_step] - self.vel_shift.to(device)) / self.vel_scale.to(device)
-            xs = [*xs, vel]
-        if self.pres:
-            pres = (data.pressure[time_step] - self.pres_shift.to(device)) / self.pres_scale.to(device)
-            xs = [*xs, pres]
-        if self.dens:
-            dens = (data.density[time_step] - self.dens_shift.to(device)) / self.dens_scale.to(device)
-            xs = [*xs, dens]
+        vel = (data.velocity[time_step] - self.vel_shift.to(device)) / self.vel_scale.to(device)
+        xs = [*xs, vel]
 
         out = torch.cat(xs, dim=-1)
         
@@ -132,26 +116,14 @@ class TimeseriesDatasetTransform:
         else:
 
             vel_in  = (graph.velocity[time_step] - self.vel_shift ) / self.vel_scale
-            pres_in = (graph.pressure[time_step] - self.pres_shift) / self.pres_scale
-            dens_in = (graph.density[ time_step] - self.dens_shift) / self.dens_scale if graph.get('density', None) is not None else None
-
-            vel_out  = graph.velocity[time_step + 1] - graph.velocity[time_step]
-            pres_out = graph.pressure[time_step + 1] - graph.pressure[time_step]
-            dens_out = graph.density[ time_step + 1] - graph.density[ time_step] if graph.get('density', None) is not None else None
+            vel_out = graph.velocity[time_step + 1] - graph.velocity[time_step]
             
         # features / labels
         xs = [graph.node_type_onehot, pos,]
         ys = []
 
-        if self.vel:
-            xs.append(vel_in)
-            ys.append(vel_out)
-        if self.pres:
-            xs.append(pres_in)
-            ys.append(pres_out)
-        if self.dens:
-            xs.append(dens_in)
-            ys.append(dens_out)
+        xs.append(vel_in)
+        ys.append(vel_out)
 
         x = torch.cat(xs, dim=-1)
         y = torch.cat(ys, dim=-1)
@@ -229,10 +201,15 @@ class TimeseriesDataset(pyg.data.Dataset):
         self.num_cases = None
         self.total_cases = None
         self.included_cases = None
-        self.num_steps = self.trajectory_length
 
         self.init_step = init_step if init_step is not None else 0
         self.init_case = init_case if init_case is not None else 0
+
+        # set num_steps
+        self.num_steps = self.trajectory_length - self.init_step
+        if self.max_steps is not None:
+            self.num_steps = min(self.num_steps, self.max_steps)
+        assert self.num_steps > 0
         
         # Ensure processed directory exists
         os.makedirs(self.processed_dir, exist_ok=True)
@@ -251,10 +228,6 @@ class TimeseriesDataset(pyg.data.Dataset):
             self.num_cases = min(self.num_cases, self.max_cases)
         assert self.num_cases > 0
         
-        # set num_steps
-        if self.max_steps is not None:
-            self.num_steps = min(self.num_steps, self.max_steps)
-
         # normalization stats
         norm_stats = self.compute_normalization_stats(verbose=False)
         self.transform.apply_normalization_stats(norm_stats)
@@ -329,18 +302,22 @@ class TimeseriesDataset(pyg.data.Dataset):
         return case_data
     
     def exclude_cases(self):
-        df = self.compute_vel_norm()
+        df = self.compute_vel_stats()
         if self.dataset_name == 'cylinder_flow':
-            included_cases = (df['vel_x'] < 0.7) & (df['vel_y'] < 0.15)
+            
+            included_cases = (df['vel_x_norm'] < 0.7) & (df['vel_y_norm'] < 0.15)
+
         elif self.dataset_name == 'airfoil':
-            included_cases = (df['vel_x'] < torch.inf) & (df['vel_y'] < torch.inf)
+
+            included_cases = (df['vel_x_norm'] < torch.inf) & (df['vel_y_norm'] < torch.inf)
+
         else:
             raise ValueError(f"Dataset {self.dataset_name} not supported")
+        
         self.included_cases = [i for i in self.included_cases if included_cases[i]]
         return
 
-    def compute_vel_norm(self):
-        import numpy as np
+    def compute_vel_stats(self):
         import seaborn as sns
         import matplotlib.pyplot as plt
         import pandas as pd
@@ -351,42 +328,51 @@ class TimeseriesDataset(pyg.data.Dataset):
         dataset_dir = os.path.join(analysis_dir, self.dataset_name)
         os.makedirs(dataset_dir, exist_ok=True)
 
-        csv_file = os.path.join(dataset_dir, f'vel_norms_{self.dataset_split}.csv')
+        csv_file = os.path.join(dataset_dir, f'vel_stats_{self.dataset_split}_init_step_{self.init_step}.csv')
 
         if os.path.exists(csv_file):
             return pd.read_csv(csv_file)
         
-        print(f"Computing vel_norm for {self.dataset_split} dataset...")
+        print(f"Computing vel_stats for {self.dataset_split} dataset...")
         
-        vel_x = []
-        vel_y = []
+        vel_x_norm = []
+        vel_y_norm = []
+        vel_x_max  = []
+        vel_y_max  = []
         num_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
+
         for icase in range(num_cases):
             case_file = os.path.join(self.processed_dir, f'case_{icase}.pt')
             if check_package_version_lteq('torch', '2.4'):
                 case_data = torch.load(case_file)
             else:
                 case_data = torch.load(case_file, weights_only=False, mmap=True)
-            vel_norm = (case_data.velocity**2).mean(dim=(0,1)).sqrt()
-            vel_x.append(vel_norm[0].item())
-            vel_y.append(vel_norm[1].item())
-        vel_x = torch.tensor(vel_x)
-        vel_y = torch.tensor(vel_y)
-        
-        df = pd.DataFrame({'vel_x': vel_x, 'vel_y': vel_y})
+            
+            velocity = case_data.velocity[self.init_step:]
+            vel_norm = (velocity**2).mean(dim=(0,1)).sqrt()
+            vel_x_norm.append(vel_norm[0].item())
+            vel_y_norm.append(vel_norm[1].item())
+            vel_x_max.append(velocity[:,:,0].max().item())
+            vel_y_max.append(velocity[:,:,1].max().item())
+
+        vel_x_norm = torch.tensor(vel_x_norm)
+        vel_y_norm = torch.tensor(vel_y_norm)
+        vel_x_max  = torch.tensor(vel_x_max)
+        vel_y_max  = torch.tensor(vel_y_max)
+        df = pd.DataFrame({'vel_x_norm': vel_x_norm, 'vel_y_norm': vel_y_norm, 'vel_x_max': vel_x_max, 'vel_y_max': vel_y_max})
         df.to_csv(csv_file, index=False)
         
         # Create plots
-        plt.figure(figsize=(16, 8))
+        plt.figure(figsize=(12, 12))
         for i, col in enumerate(df.columns):
-            plt.subplot(1, 2, i+1)
+            plt.subplot(2, 2, i+1)
             sns.kdeplot(df[col], fill=True, warn_singular=False)
             plt.title(f'PDF of {col}', pad=10, fontsize=18)
             plt.xlabel(col, labelpad=5)
             plt.ylabel("Density")
             plt.yticks([])
             plt.tight_layout(pad=3.0)
-        plt.savefig(os.path.join(dataset_dir, f'vel_norms_{self.dataset_split}.png'))
+        plt.savefig(os.path.join(dataset_dir, f'vel_stats_{self.dataset_split}.png'))
         plt.close()
 
         return df
@@ -398,11 +384,6 @@ class TimeseriesDataset(pyg.data.Dataset):
         orig = self.transform.orig
         self.transform.orig = True
         
-        for graph in self:
-            norm_stats = dict(pos_min = graph.pos.min(dim=0).values, pos_max = graph.pos.max(dim=0).values,)
-            break
-
-        stats = GraphNormStats(num_steps=self.num_steps, init_step=self.init_step)
 
         # mp.set_start_method('spawn', force=True)
         # with mp.Pool(self.num_workers) as pool:
@@ -411,11 +392,19 @@ class TimeseriesDataset(pyg.data.Dataset):
         #         desc=f'Computing normalization for {self.dataset_split}',
         #         ncols=80,
         #     ))
-        for graph in self:
-            stats.update(graph)
         
-        assert stats.num_graphs == len(self), f"Number of graphs processed {stats.num_graphs} != {len(self)}"
-        norm_stats = dict(**norm_stats, **stats.compute())
+        stats = GraphNormStats(num_steps=self.num_steps, init_step=self.init_step)
+        for icase in tqdm(range(self.num_cases), ncols=80):
+            case_idx = self.included_cases[icase]
+            case_file = os.path.join(self.processed_dir, f'case_{case_idx}.pt')
+            if check_package_version_lteq('torch', '2.4'):
+                graph = torch.load(case_file)
+            else:
+                graph = torch.load(case_file, weights_only=False, mmap=True)
+            stats.update(graph)
+            del graph
+        norm_stats = stats.compute()
+        print(f"norm_stats: {norm_stats}")
 
         if verbose:
             print(f"pos_min: {norm_stats['pos_min']}")
@@ -423,9 +412,6 @@ class TimeseriesDataset(pyg.data.Dataset):
 
             print(f"vel_mean: {norm_stats['vel_mean']}")
             print(f"vel_std : {norm_stats['vel_std']}")
-
-            print(f"input_mean: {norm_stats['input_mean']}")
-            print(f"input_std : {norm_stats['input_std']}")
 
             print(f"output_mean: {norm_stats['output_mean']}")
             print(f"output_std : {norm_stats['output_std']}")
@@ -446,19 +432,19 @@ class GraphNormStats:
 
         self.vel_mean    = 0.
         self.vel_std     = 0.
-        self.input_mean  = 0.
-        self.input_std   = 0.
         self.output_mean = 0.
         self.output_std  = 0.
         
     def update(self, graph):
-        self.num_graphs  += 1
-        self.vel_mean    += graph.velocity[self.idx_range].mean(dim=(0,1))
-        self.vel_std     += graph.velocity[self.idx_range].std( dim=(0,1))
-        self.input_mean  += graph.x.mean(dim=0)[7:]
-        self.input_std   += graph.x.std(dim=0)[7:]
-        self.output_mean += graph.y.mean(dim=0)
-        self.output_std  += graph.y.std(dim=0)
+        self.num_graphs += 1
+        
+        self.vel_mean += graph.velocity[self.idx_range].mean(dim=(0,1))
+        self.vel_std  += graph.velocity[self.idx_range].std( dim=(0,1))
+        
+        out = graph.velocity[self.idx_range].diff(dim=0)
+
+        self.output_mean += out.mean(dim=(0,1))
+        self.output_std  += out.std(dim=(0,1))
         
         self.pos_min[0] = torch.min(self.pos_min[0], graph.pos[:,0].min())
         self.pos_min[1] = torch.min(self.pos_min[1], graph.pos[:,1].min())
@@ -466,21 +452,13 @@ class GraphNormStats:
         self.pos_max[0] = torch.max(self.pos_max[0], graph.pos[:,0].max())
         self.pos_max[1] = torch.max(self.pos_max[1], graph.pos[:,1].max())
         
-        if graph.velocity[:self.num_steps].isnan().any():
-            print(f"number of nans: {graph.velocity[:self.num_steps].isnan().sum()}")
-            print(f"number of infs: {graph.velocity[:self.num_steps].isinf().sum()}")
-
-        del graph
-        
     def compute(self):
         assert self.num_graphs > 0
         return {
-            # 'pos_min'    : self.pos_min,
-            # 'pos_max'    : self.pos_max,
+            'pos_min'    : self.pos_min,
+            'pos_max'    : self.pos_max,
             'vel_mean'   : self.vel_mean    / self.num_graphs,
             'vel_std'    : self.vel_std     / self.num_graphs,
-            'input_mean' : self.input_mean  / self.num_graphs,
-            'input_std'  : self.input_std   / self.num_graphs,
             'output_mean': self.output_mean / self.num_graphs,
             'output_std' : self.output_std  / self.num_graphs,
         }

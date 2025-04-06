@@ -52,10 +52,7 @@ def load_dataset(
     elif dataset_name in ['airfoil', 'cylinder_flow']:
         DATADIR = os.path.join(DATADIR_BASE, 'MeshGraphNets', dataset_name)
 
-        transform_kwargs = dict(
-            mesh=mesh, cells=cells,
-            vel=True, pres=False, dens=False,
-        )
+        transform_kwargs = dict(mesh=mesh, cells=cells,)
         
         dataset_kwargs = dict(
             force_reload=force_reload,
