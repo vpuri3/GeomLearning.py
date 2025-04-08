@@ -45,7 +45,7 @@ class TimeseriesDatasetTransform:
         self.vel_shift = norm_stats['vel_mean']
         self.vel_scale = norm_stats['vel_std']
         
-        self.out_shift = norm_stats['output_mean'] * 0.
+        self.out_shift = norm_stats['output_mean'] #* 0.
         self.out_scale = norm_stats['output_std']
 
     def make_fields(self, data, time_step):
@@ -384,15 +384,6 @@ class TimeseriesDataset(pyg.data.Dataset):
         orig = self.transform.orig
         self.transform.orig = True
         
-
-        # mp.set_start_method('spawn', force=True)
-        # with mp.Pool(self.num_workers) as pool:
-        #     list(tqdm(
-        #         pool.imap_unordered(stats.update, self), total=len(self),
-        #         desc=f'Computing normalization for {self.dataset_split}',
-        #         ncols=80,
-        #     ))
-        
         stats = GraphNormStats(num_steps=self.num_steps, init_step=self.init_step)
         for icase in tqdm(range(self.num_cases), ncols=80):
             case_idx = self.included_cases[icase]
@@ -404,7 +395,6 @@ class TimeseriesDataset(pyg.data.Dataset):
             stats.update(graph)
             del graph
         norm_stats = stats.compute()
-        print(f"norm_stats: {norm_stats}")
 
         if verbose:
             print(f"pos_min: {norm_stats['pos_min']}")
