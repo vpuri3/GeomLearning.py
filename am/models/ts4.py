@@ -70,7 +70,7 @@ class TimeEmbedding(nn.Module):
 # SLICE ATTENTION
 #======================================================================#
 class SliceAttention(nn.Module):
-    def __init__(self, hidden_dim, num_heads=8, dropout=0., num_slices=32):
+    def __init__(self, hidden_dim, num_heads=8, dropout=0., num_slices=32, qk_norm=False):
         super().__init__()
 
         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
@@ -80,11 +80,12 @@ class SliceAttention(nn.Module):
         self.num_slices = num_slices
         self.head_dim = hidden_dim // num_heads
         self.dropout = nn.Dropout(dropout)
+        self.qk_norm = qk_norm
 
         # (1) Get slice weights
         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
         self.wt_q_proj = nn.Sequential(nn.SiLU(), nn.Linear(self.hidden_dim, self.num_heads * self.head_dim * self.num_slices),)
-        self.temperature = nn.Parameter(torch.ones([1, self.num_heads, 1, 1]) * 0.5)
+        self.alpha = nn.Parameter(torch.ones([self.num_heads]))
 
         # (2) Attention among slice tokens
         self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
@@ -108,9 +109,13 @@ class SliceAttention(nn.Module):
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B, H, N, D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
 
-        temperature = self.temperature
+        if self.qk_norm:
+            xq = F.normalize(xq, dim=-1)
+            xk = F.normalize(xk, dim=-1)
+
+        alpha = self.alpha.view(-1, 1, 1)
         slice_scores = einsum(xq, xk, 'b h m d, b h n d -> b h m n') # [b, h, m, n]
-        slice_weights = F.softmax(slice_scores / temperature, dim=-2)
+        slice_weights = F.softmax(slice_scores * alpha, dim=-2)
         slice_norm = slice_weights.sum(dim=-1) # [B, H, M]
         slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B, H, M, D]
         slice_token = slice_token / (slice_norm.unsqueeze(-1) + 1e-5)
@@ -143,6 +148,7 @@ class Block(nn.Module):
             dropout: float,
             mlp_ratio=4,
             num_slices=32,
+            qk_norm=False,
     ):
         super().__init__()
         self.ln1 = nn.LayerNorm(hidden_dim)
@@ -153,6 +159,7 @@ class Block(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             num_slices=num_slices,
+            qk_norm=qk_norm,
         )
 
         self.mlp = Mlp(
@@ -193,6 +200,7 @@ class TS4(nn.Module):
         n_head=8,
         mlp_ratio=1,
         num_slices=32,
+        qk_norm=False,
     ):
         super().__init__()
         
@@ -214,6 +222,7 @@ class TS4(nn.Module):
                 dropout=dropout,
                 mlp_ratio=mlp_ratio,
                 num_slices=num_slices,
+                qk_norm=qk_norm,
             )
             for _ in range(n_layers)
         ])

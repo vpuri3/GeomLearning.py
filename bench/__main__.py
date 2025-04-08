@@ -120,6 +120,7 @@ def main(cfg, device):
                 n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
+                qk_norm=cfg.qk_norm,
             )
         elif cfg.model_type == 4:
             model = am.TS4( # Slice attention + slice query conditioning (query size [H, M, D])
@@ -127,6 +128,7 @@ def main(cfg, device):
                 n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_slices,
+                qk_norm=cfg.qk_norm,
             )
         else:
             raise NotImplementedError("No time-conditioned model selected.")
@@ -342,6 +344,7 @@ class Config:
     num_heads: int = 8
     mlp_ratio: float = 2.0
     num_slices: int = 32
+    qk_norm: bool = False
 
     topk: int = 0
     gamma_min: float = 0e-4
