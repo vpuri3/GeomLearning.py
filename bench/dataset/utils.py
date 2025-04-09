@@ -18,6 +18,7 @@ def load_dataset(
         max_steps: int = None,
         init_step: int = None,
         init_case: int = None,
+        exclude: bool = True,
     ):
     """Load a dataset by name.
     
@@ -64,8 +65,12 @@ def load_dataset(
         train_transform = TimeseriesDatasetTransform(dataset_name, **transform_kwargs)
         test_transform  = TimeseriesDatasetTransform(dataset_name, **transform_kwargs)
 
-        train_data = TimeseriesDataset(DATADIR, PROJDIR, 'train', transform=train_transform, **dataset_kwargs, init_case=init_case)
-        test_data  = TimeseriesDataset(DATADIR, PROJDIR, 'test' , transform=test_transform , **dataset_kwargs)
+        train_data = TimeseriesDataset(DATADIR, PROJDIR, 'train', transform=train_transform, **dataset_kwargs, init_case=init_case, exclude=exclude)
+        test_data  = TimeseriesDataset(DATADIR, PROJDIR, 'test' , transform=test_transform , **dataset_kwargs, exclude=exclude)
+        
+        # Looks like there is some disparity bw train_data and test_data
+        # TODO: split train_data into train_data, test_data
+        # train_data, test_data = torch.utils.data.random_split(train_data, [0.8, 0.2])
         
         return train_data, test_data
         

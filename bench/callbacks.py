@@ -60,8 +60,11 @@ class TimeseriesCallback(mlutils.Callback):
         return
 
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
+        
+        if not self.final:
+            if int(os.path.basename(ckpt_dir).split('_')[-1]) < 6:
+                return
 
-        device = trainer.device
         model  = trainer.model.module if trainer.DDP else trainer.model
 
         for (dataset, transform, split) in zip(
@@ -155,7 +158,7 @@ class TimeseriesCallback(mlutils.Callback):
 
                 timeseries_statistics_plot(df_r2, 'r2', 'mean', filename=os.path.join(ckpt_dir, '..', f'r2_plot_{split}.png'))
                 timeseries_statistics_plot(df_l2, 'l2', 'mean', filename=os.path.join(ckpt_dir, '..', f'l2_plot_{split}.png'))
-
+                
         return
 
 #======================================================================#
@@ -277,10 +280,6 @@ class TSCallback(mlutils.Callback):
         plt.tight_layout()
         plt.savefig(os.path.join(ckpt_dir, 'utilization.png'))
         plt.savefig(os.path.join(ckpt_dir, '..', 'utilization.png'))
-
-        # if trainer.is_cuda:
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
 
         return
 

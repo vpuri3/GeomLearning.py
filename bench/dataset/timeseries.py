@@ -163,6 +163,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         max_steps: int = None,
         init_step: int = None,
         init_case: int = None,
+        exclude: bool = True,
         num_workers: int = None,
     ):
         """
@@ -175,15 +176,16 @@ class TimeseriesDataset(pyg.data.Dataset):
             force_reload (bool): Whether to force reprocessing of data
         """
 
-        self.max_cases = max_cases
-        self.max_steps = max_steps
-
         self.DATADIR = DATADIR
         self.PROJDIR = PROJDIR
         self.dataset_name = DATADIR.split('/')[-1]
         self.dataset_split = dataset_split
         self.num_workers = mp.cpu_count() // 2 if num_workers is None else num_workers
         
+        self.max_cases = max_cases
+        self.max_steps = max_steps
+        self.exclude = exclude
+
         assert os.path.exists(DATADIR)
         assert os.path.exists(PROJDIR)
         assert dataset_split in ['train', 'test']
@@ -222,7 +224,8 @@ class TimeseriesDataset(pyg.data.Dataset):
         # set num_cases
         self.total_cases = len([f for f in os.listdir(self.processed_dir) if f.startswith('case_')])
         self.included_cases = range(self.total_cases)
-        self.exclude_cases()
+        if self.exclude:
+            self.exclude_cases()
         self.num_cases = len(self.included_cases)
         if self.max_cases is not None:
             self.num_cases = min(self.num_cases, self.max_cases)

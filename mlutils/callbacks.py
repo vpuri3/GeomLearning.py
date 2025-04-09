@@ -1,4 +1,5 @@
 #
+import gc
 import os
 import json
 import shutil
@@ -15,10 +16,11 @@ __all__ = [
 
 #======================================================================#
 class Callback:
-    def __init__(self, case_dir: str, save_every=None):
+    def __init__(self, case_dir: str, save_every=None, skip_first_ckpt=True):
         self.case_dir = case_dir
         self.save_every = save_every
         self.final = False
+        self.skip_first_ckpt = skip_first_ckpt
 
     def get_ckpt_dir(self, trainer: mlutils.Trainer):
         if self.final:
@@ -83,7 +85,6 @@ class Callback:
                 train_loss_per_batch = torch.tensor(train_loss_per_batch)
             train_loss_per_batch[train_loss_per_batch < 1e-12] = torch.nan
             plt.plot(train_loss_per_batch, color='k', label='Train loss (per batch)', alpha=0.5)
-            # plt.scatter(range(len(train_loss_per_batch)), train_loss_per_batch, color='k', label='Train loss (per batch)', marker_size=5)
             plt.plot(trainer.num_steps_fullbatch, trainer.train_loss_fullbatch, color='r', label='Train loss (full batch)', marker='o')
             plt.plot(trainer.num_steps_fullbatch, trainer.test_loss_fullbatch , color='b', label='Test loss (full batch)', marker='o')
             plt.xlabel('Step')
@@ -99,6 +100,10 @@ class Callback:
             plt.savefig(os.path.join(self.case_dir, 'losses.png'))
             plt.close()
 
+        # skip eval for first checkpoint
+        if os.path.basename(ckpt_dir) == 'ckpt00' and self.skip_first_ckpt:
+            return
+
         # modify dataset transform
         if hasattr(self, 'modify_dataset_transform'):
             self.modify_dataset_transform(trainer, True)
@@ -112,6 +117,11 @@ class Callback:
 
         # revert self.final
         self.final = False
+
+        # clear cache
+        if trainer.is_cuda:
+            gc.collect()
+            torch.cuda.empty_cache()
 
         return
 

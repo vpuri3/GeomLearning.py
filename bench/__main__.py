@@ -51,6 +51,7 @@ def main(cfg, device):
         max_steps=cfg.max_steps,
         init_step=cfg.init_step,
         init_case=cfg.init_case,
+        exclude=cfg.exclude,
     )
     
     if cfg.dataset in ['elasticity', 'darcy']:
@@ -324,6 +325,7 @@ class Config:
     max_steps: int = 500
     init_step: int = 100
     init_case: int = 0
+    exclude: bool = True
 
     # training arguments
     epochs: int = 100
