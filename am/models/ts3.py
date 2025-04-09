@@ -243,9 +243,8 @@ class TS3(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, data):
-        x = data.x.unsqueeze(0) # space dim [B=1, N, C]
-
-        assert x.ndim == 3, "x must be [N, C], that is batch size must be 1"
+        assert data.x.ndim == 2, f"x must be [N, C], got {data.x.shape}"
+        x = data.x.unsqueeze(0) # [B=1, N, C]
 
         if data.get('t_val', None) is not None:
             t = data.t_val.item()
