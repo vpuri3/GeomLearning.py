@@ -62,7 +62,7 @@ class TimeseriesCallback(mlutils.Callback):
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
         
         if not self.final:
-            if int(os.path.basename(ckpt_dir).split('_')[-1]) < 6:
+            if int(os.path.basename(ckpt_dir)[-2:]) < 6:
                 return
 
         model  = trainer.model.module if trainer.DDP else trainer.model

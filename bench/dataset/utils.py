@@ -68,6 +68,8 @@ def load_dataset(
         train_data = TimeseriesDataset(DATADIR, PROJDIR, 'train', transform=train_transform, **dataset_kwargs, init_case=init_case, exclude=exclude)
         test_data  = TimeseriesDataset(DATADIR, PROJDIR, 'test' , transform=test_transform , **dataset_kwargs, exclude=exclude)
         
+        test_data.transform.apply_normalization_stats(train_data.norm_stats)
+        
         # Looks like there is some disparity bw train_data and test_data
         # TODO: split train_data into train_data, test_data
         # train_data, test_data = torch.utils.data.random_split(train_data, [0.8, 0.2])
@@ -76,4 +78,14 @@ def load_dataset(
         
     else:
         raise ValueError(f"Dataset {dataset_name} not found.") 
+
 #======================================================================#
+def split_timeseries_dataset(dataset, split=None, indices=None):
+    if split is None and indices is None:
+        raise ValueError('split_timeseries_dataset: pass in either indices or split')
+
+    num_cases = len(dataset.case_files)
+    
+    
+#======================================================================#
+#

@@ -232,8 +232,8 @@ class TimeseriesDataset(pyg.data.Dataset):
         assert self.num_cases > 0
         
         # normalization stats
-        norm_stats = self.compute_normalization_stats(verbose=False)
-        self.transform.apply_normalization_stats(norm_stats)
+        self.norm_stats = self.compute_normalization_stats(verbose=False)
+        self.transform.apply_normalization_stats(self.norm_stats)
 
     @property
     def raw_paths(self):
