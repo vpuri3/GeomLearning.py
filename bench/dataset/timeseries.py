@@ -18,6 +18,7 @@ class TimeseriesDatasetTransform:
         mesh=False, cells=False,
         orig=False, metadata=False,
         vel=True, pres=False, dens=False,
+        train_rollout_noise: float = 0.
     ):
         self.dataset_name = dataset_name
 
@@ -25,6 +26,9 @@ class TimeseriesDatasetTransform:
         self.cells = cells
         self.orig  = orig
         self.metadata = metadata
+        self.train_rollout_noise = train_rollout_noise
+        
+        assert self.train_rollout_noise >= 0.
 
         self.nfields = 2 * vel + pres + dens
             
@@ -45,7 +49,7 @@ class TimeseriesDatasetTransform:
         self.vel_shift = norm_stats['vel_mean']
         self.vel_scale = norm_stats['vel_std']
         
-        self.out_shift = norm_stats['output_mean'] #* 0.
+        self.out_shift = norm_stats['output_mean']
         self.out_scale = norm_stats['output_std']
 
     def make_fields(self, data, time_step):
@@ -102,28 +106,19 @@ class TimeseriesDatasetTransform:
         pos = (graph.pos - self.pos_min) / (self.pos_max - self.pos_min)
         edge_attr = graph.edge_attr / (self.pos_max - self.pos_min)
 
-        # print(f"init_step: {init_step}, time_idx: {time_idx}, num_steps: {num_steps}, time_step: {time_step}, t: {t_val}, T: {T_val}, last_step: {last_step}")
-
         if last_step:
             vel_in  = torch.zeros((N, 2))
             vel_out = torch.zeros((N, 2))
-
-            pres_in  = torch.zeros((N, 1))
-            pres_out = torch.zeros((N, 1))
-
-            dens_in  = torch.zeros((N, 1))
-            dens_out = torch.zeros((N, 1))
         else:
-
             vel_in  = (graph.velocity[time_step] - self.vel_shift ) / self.vel_scale
             vel_out = graph.velocity[time_step + 1] - graph.velocity[time_step]
             
+            if self.train_rollout_noise > 0:
+                vel_in += torch.randn_like(vel_in) * self.train_rollout_noise
+            
         # features / labels
-        xs = [graph.node_type_onehot, pos,]
-        ys = []
-
-        xs.append(vel_in)
-        ys.append(vel_out)
+        xs = [graph.node_type_onehot, pos, vel_in]
+        ys = [vel_out]
 
         x = torch.cat(xs, dim=-1)
         y = torch.cat(ys, dim=-1)
@@ -308,7 +303,9 @@ class TimeseriesDataset(pyg.data.Dataset):
         df = self.compute_vel_stats()
         if self.dataset_name == 'cylinder_flow':
             
-            included_cases = (df['vel_x_norm'] < 0.7) & (df['vel_y_norm'] < 0.15)
+            included_cases = (df['vel_x_norm'] < 0.6) & (df['vel_y_norm'] < 0.1)
+            # included_cases = (df['vel_x_norm'] < 0.7) & (df['vel_y_norm'] < 0.15)
+            # included_cases = included_cases & (df['vel_x_max'] < 999) & (df['vel_y_max'] < 999)
 
         elif self.dataset_name == 'airfoil':
 

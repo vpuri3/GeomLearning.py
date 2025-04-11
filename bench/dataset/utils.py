@@ -1,4 +1,5 @@
 import os
+import copy
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset, Subset
@@ -19,6 +20,7 @@ def load_dataset(
         init_step: int = None,
         init_case: int = None,
         exclude: bool = True,
+        train_rollout_noise: float = 0.
     ):
     """Load a dataset by name.
     
@@ -53,7 +55,7 @@ def load_dataset(
     elif dataset_name in ['airfoil', 'cylinder_flow']:
         DATADIR = os.path.join(DATADIR_BASE, 'MeshGraphNets', dataset_name)
 
-        transform_kwargs = dict(mesh=mesh, cells=cells,)
+        transform_kwargs = dict(mesh=mesh, cells=cells, train_rollout_noise=train_rollout_noise)
         
         dataset_kwargs = dict(
             force_reload=force_reload,
@@ -71,9 +73,12 @@ def load_dataset(
         test_data.transform.apply_normalization_stats(train_data.norm_stats)
         
         # Looks like there is some disparity bw train_data and test_data
-        # TODO: split train_data into train_data, test_data
-        # train_data, test_data = torch.utils.data.random_split(train_data, [0.8, 0.2])
+        train_data, test_data = split_timeseries_dataset(train_data, split=[0.8, 0.2])
         
+        # print(train_data.included_cases)
+        # print(test_data.included_cases)
+        # exit()
+
         return train_data, test_data
         
     else:
@@ -84,8 +89,29 @@ def split_timeseries_dataset(dataset, split=None, indices=None):
     if split is None and indices is None:
         raise ValueError('split_timeseries_dataset: pass in either indices or split')
 
-    num_cases = len(dataset.case_files)
-    
+    num_cases = dataset.num_cases
+    included_cases = dataset.included_cases
+
+    if indices is None:
+        indices = [int(s * num_cases) for s in split]
+        indices[-1] += num_cases - sum(indices)
+    indices = torch.utils.data.random_split(range(num_cases), indices)
+
+    num_split = len(indices)
+    subsets = [copy.deepcopy(dataset) for _ in range(num_split)]
+
+    for s in range(num_split):
+        subset = subsets[s]
+        subset.included_cases = [included_cases[i] for i in indices[s]]
+        subset.num_cases = len(subset.included_cases)
+        
+    # assert there is no overlap between the included cases
+    for split1 in range(num_split):
+        for split2 in range(num_split):
+            if split1 != split2:
+                assert not any(c in subsets[split1].included_cases for c in subsets[split2].included_cases)
+
+    return subsets
     
 #======================================================================#
 #

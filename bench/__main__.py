@@ -52,6 +52,7 @@ def main(cfg, device):
         init_step=cfg.init_step,
         init_case=cfg.init_case,
         exclude=cfg.exclude,
+        train_rollout_noise=cfg.train_rollout_noise,
     )
     
     if cfg.dataset in ['elasticity', 'darcy']:
@@ -326,6 +327,7 @@ class Config:
     init_step: int = 100
     init_case: int = 0
     exclude: bool = True
+    train_rollout_noise: float = 0.
 
     # training arguments
     epochs: int = 100
