@@ -304,8 +304,7 @@ class TimeseriesDataset(pyg.data.Dataset):
         if self.dataset_name == 'cylinder_flow':
             
             included_cases = (df['vel_x_norm'] < 0.6) & (df['vel_y_norm'] < 0.1)
-            # included_cases = (df['vel_x_norm'] < 0.7) & (df['vel_y_norm'] < 0.15)
-            # included_cases = included_cases & (df['vel_x_max'] < 999) & (df['vel_y_max'] < 999)
+            included_cases = included_cases & (df['vel_x_max'] < 1.0) & (df['vel_y_max'] < 0.8)
 
         elif self.dataset_name == 'airfoil':
 
