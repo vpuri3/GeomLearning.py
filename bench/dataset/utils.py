@@ -69,16 +69,12 @@ def load_dataset(
 
         train_data = TimeseriesDataset(DATADIR, PROJDIR, 'train', transform=train_transform, **dataset_kwargs, init_case=init_case, exclude=exclude)
         test_data  = TimeseriesDataset(DATADIR, PROJDIR, 'test' , transform=test_transform , **dataset_kwargs, exclude=exclude)
-        
+
         test_data.transform.apply_normalization_stats(train_data.norm_stats)
         
         # Looks like there is some disparity bw train_data and test_data
         train_data, test_data = split_timeseries_dataset(train_data, split=[0.8, 0.2])
         
-        # print(train_data.included_cases)
-        # print(test_data.included_cases)
-        # exit()
-
         return train_data, test_data
         
     else:
