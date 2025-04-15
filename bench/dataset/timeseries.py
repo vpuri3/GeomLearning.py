@@ -17,7 +17,6 @@ class TimeseriesDatasetTransform:
         dataset_name: str,
         mesh=False, cells=False,
         orig=False, metadata=False,
-        vel=True, pres=False, dens=False,
         train_rollout_noise: float = 0.
     ):
         self.dataset_name = dataset_name
@@ -30,7 +29,7 @@ class TimeseriesDatasetTransform:
         
         assert self.train_rollout_noise >= 0.
 
-        self.nfields = 2 * vel + pres + dens
+        self.nfields = 2
             
         # normalization stats
         self.pos_min = torch.tensor([0., 0.])
@@ -54,13 +53,7 @@ class TimeseriesDatasetTransform:
 
     def make_fields(self, data, time_step):
         device = data.velocity.device
-
-        xs = []
-        vel = (data.velocity[time_step] - self.vel_shift.to(device)) / self.vel_scale.to(device)
-        xs = [*xs, vel]
-
-        out = torch.cat(xs, dim=-1)
-        
+        out = (data.velocity[time_step] - self.vel_shift.to(device)) / self.vel_scale.to(device)
         return out
 
     def make_pyg_data(self, graph, edge_attr, **kw):
@@ -107,23 +100,21 @@ class TimeseriesDatasetTransform:
         edge_attr = graph.edge_attr / (self.pos_max - self.pos_min)
 
         if last_step:
-            vel_in  = torch.zeros((N, 2))
-            vel_out = torch.zeros((N, 2))
+            vel_input  = torch.zeros((N, 2))
+            vel_output = torch.zeros((N, 2))
         else:
-            vel_in  = (graph.velocity[time_step] - self.vel_shift ) / self.vel_scale
-            vel_out = graph.velocity[time_step + 1] - graph.velocity[time_step]
+            vel_input  = (graph.velocity[time_step] - self.vel_shift ) / self.vel_scale
+            vel_output = graph.velocity[time_step + 1] - graph.velocity[time_step]
+            vel_output = (vel_output - self.out_shift) / self.out_scale
             
             if self.train_rollout_noise > 0:
-                vel_in += torch.randn_like(vel_in) * self.train_rollout_noise
+                noise = torch.randn_like(vel_input) * self.train_rollout_noise
+                vel_input  += noise
+                vel_output -= noise
             
         # features / labels
-        xs = [graph.node_type_onehot, pos, vel_in]
-        ys = [vel_out]
-
-        x = torch.cat(xs, dim=-1)
-        y = torch.cat(ys, dim=-1)
-        
-        y = (y - self.out_shift) / self.out_scale
+        x = torch.cat([graph.node_type_onehot, pos, vel_input], dim=-1)
+        y = vel_output
 
         # make prediction only on NORMAL and OUTFLOW nodes
         # https://github.com/google-deepmind/deepmind-research/blob/master/meshgraphnets/common.py
@@ -304,12 +295,10 @@ class TimeseriesDataset(pyg.data.Dataset):
         if self.dataset_name == 'cylinder_flow':
             
             included_cases = (df['vel_x_norm'] < 0.6) & (df['vel_y_norm'] < 0.1)
-            included_cases = included_cases & (df['vel_x_max'] < 1.0) & (df['vel_y_max'] < 0.8)
+            included_cases = included_cases & (df['vel_x_max'] < 1.0) & (df['vel_y_max'] < 0.4)
 
         elif self.dataset_name == 'airfoil':
-
             included_cases = (df['vel_x_norm'] < torch.inf) & (df['vel_y_norm'] < torch.inf)
-
         else:
             raise ValueError(f"Dataset {self.dataset_name} not supported")
         

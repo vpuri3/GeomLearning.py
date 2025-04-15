@@ -41,7 +41,7 @@ class Trainer:
         weight_decay=None,
         clip_grad_norm=None,
 
-        Opt=None,
+        make_optimizer=None, # (model, lr, weight_decay) -> optimizer
         Schedule=None,
         
         # OneCycleLR schedule
@@ -49,7 +49,7 @@ class Trainer:
         one_cycle_div_factor=25,        # initial_lr = max_lr/div_factor. Default: 25
         one_cycle_final_div_factor=1e4, # min_lr = initial_lr/final_div_factor Default: 1e4
         one_cycle_three_phase=False,    # first two phases will be symmetrical about pct_start third phase: initial_lr -> initial_lr/final_div_factor
-        
+
         noise_schedule='linear',
         noise_init=0.1,
         noise_min=0.0,
@@ -135,14 +135,12 @@ class Trainer:
             lr = 1e-3
         if weight_decay is None:
             weight_decay = 0.0
-        self.clip_grad_norm = clip_grad_norm
-
-        params = self.model.parameters()
-
-        if (Opt == "Adam") or (Opt == "AdamW") or (Opt is None):
-            self.opt = optim.AdamW(params, lr=lr, weight_decay=weight_decay)
+        if make_optimizer is None:
+            self.opt = optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
         else:
-            raise NotImplementedError()
+            self.opt = make_optimizer(self.model, lr, weight_decay)
+
+        self.clip_grad_norm = clip_grad_norm
 
         ###
         # LOSS CALCULATION

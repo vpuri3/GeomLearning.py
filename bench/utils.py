@@ -4,7 +4,30 @@ import torch
 __all__ = [
     'IdentityTransformer',
     'UnitTransformer',
+    'make_optimizer',
 ]
+
+#======================================================================#
+def make_optimizer(model, lr, weight_decay=0.0):
+    decay = []
+    no_decay = []
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue  # skip frozen weights
+        if name.endswith(".bias") or "LayerNorm" in name or "layernorm" in name or "embedding" in name.lower():
+            no_decay.append(param)
+        elif 'alpha' in name or 'temperature' in name:
+            no_decay.append(param)
+        else:
+            decay.append(param)
+
+    optimizer = torch.optim.AdamW([
+        {'params': decay, 'weight_decay': weight_decay},
+        {'params': no_decay, 'weight_decay': 0.0}
+    ], lr=lr)
+    
+    return optimizer
 
 #======================================================================#
 class IdentityTransformer():
