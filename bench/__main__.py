@@ -132,6 +132,14 @@ def main(cfg, device):
                 num_slices=cfg.num_slices,
                 qk_norm=cfg.qk_norm,
             )
+        elif cfg.model_type == 5:
+            model = am.TS5( # Slice attention (full permute) + slice query conditioning (query size [H, M, D])
+                in_dim=c_in, out_dim=c_out,
+                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
+                num_slices=cfg.num_slices,
+                qk_norm=cfg.qk_norm,
+            )
         else:
             raise NotImplementedError("No time-conditioned model selected.")
     else:
@@ -187,7 +195,7 @@ def main(cfg, device):
 
         kw = dict(
             device=device, gnn_loader=gnn_loader, stats_every=cfg.epochs//10,
-            Opt='AdamW', weight_decay=cfg.weight_decay, epochs=cfg.epochs,
+            make_optimizer=bench.make_optimizer, weight_decay=cfg.weight_decay, epochs=cfg.epochs,
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
             lossfun=lossfun, clip_grad_norm=1.,
         )
@@ -333,11 +341,11 @@ class Config:
     epochs: int = 100
     batch_size: int = 1
     weight_decay: float = 0e-0
-    learning_rate: float = 1e-3
+    learning_rate: float = 1e-4
     schedule: str = None
-    one_cycle_pct_start:float = 0.1
+    one_cycle_pct_start:float = 0.05
     one_cycle_div_factor: float = 25
-    one_cycle_final_div_factor: float = 40
+    one_cycle_final_div_factor: float = 4
     one_cycle_three_phase: bool = False
 
     # model

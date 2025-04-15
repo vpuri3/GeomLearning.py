@@ -7,7 +7,7 @@ from timm.layers import trunc_normal_, Mlp
 from einops import rearrange, einsum
 
 __all__ = [
-    "TS4",
+    "TS5",
 ]
 
 # # the incremental speedup isn't worth dealing with versioning hell
@@ -20,6 +20,23 @@ def mha(q, k, v):
     attn = F.softmax(dots, dim=-1)
     out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
     return out, attn
+
+def sinkhorn(scores, n_iters=5, row_first=True, do_exp=True):
+    """
+    Perform Sinkhorn normalization to make a matrix doubly stochastic.
+    Assumes input scores is (..., M, N).
+    """
+    for _ in range(n_iters):
+        if row_first:
+            scores = scores - torch.logsumexp(scores, dim=-1, keepdim=True)  # Row
+            scores = scores - torch.logsumexp(scores, dim=-2, keepdim=True)  # Column
+        else:
+            scores = scores - torch.logsumexp(scores, dim=-2, keepdim=True)  # Column
+            scores = scores - torch.logsumexp(scores, dim=-1, keepdim=True)  # Row
+    if do_exp:
+        return torch.exp(scores)
+    else:
+        return scores
 
 #======================================================================#
 # Embeddings
@@ -87,9 +104,16 @@ class SliceAttention(nn.Module):
         self.wt_q_proj = nn.Sequential(nn.SiLU(), nn.Linear(self.hidden_dim, self.num_heads * self.head_dim * self.num_slices, bias=False),)
         self.alpha = nn.Parameter(torch.ones([self.num_heads]))
 
+        # # apply to attn scores/ attn weights
+        # # can be applied to slice_token or slice_weights or slice_scores
+        # self.query_mix = nn.Conv1d(in_channels=self.num_slices, out_channels=self.num_slices, kernel_size=1)
+        # self.head_mix = nn.Conv2d(in_channels=self.num_heads, out_channels=self.num_heads, kernel_size=1)
+        
+        # # x = self.query_mix(x.view(B * H, M, D)).view(B, H, M, D)
+        # # x = self.head_mix(x)
+
         # (2) Attention among slice tokens
-        self.qkv_proj = nn.Parameter(torch.empty(self.num_heads, self.head_dim, 3 * self.head_dim))
-        trunc_normal_(self.qkv_proj, std=0.02)
+        self.qkv_proj = nn.Linear(self.hidden_dim, 3 * self.hidden_dim, bias=False)
 
         # (3) Desclice and return
         self.to_out = nn.Sequential(
@@ -103,8 +127,8 @@ class SliceAttention(nn.Module):
         
         ### (1) Slicing
 
-        xq = self.wt_q_proj(c)
-        xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1)
+        xq = self.wt_q_proj(c) # [B H M D]
+        xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1) # [B H N D]
         xq = rearrange(xq, 'b (h m d) -> b h m d', m=self.num_slices, h=self.num_heads) # [B H M D]
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B H N D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
@@ -113,16 +137,27 @@ class SliceAttention(nn.Module):
             xq = F.normalize(xq, dim=-1)
             xk = F.normalize(xk, dim=-1)
 
+        # alpha = self.alpha.view(-1, 1, 1)
+        # slice_scores = einsum(xq, xk, 'b h m d, b h n d -> b h m n') # [B H M N]
+        # slice_weights = sinkhorn(slice_scores * alpha, row_first=False)
+        # slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
+        
         alpha = self.alpha.view(-1, 1, 1)
         slice_scores = einsum(xq, xk, 'b h m d, b h n d -> b h m n') # [B H M N]
         slice_weights = F.softmax(slice_scores * alpha, dim=-2)
         slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
         slice_token = slice_token / (slice_weights.sum(dim=-1, keepdim=True) + 1e-5)
         
-        ### (2) Attention among slice tokens
+        # should we have an activation here?
 
-        qkv_token = einsum(slice_token, self.qkv_proj, 'b h m d, h d e -> b h m e') # [B H M 3D]
-        out_token, attn_weights = mha(*(qkv_token.chunk(3, dim=-1))) # [B H M D]
+        ### (2) Attention among slice tokens
+        slice_token = rearrange(slice_token, 'b h m d -> b m (h d)')
+        qkv_token = self.qkv_proj(slice_token)
+        q_token, k_token, v_token = qkv_token.chunk(3, dim=-1)
+        q_token = rearrange(q_token, 'b m (h d) -> b h m d', h=self.num_heads)
+        k_token = rearrange(k_token, 'b m (h d) -> b h m d', h=self.num_heads)
+        v_token = rearrange(v_token, 'b m (h d) -> b h m d', h=self.num_heads)
+        out_token, attn_weights = mha(q_token, k_token, v_token) # [B H M D]
 
         ### (3) Deslice
 
@@ -187,7 +222,7 @@ class FinalLayer(nn.Module):
 #======================================================================#
 # MODEL
 #======================================================================#
-class TS4(nn.Module):
+class TS5(nn.Module):
     def __init__(self,
         in_dim,
         out_dim,

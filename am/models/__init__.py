@@ -12,3 +12,4 @@ from .ts1 import * # Physics attention + AdaLN conditioning
 from .ts2 import * # Slice attention + AdaLN conditioning (query size [M, D])
 from .ts3 import * # Slice attention + slice query conditioning (query size [M, D])
 from .ts4 import * # Slice attention + slice query conditioning (query size [H, M, D])
+from .ts5 import * # Slice attention (full permute) + slice query conditioning (query size [H, M, D])
