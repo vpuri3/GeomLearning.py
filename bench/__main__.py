@@ -99,45 +99,39 @@ def main(cfg, device):
             model = am.Transolver(
                 space_dim=c_in+1, out_dim=c_out, fun_dim=0,
                 n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                slice_num=cfg.num_slices,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
             )
         elif cfg.model_type == 1:
             model = am.TS1( # Physics attention + AdaLN conditioning
                 in_dim=c_in, out_dim=c_out,
                 n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                num_slices=cfg.num_slices,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
             )
         elif cfg.model_type == 2:
             model = am.TS2( # Slice attention + AdaLN conditioning (query size [M, D])
                 in_dim=c_in, out_dim=c_out,
                 n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                num_slices=cfg.num_slices,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
             )
         elif cfg.model_type == 3:
             model = am.TS3( # Slice attention + slice query conditioning (query size [M, D])
                 in_dim=c_in, out_dim=c_out,
                 n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                num_slices=cfg.num_slices,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
                 qk_norm=cfg.qk_norm,
             )
         elif cfg.model_type == 4:
             model = am.TS4( # Slice attention + slice query conditioning (query size [H, M, D])
                 in_dim=c_in, out_dim=c_out,
                 n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                num_slices=cfg.num_slices,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
                 qk_norm=cfg.qk_norm,
             )
         elif cfg.model_type == 5:
             model = am.TS5( # Slice attention (full permute) + slice query conditioning (query size [H, M, D])
                 in_dim=c_in, out_dim=c_out,
                 n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                num_slices=cfg.num_slices,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
                 qk_norm=cfg.qk_norm,
             )
         else:
@@ -149,15 +143,22 @@ def main(cfg, device):
             model = bench.Transolver(
                 space_dim=c_in, out_dim=c_out, fun_dim=0,
                 n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                slice_num=cfg.num_slices,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
             )
         elif cfg.model_type == 1:
             model = bench.TS1Uncond(
                 in_dim=c_in, out_dim=c_out,
                 hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
-                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio,
-                num_slices=cfg.num_slices,
+                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
+                qk_norm=cfg.qk_norm,
+                k_val=cfg.topk,
+            )
+        elif cfg.model_type == 2:
+            model = bench.TS2Uncond(
+                in_dim=c_in, out_dim=c_out,
+                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
+                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
+                qk_norm=cfg.qk_norm,
                 k_val=cfg.topk,
             )
         else:
@@ -174,7 +175,7 @@ def main(cfg, device):
     #=================#
 
     callback = mlutils.Callback(case_dir,)
-    if cfg.model_type in [1,] and (time_cond == False):
+    if cfg.model_type in [1,2] and (time_cond == False):
         callback = bench.TSCallback(case_dir,)
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
         callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type == -1)
@@ -227,7 +228,7 @@ def main(cfg, device):
         #-------------#
         # batch_lossfun
         #-------------#
-        if (cfg.model_type == 1) and cfg.dataset == 'elasticity':
+        if (cfg.model_type in [1,2]) and cfg.dataset == 'elasticity':
             gamma_schedule = mlutils.DecayScheduler(
                 init_val=cfg.gamma_init, min_val=cfg.gamma_min,
                 total_steps=trainer.total_steps // 2,
@@ -259,45 +260,6 @@ def main(cfg, device):
         if cfg.restart_file is not None:
             trainer.load(cfg.restart_file)
 
-        # import matplotlib.pyplot as plt
-        # _data.transform.orig = True
-        # with torch.no_grad():
-        #     losses = []
-        #     vel_norms = []
-        #     for graph in _data:
-        #         graph = graph.to(device)
-        #         loss = batch_lossfun.forward_single(None, model, graph)
-        #         losses.append(loss.item())
-                
-        #         vel = graph.velocity
-        #         vel_loss = (vel**2).mean(dim=(0,1)).sqrt()
-        #         vel_norms.append(vel_loss[0].item())
-
-        # losses = torch.tensor(losses)
-        # losses[losses < 1e-12] = torch.nan
-
-        # vel_norms = torch.tensor(vel_norms)
-        # vel_norms[vel_norms < 1e-12] = torch.nan
-
-        # fig, ax1 = plt.subplots(figsize=(8, 4))
-
-        # ax1.set_yscale('log')
-        # ax1.scatter(range(len(losses)), losses, color='k', label='Training Loss', s=10)
-        # ax1.set_ylabel('Model Loss', color='k')
-        # ax1.tick_params(axis='y', labelcolor='k')
-        
-        # ax2 = ax1.twinx()
-        # ax2.scatter(range(len(vel_norms)), vel_norms, color='r', label='Velocity Loss', s=10)  # Reduced marker size
-        # ax2.set_ylabel('Velocity Norm', color='r')
-        # ax2.tick_params(axis='y', labelcolor='r')
-        
-        # fig.legend(loc='upper left')
-        # plt.title('Training Loss')
-        # plt.tight_layout()
-        # plt.savefig(os.path.join(PROJDIR, 'losses.png'))
-        # plt.close()
-        # return
-        
         trainer.train()
 
     #=================#

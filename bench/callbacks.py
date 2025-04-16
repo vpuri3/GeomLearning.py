@@ -182,7 +182,7 @@ class TSCallback(mlutils.Callback):
             y = batch[1].to(trainer.device)
             yh, swt, tmp, bs, att = trainer.model(x, return_stats=True)
             
-            n = trainer.get_batch_size(batch)
+            n = trainer.get_batch_size(batch, trainer._loader_)
             N += n
             MSE += ((yh - y).pow(2).mean() * n).item()
             for i in range(trainer.model.num_layers):

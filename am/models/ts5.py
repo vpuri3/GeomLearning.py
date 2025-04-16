@@ -105,7 +105,6 @@ class SliceAttention(nn.Module):
         self.alpha = nn.Parameter(torch.ones([self.num_heads]))
 
         # # apply to attn scores/ attn weights
-        # # can be applied to slice_token or slice_weights or slice_scores
         # self.query_mix = nn.Conv1d(in_channels=self.num_slices, out_channels=self.num_slices, kernel_size=1)
         # self.head_mix = nn.Conv2d(in_channels=self.num_heads, out_channels=self.num_heads, kernel_size=1)
         

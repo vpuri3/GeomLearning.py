@@ -27,18 +27,15 @@ class SwiGLU(nn.Module):
         u, v = x.chunk(2, dim=-1)
         return u * self.silu(v)
 
+# the incremental speedup isn't worth dealing with versioning hell
+# FastGELU = nn.GELU
+FastGELU = lambda: nn.GELU(approximate='tanh')
+
 ACTIVATIONS = {
-    'gelu': nn.GELU(),
+    'gelu': FastGELU(),
     'silu': nn.SiLU(),
     'swiglu': SwiGLU(),
 }
-
-def normalize(x):
-    return x / (torch.linalg.vector_norm(x, dim=-1, keepdim=True) + 1e-5)
-
-def gumbel_noise(shape, device=None):
-    u = torch.rand(shape, device=device)
-    return -torch.log(-torch.log(u + 1e-10) + 1e-10)
 
 def mha(q, k, v):
     scale = q.shape[-1] ** -0.5
@@ -46,6 +43,14 @@ def mha(q, k, v):
     attn = F.softmax(dots, dim=-1)
     out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
     return out, attn
+
+
+def normalize(x):
+    return x / (torch.linalg.vector_norm(x, dim=-1, keepdim=True) + 1e-5)
+
+def gumbel_noise(shape, device=None):
+    u = torch.rand(shape, device=device)
+    return -torch.log(-torch.log(u + 1e-10) + 1e-10)
 
 def topk_sparse(weights, bias, k_val=None):
     if k_val is None:
@@ -83,18 +88,20 @@ class SliceAttention(nn.Module):
             num_heads=8,
             dropout=0.,
             num_slices=32,
+            qk_norm=False,
             k_val=None,
         ):
         super().__init__()
 
         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
 
-        self.k_val = k_val
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
         self.num_slices = num_slices
         self.head_dim = hidden_dim // num_heads
         self.dropout = nn.Dropout(dropout)
+        self.k_val = k_val
+        self.qk_norm = qk_norm
 
         ### (1) Get slice weights
         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
@@ -124,10 +131,9 @@ class SliceAttention(nn.Module):
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B H N D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
         
-        # # normalize xq, xk, xv
-        # xq = xq / (torch.linalg.vector_norm(xq, dim=-1, keepdim=True) + 1e-5)
-        # xk = xk / (torch.linalg.vector_norm(xk, dim=-1, keepdim=True) + 1e-5)
-        # xv = xv / (torch.linalg.vector_norm(xv, dim=-1, keepdim=True) + 1e-5)
+        if self.qk_norm:
+            xq = F.normalize(xq, dim=-1)
+            xk = F.normalize(xk, dim=-1)
         
         slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B H M N]
         slice_weights = F.softmax(slice_scores, dim=-2)
@@ -202,6 +208,7 @@ class Block(nn.Module):
             dropout: float,
             mlp_ratio=2,
             num_slices=32,
+            qk_norm=False,
             act=None,
             k_val=None,
     ):
@@ -214,6 +221,7 @@ class Block(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             num_slices=num_slices,
+            qk_norm=qk_norm,
             k_val=k_val,
         )
         
@@ -256,6 +264,7 @@ class TS1Uncond(nn.Module):
         mlp_ratio=1,
         num_slices=32,
         act=None,
+        qk_norm=False,
         k_val=None,
     ):
         super().__init__()
@@ -282,6 +291,7 @@ class TS1Uncond(nn.Module):
                 mlp_ratio=mlp_ratio,
                 num_slices=num_slices,
                 act=act,
+                qk_norm=qk_norm,
                 k_val=k_val,
             )
             for _ in range(num_layers)
