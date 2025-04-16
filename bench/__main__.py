@@ -318,7 +318,7 @@ class Config:
     num_heads: int = 8
     mlp_ratio: float = 2.0
     num_slices: int = 32
-    qk_norm: bool = False
+    qk_norm: bool = True
 
     topk: int = 0
     gamma_min: float = 0e-4
