@@ -71,13 +71,11 @@ class Callback:
 
         # save stats
         if trainer.GLOBAL_RANK == 0:
-            print(f"Saving stats to {ckpt_dir}/stats.json")
             with open(os.path.join(ckpt_dir, 'stats.json'), 'w') as f:
                 json.dump(trainer.stat_vals, f)
 
         # save loss plot
         if trainer.GLOBAL_RANK == 0:
-            print(f"Saving loss plot to {self.case_dir}/training_loss.png")
             plt.figure(figsize=(8, 4), dpi=175)
             train_loss_per_batch = trainer.train_loss_per_batch
             if isinstance(train_loss_per_batch, list):

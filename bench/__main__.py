@@ -46,7 +46,7 @@ def main(cfg, device):
         DATADIR_BASE,
         PROJDIR,
         force_reload=cfg.force_reload,
-        mesh=cfg.model_type == -1,
+        mesh=cfg.model_type in [-1,],
         max_cases=cfg.max_cases,
         max_steps=cfg.max_steps,
         init_step=cfg.init_step,
@@ -159,7 +159,6 @@ def main(cfg, device):
                 hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
                 num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
                 qk_norm=cfg.qk_norm,
-                k_val=cfg.topk,
             )
         elif cfg.model_type == 3:
             model = bench.TS3Uncond(
@@ -167,7 +166,6 @@ def main(cfg, device):
                 hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
                 num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
                 qk_norm=cfg.qk_norm,
-                k_val=cfg.topk,
             )
         else:
             raise NotImplementedError("No unconditioned model selected.")
@@ -183,10 +181,12 @@ def main(cfg, device):
     #=================#
 
     callback = mlutils.Callback(case_dir,)
-    if cfg.model_type in [1,2,3] and (time_cond == False):
-        callback = bench.TSCallback(case_dir,)
+    if cfg.model_type in [1,] and (time_cond == False):
+        callback = bench.SparsityCallback(case_dir,)
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
-        callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type == -1)
+        callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type in [-1,])
+    elif cfg.dataset in ['elasticity', 'darcy']:
+        callback = bench.SteadyStateCallback(case_dir)
         
     if cfg.train and cfg.epochs > 0:
 
@@ -236,7 +236,7 @@ def main(cfg, device):
         #-------------#
         # batch_lossfun
         #-------------#
-        if (cfg.model_type in [1,2,3]) and cfg.dataset == 'elasticity':
+        if (cfg.model_type in [1,]) and cfg.dataset == 'elasticity':
             gamma_schedule = mlutils.DecayScheduler(
                 init_val=cfg.gamma_init, min_val=cfg.gamma_min,
                 total_steps=trainer.total_steps // 2,
@@ -315,7 +315,7 @@ class Config:
     schedule: str = None
     one_cycle_pct_start:float = 0.05
     one_cycle_div_factor: float = 25
-    one_cycle_final_div_factor: float = 4
+    one_cycle_final_div_factor: float = 20
     one_cycle_three_phase: bool = False
 
     # model

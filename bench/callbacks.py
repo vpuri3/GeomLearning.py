@@ -21,7 +21,8 @@ from am.callbacks import hstack_dataframes_across_ranks, vstack_dataframes_acros
 
 __all__ = [
     'TimeseriesCallback',
-    'TSCallback',
+    'SparsityCallback',
+    'SteadyStateCallback',
 ]
 
 #======================================================================#
@@ -162,7 +163,32 @@ class TimeseriesCallback(mlutils.Callback):
         return
 
 #======================================================================#
-class TSCallback(mlutils.Callback):
+class SteadyStateCallback(mlutils.Callback):
+    @torch.no_grad()
+    def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
+        
+        trainer.model.eval()
+        
+        N, MSE = 0, 0.0
+
+        for batch in trainer._loader_:
+            x = batch[0].to(trainer.device)
+            y = batch[1].to(trainer.device)
+            yh = trainer.model(x)
+            
+            n = trainer.get_batch_size(batch, trainer._loader_)
+            N += n
+            MSE += ((yh - y).pow(2).mean() * n).item()
+                
+            del x, y, yh
+
+        MSE = MSE / N
+
+        print(f"Train MSE: {MSE:.8e}")
+        return
+
+#======================================================================#
+class SparsityCallback(mlutils.Callback):
     # def __init__(self, case_dir: str, save_every=None):
     #     super().__init__(case_dir, save_every)
 
