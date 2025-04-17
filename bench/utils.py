@@ -19,6 +19,8 @@ def make_optimizer(model, lr, weight_decay=0.0):
             no_decay.append(param)
         elif 'alpha' in name or 'temperature' in name:
             no_decay.append(param)
+        elif 'wtq' in name:
+            no_decay.append(param)
         else:
             decay.append(param)
 

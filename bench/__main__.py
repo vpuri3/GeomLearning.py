@@ -161,6 +161,14 @@ def main(cfg, device):
                 qk_norm=cfg.qk_norm,
                 k_val=cfg.topk,
             )
+        elif cfg.model_type == 3:
+            model = bench.TS3Uncond(
+                in_dim=c_in, out_dim=c_out,
+                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
+                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
+                qk_norm=cfg.qk_norm,
+                k_val=cfg.topk,
+            )
         else:
             raise NotImplementedError("No unconditioned model selected.")
         
@@ -175,7 +183,7 @@ def main(cfg, device):
     #=================#
 
     callback = mlutils.Callback(case_dir,)
-    if cfg.model_type in [1,2] and (time_cond == False):
+    if cfg.model_type in [1,2,3] and (time_cond == False):
         callback = bench.TSCallback(case_dir,)
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
         callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type == -1)
@@ -228,7 +236,7 @@ def main(cfg, device):
         #-------------#
         # batch_lossfun
         #-------------#
-        if (cfg.model_type in [1,2]) and cfg.dataset == 'elasticity':
+        if (cfg.model_type in [1,2,3]) and cfg.dataset == 'elasticity':
             gamma_schedule = mlutils.DecayScheduler(
                 init_val=cfg.gamma_init, min_val=cfg.gamma_min,
                 total_steps=trainer.total_steps // 2,
