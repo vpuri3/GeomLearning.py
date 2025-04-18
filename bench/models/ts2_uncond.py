@@ -79,7 +79,7 @@ class SliceAttention(nn.Module):
         ### (1) Get slice weights
         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
         self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
-        nn.init.normal_(self.wtq, mean=0.0, std=1.0)
+        nn.init.normal_(self.wtq, mean=0.0, std=0.1)
 
         self.mix = SliceHeadMixingConv(self.num_heads, self.num_slices)
         self.ln = nn.LayerNorm(self.head_dim)
@@ -122,6 +122,9 @@ class SliceAttention(nn.Module):
         k_token = rearrange(k_token, 'b m (h d) -> b h m d', h=self.num_heads)
         v_token = rearrange(v_token, 'b m (h d) -> b h m d', h=self.num_heads)
         out_token, _ = mha(q_token, k_token, v_token) # [B H M D]
+        
+        # mix attn weights in mha
+        # residual connectino and layer_norm (gated with alpha?)
         
         ### (3) Deslice
 
