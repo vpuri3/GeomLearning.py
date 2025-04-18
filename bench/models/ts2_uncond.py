@@ -65,7 +65,7 @@ class SliceHeadMixingConv(nn.Module):
 # SLICE ATTENTION
 #======================================================================#
 class SliceAttention(nn.Module):
-    def __init__(self, hidden_dim, num_heads=8, num_slices=32, qk_norm=True):
+    def __init__(self, hidden_dim, num_heads=8, num_slices=32, qk_norm=False):
         super().__init__()
 
         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
@@ -160,7 +160,7 @@ class Block(nn.Module):
             hidden_dim: int,
             mlp_ratio=2,
             num_slices=32,
-            qk_norm=True,
+            qk_norm=False,
             act=None,
     ):
         super().__init__()
@@ -211,7 +211,7 @@ class TS2Uncond(nn.Module):
         num_heads=8,
         mlp_ratio=1,
         num_slices=32,
-        qk_norm=True,
+        qk_norm=False,
         act=None,
     ):
         super().__init__()

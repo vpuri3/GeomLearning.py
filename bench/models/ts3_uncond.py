@@ -75,7 +75,7 @@ class SliceHeadMixingConv(nn.Module):
 # SLICE ATTENTION
 #======================================================================#
 class SliceAttention(nn.Module):
-    def __init__(self, hidden_dim, num_heads=8, num_slices=32, qk_norm=True):
+    def __init__(self, hidden_dim, num_heads=8, num_slices=32, qk_norm=False):
         super().__init__()
 
         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
@@ -89,13 +89,10 @@ class SliceAttention(nn.Module):
         ### (1) Get slice weights
         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
         self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
-        trunc_normal_(self.wtq, std=0.02)
+        nn.init.normal_(self.wtq, mean=0.0, std=1.0)
 
-        self.alpha1 = nn.Parameter(torch.full([self.num_heads],  1.))
-        self.alpha2 = nn.Parameter(torch.full([self.num_heads], -2.))
-
-        self.mix1 = SliceHeadMixingConv(self.num_heads, self.num_slices)
-        self.mix2 = SliceHeadMixingConv(self.num_heads, self.num_slices, positive_weights=True)
+        self.mix = SliceHeadMixingConv(self.num_heads, self.num_slices)
+        self.ln = nn.LayerNorm(self.head_dim)
 
         ### (2) Attention among slice tokens
         self.qkv_proj = nn.Linear(self.hidden_dim, 3 * self.hidden_dim, bias=False)
@@ -103,8 +100,10 @@ class SliceAttention(nn.Module):
         ### (3) Deslice and return
         self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
         
-        self.ln1 = nn.LayerNorm(self.head_dim)
+        # experimental
+        self.mix2 = SliceHeadMixingConv(self.num_heads, self.num_slices, positive_weights=True)
         self.ln2 = nn.LayerNorm(self.head_dim)
+        self.alpha2 = nn.Parameter(torch.full([self.num_heads], -2.))
 
     def forward(self, x):
         
@@ -121,27 +120,30 @@ class SliceAttention(nn.Module):
             xq = F.normalize(xq, dim=-1)
             xk = F.normalize(xk, dim=-1)
         
-        alpha1 = self.alpha1.view(-1, 1, 1)
-        alpha2 = F.sigmoid(self.alpha2).view(-1, 1, 1)
         slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B H M N]
-        slice_scores = self.mix1(slice_scores)
-        slice_weights = F.softmax(slice_scores * alpha1, dim=-2)
-        slice_weights = slice_weights + alpha2 * self.mix2(slice_weights)
-        slice_weights = slice_weights / (slice_weights.sum(dim=-2, keepdim=True) + 1e-5)
+        slice_scores = self.mix(slice_scores)
+        slice_weights = F.softmax(slice_scores, dim=-2)
+        
+        # alpha2 = F.sigmoid(self.alpha2).view(-1, 1, 1)
+        # slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B H M N]
+        # slice_scores = self.mix1(slice_scores)
+        # slice_weights = F.softmax(slice_scores * alpha1, dim=-2)
+        # slice_weights = slice_weights + alpha2 * self.mix2(slice_weights)
+        # slice_weights = slice_weights / (slice_weights.sum(dim=-2, keepdim=True) + 1e-5)
         
         slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
         slice_token = slice_token / (slice_weights.sum(dim=-1, keepdim=True) + 1e-5)
-        
-        slice_token = self.ln1(slice_token)
+        slice_token = self.ln(slice_token)
 
         ### (2) Attention among slice tokens
+
         slice_token = rearrange(slice_token, 'b h m d -> b m (h d)')
         qkv_token = self.qkv_proj(slice_token)
         q_token, k_token, v_token = qkv_token.chunk(3, dim=-1)
         q_token = rearrange(q_token, 'b m (h d) -> b h m d', h=self.num_heads)
         k_token = rearrange(k_token, 'b m (h d) -> b h m d', h=self.num_heads)
         v_token = rearrange(v_token, 'b m (h d) -> b h m d', h=self.num_heads)
-        out_token, attn_weights = mha(q_token, k_token, v_token) # [B H M D]
+        out_token, _ = mha(q_token, k_token, v_token) # [B H M D]
         
         # out_token = self.ln2(out_token)
         
@@ -151,6 +153,10 @@ class SliceAttention(nn.Module):
         out = rearrange(out, 'b h n d -> b n (h d)')
         out = self.out_proj(out)
         
+        # x: [B N C]
+
+        ### (1) Slicing
+
         return out
 
 #======================================================================#
@@ -182,7 +188,7 @@ class Block(nn.Module):
             hidden_dim: int,
             mlp_ratio=2,
             num_slices=32,
-            qk_norm=True,
+            qk_norm=False,
             act=None,
     ):
         super().__init__()
@@ -233,7 +239,7 @@ class TS3Uncond(nn.Module):
         num_heads=8,
         mlp_ratio=1,
         num_slices=32,
-        qk_norm=True,
+        qk_norm=False,
         act=None,
     ):
         super().__init__()
