@@ -127,7 +127,7 @@ class SliceAttention(nn.Module):
         ### (3) Deslice and return
         self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
         
-        self.alphaC = nn.Parameter(torch.full([self.hidden_dim], 0.5))
+        self.alphaC = nn.Parameter(torch.full([self.hidden_dim], 1.0))
         self.alphaH = nn.Parameter(torch.full([self.num_heads], 0.5))
         
         # if you are using QK normalization, then softmax isn't needed at all!!
@@ -171,8 +171,7 @@ class SliceAttention(nn.Module):
 
         ### (2) Attention among slice tokens
         
-        # out_token = self.mha(slice_token) # no residual connection
-        out_token = slice_token * self.alphaC + self.mha(slice_token) # residual connection
+        out_token = slice_token * self.alphaC + self.mha(slice_token)
         
         out_token = self.ln2(out_token)
         out_token = rearrange(out_token, 'b m (h d) -> b h m d', h=self.num_heads)
