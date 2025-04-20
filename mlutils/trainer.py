@@ -342,7 +342,7 @@ class Trainer:
         self.trigger_callbacks("epoch_start")
         self.statistics()
         self.trigger_callbacks("epoch_end")
-
+        
         while self.epoch < self.epochs:
             self.epoch += 1
 

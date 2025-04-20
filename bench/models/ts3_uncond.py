@@ -40,12 +40,36 @@ ACTIVATIONS = {
     'geglu': GEGLU(),
 }
 
-def mha(q, k, v):
-    scale = q.shape[-1] ** -0.5
-    dots = einsum(q, k, 'b h q d, b h k d -> b h q k') * scale
-    attn = F.softmax(dots, dim=-1)
-    out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
-    return out, attn
+class MultiHeadAttention(nn.Module):
+    def __init__(self, hidden_dim, num_heads=8):
+        super().__init__()
+
+        assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
+
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = hidden_dim // num_heads 
+        
+        # Attn scores [B H M M] can be mixed whichever way.
+        # self.mix = SliceHeadMixingConv(self.num_heads, self.num_slices)
+        self.qkv_proj = nn.Linear(hidden_dim, 3 * hidden_dim)
+        self.out_proj = nn.Linear(hidden_dim, hidden_dim)
+
+    def forward(self, x):
+        q, k, v = self.qkv_proj(x).chunk(3, dim=-1)
+        q = rearrange(q, 'b n (h d) -> b h n d', h=self.num_heads)
+        k = rearrange(k, 'b n (h d) -> b h n d', h=self.num_heads)
+        v = rearrange(v, 'b n (h d) -> b h n d', h=self.num_heads)
+
+        scale = q.shape[-1] ** -0.5
+        dots = einsum(q, k, 'b h q d, b h k d -> b h q k') * scale
+        # dots = self.mix(dots) # remove scale?
+        attn = F.softmax(dots, dim=-1)
+        out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        out = self.out_proj(out)
+
+        return out
 
 class SliceHeadMixingConv(nn.Module):
     def __init__(self, H:int, M: int, positive_weights=False):
@@ -70,7 +94,7 @@ class SliceHeadMixingConv(nn.Module):
         x = x.view(B, H, M, N)
 
         return x
-
+    
 #======================================================================#
 # SLICE ATTENTION
 #======================================================================#
@@ -89,21 +113,30 @@ class SliceAttention(nn.Module):
         ### (1) Get slice weights
         self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
         self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
-        nn.init.normal_(self.wtq, mean=0.0, std=1.0)
+        nn.init.normal_(self.wtq, mean=0.0, std=0.1)
 
         self.mix = SliceHeadMixingConv(self.num_heads, self.num_slices)
-        self.ln = nn.LayerNorm(self.head_dim)
+        self.gn1 = nn.LayerNorm(self.head_dim)
+        self.gn2 = nn.LayerNorm(self.head_dim)
+        self.ln1 = nn.LayerNorm(self.hidden_dim)
+        self.ln2 = nn.LayerNorm(self.hidden_dim)
 
         ### (2) Attention among slice tokens
-        self.qkv_proj = nn.Linear(self.hidden_dim, 3 * self.hidden_dim, bias=False)
+        self.mha = MultiHeadAttention(self.hidden_dim, self.num_heads)
         
         ### (3) Deslice and return
         self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
         
-        # experimental
-        self.mix2 = SliceHeadMixingConv(self.num_heads, self.num_slices, positive_weights=True)
-        self.ln2 = nn.LayerNorm(self.head_dim)
-        self.alpha2 = nn.Parameter(torch.full([self.num_heads], -2.))
+        self.alphaC = nn.Parameter(torch.full([self.hidden_dim], 0.5))
+        self.alphaH = nn.Parameter(torch.full([self.num_heads], 0.5))
+        
+        # if you are using QK normalization, then softmax isn't needed at all!!
+        # instead of dividing by slice_norm, we can just multiply by M/N.
+        
+        # replace groupnorm with layernorm
+        # add residual connections bw cross-attn, self-attn, and mlp.
+        # and layernorm after that
+        # add mixing on self-attn weights
 
     def forward(self, x):
         
@@ -117,46 +150,40 @@ class SliceAttention(nn.Module):
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
 
         if self.qk_norm:
-            xq = F.normalize(xq, dim=-1)
-            xk = F.normalize(xk, dim=-1)
+            xq = F.normalize(xq, p=2, dim=-1)
+            xk = F.normalize(xk, p=2, dim=-1)
         
         slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B H M N]
         slice_scores = self.mix(slice_scores)
-        slice_weights = F.softmax(slice_scores, dim=-2)
         
-        # alpha2 = F.sigmoid(self.alpha2).view(-1, 1, 1)
-        # slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B H M N]
-        # slice_scores = self.mix1(slice_scores)
-        # slice_weights = F.softmax(slice_scores * alpha1, dim=-2)
-        # slice_weights = slice_weights + alpha2 * self.mix2(slice_weights)
-        # slice_weights = slice_weights / (slice_weights.sum(dim=-2, keepdim=True) + 1e-5)
-        
-        slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
-        slice_token = slice_token / (slice_weights.sum(dim=-1, keepdim=True) + 1e-5)
-        slice_token = self.ln(slice_token)
+        if self.qk_norm:
+            slice_weights = slice_scores #* (self.num_slices / x.shape[1])
+            slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
+
+        else:
+            slice_weights = F.softmax(slice_scores, dim=-2)
+            slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
+            slice_token = slice_token / (slice_weights.sum(dim=-1, keepdim=True) + 1e-5)
+
+        # slice_token = self.gn1(slice_token)
+        slice_token = rearrange(slice_token, 'b h m d -> b m (h d)')
+        slice_token = self.ln1(slice_token)
 
         ### (2) Attention among slice tokens
+        
+        # out_token = self.mha(slice_token) # no residual connection
+        out_token = slice_token * self.alphaC + self.mha(slice_token) # residual connection
+        
+        out_token = self.ln2(out_token)
+        out_token = rearrange(out_token, 'b m (h d) -> b h m d', h=self.num_heads)
+        # out_token = self.gn2(out_token)
 
-        slice_token = rearrange(slice_token, 'b h m d -> b m (h d)')
-        qkv_token = self.qkv_proj(slice_token)
-        q_token, k_token, v_token = qkv_token.chunk(3, dim=-1)
-        q_token = rearrange(q_token, 'b m (h d) -> b h m d', h=self.num_heads)
-        k_token = rearrange(k_token, 'b m (h d) -> b h m d', h=self.num_heads)
-        v_token = rearrange(v_token, 'b m (h d) -> b h m d', h=self.num_heads)
-        out_token, _ = mha(q_token, k_token, v_token) # [B H M D]
-        
-        # out_token = self.ln2(out_token)
-        
         ### (3) Deslice
 
         out = einsum(out_token, slice_weights, 'b h m d, b h m n -> b h n d')
         out = rearrange(out, 'b h n d -> b n (h d)')
         out = self.out_proj(out)
         
-        # x: [B N C]
-
-        ### (1) Slicing
-
         return out
 
 #======================================================================#
