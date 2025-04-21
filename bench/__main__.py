@@ -315,7 +315,7 @@ class Config:
     schedule: str = None
     one_cycle_pct_start:float = 0.05
     one_cycle_div_factor: float = 25
-    one_cycle_final_div_factor: float = 20 # push that to 1000
+    one_cycle_final_div_factor: float = 1000
     one_cycle_three_phase: bool = False
 
     # model

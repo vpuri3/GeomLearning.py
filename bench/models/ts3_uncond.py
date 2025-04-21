@@ -128,7 +128,6 @@ class SliceAttention(nn.Module):
         self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
         
         self.alphaC = nn.Parameter(torch.full([self.hidden_dim], 1.0))
-        self.alphaH = nn.Parameter(torch.full([self.num_heads], 0.5))
         
         # if you are using QK normalization, then softmax isn't needed at all!!
         # instead of dividing by slice_norm, we can just multiply by M/N.
@@ -157,9 +156,10 @@ class SliceAttention(nn.Module):
         slice_scores = self.mix(slice_scores)
         
         if self.qk_norm:
-            slice_weights = slice_scores #* (self.num_slices / x.shape[1])
+            M = self.num_slices
+            N = x.shape[1]
+            slice_weights = slice_scores * (M / N)
             slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
-
         else:
             slice_weights = F.softmax(slice_scores, dim=-2)
             slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
