@@ -68,7 +68,27 @@ def load_dataset(
         train_data = Subset(dataset, range(ntrain))
         test_data = Subset(dataset, range(len(dataset)-ntest, len(dataset)))
         
-        return train_data, test_data
+        return train_data, test_data, y_normalizer
+    
+    elif dataset_name == 'darcy':
+        DATADIR = os.path.join(DATADIR_BASE, 'GeoFNO', 'darcy')
+        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
+        
+    elif dataset_name == 'ns':
+        DATADIR = os.path.join(DATADIR_BASE, 'GeoFNO', 'ns')
+        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
+        
+    elif dataset_name == 'plasticity':
+        DATADIR = os.path.join(DATADIR_BASE, 'GeoFNO', 'plasticity')
+        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
+        
+    elif dataset_name == 'pipe':
+        DATADIR = os.path.join(DATADIR_BASE, 'GeoFNO', 'pipe')
+        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
+        
+    elif dataset_name == 'airfoil_steady':
+        DATADIR = os.path.join(DATADIR_BASE, 'GeoFNO', 'airfoil')
+        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
         
     elif dataset_name in ['airfoil', 'cylinder_flow']:
         DATADIR = os.path.join(DATADIR_BASE, 'MeshGraphNets', dataset_name)
@@ -93,7 +113,7 @@ def load_dataset(
         # Looks like there is some disparity bw train_data and test_data
         train_data, test_data = split_timeseries_dataset(train_data, split=[0.8, 0.2])
         
-        return train_data, test_data
+        return train_data, test_data, None
         
     else:
         raise ValueError(f"Dataset {dataset_name} not found.") 

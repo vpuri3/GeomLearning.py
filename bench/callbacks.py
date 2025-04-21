@@ -14,6 +14,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 import mlutils
+import bench
 
 from bench.rollout import rollout
 from am.callbacks import timeseries_statistics_plot
@@ -164,27 +165,54 @@ class TimeseriesCallback(mlutils.Callback):
 
 #======================================================================#
 class SteadyStateCallback(mlutils.Callback):
+    def __init__(self, case_dir: str, y_normalizer):
+        super().__init__(case_dir)
+        self.y_normalizer = y_normalizer
+
     @torch.no_grad()
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
         
         trainer.model.eval()
         
-        N, MSE = 0, 0.0
+        y_normalizer = self.y_normalizer.to(trainer.device)
+        
+        # N, MSE = 0, 0.0
 
-        for batch in trainer._loader_:
+        # for batch in trainer._loader_:
+        #     x = batch[0].to(trainer.device)
+        #     y = batch[1].to(trainer.device)
+        #     yh = trainer.model(x)
+            
+        #     n = trainer.get_batch_size(batch, trainer._loader_)
+        #     N += n
+        #     MSE += ((yh - y).pow(2).mean() * n).item()
+                
+        #     del x, y, yh
+
+        # MSE = MSE / N
+
+        # print(f"Train MSE: {MSE:.8e}")
+
+        test_loss = bench.TestLoss()
+        
+        N, L = 0, 0.0
+        rel_error = 0
+        for batch in trainer.loader_:
+            n = trainer.get_batch_size(batch, trainer.loader_)
+            N += n
             x = batch[0].to(trainer.device)
             y = batch[1].to(trainer.device)
+
             yh = trainer.model(x)
-            
-            n = trainer.get_batch_size(batch, trainer._loader_)
-            N += n
-            MSE += ((yh - y).pow(2).mean() * n).item()
-                
-            del x, y, yh
+            yh = y_normalizer.decode(yh)
+            y  = y_normalizer.decode(y)
+            rel_loss = test_loss.rel(yh,y)
+            rel_error += rel_loss.item()
+            print(f'{n}', f'{rel_loss.item():.8e}')
 
-        MSE = MSE / N
+        rel_error = rel_error #/ N
+        print(f'Relative Error (test): {rel_error:.8e}')
 
-        print(f"Train MSE: {MSE:.8e}")
         return
 
 #======================================================================#

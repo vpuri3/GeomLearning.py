@@ -41,7 +41,7 @@ def main(cfg, device):
     # DATA
     #=================#
     
-    _data, data_ = bench.load_dataset(
+    _data, data_, y_normalizer = bench.load_dataset(
         cfg.dataset,
         DATADIR_BASE,
         PROJDIR,
@@ -180,13 +180,14 @@ def main(cfg, device):
     # TRAIN
     #=================#
 
-    callback = mlutils.Callback(case_dir,)
+    callback = mlutils.Callback(case_dir)
+
     if cfg.model_type in [1,] and (time_cond == False):
         callback = bench.SparsityCallback(case_dir,)
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
         callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type in [-1,])
     elif cfg.dataset in ['elasticity', 'darcy']:
-        callback = bench.SteadyStateCallback(case_dir)
+        callback = bench.SteadyStateCallback(case_dir, y_normalizer)
         
     if cfg.train and cfg.epochs > 0:
 
@@ -277,7 +278,10 @@ def main(cfg, device):
     if cfg.eval:
         if device != 'cpu' and device != torch.device('cpu'):
             torch.cuda.empty_cache()
-        trainer = mlutils.Trainer(model, _data, data_, device=device)
+        trainer = mlutils.Trainer(
+            model, _data, data_, make_optimizer=bench.make_optimizer, device=device
+        )
+        trainer.make_dataloader()
         callback.load(trainer)
         callback(trainer, final=True)
 
@@ -349,18 +353,17 @@ if __name__ == "__main__":
         print("No mode selected. Select one of train, eval")
         exit()
 
-    if cfg.dataset is None:
-        print("No dataset selected.")
-        exit()
-
     #===============#
     mlutils.set_seed(cfg.seed)
     #===============#
 
     case_dir = os.path.join(CASEDIR, cfg.exp_name)
 
-    # create a new experiment directory
-    if cfg.train:
+    if cfg.train and not cfg.eval:
+        if cfg.dataset is None:
+            print("No dataset selected.")
+            exit()
+
         if os.path.exists(case_dir):
             nd = len([dir for dir in os.listdir(CASEDIR) if dir.startswith(cfg.exp_name)])
             cfg.exp_name = cfg.exp_name + '_' + str(nd).zfill(2)

@@ -5,6 +5,7 @@ __all__ = [
     'IdentityTransformer',
     'UnitTransformer',
     'make_optimizer',
+    'TestLoss',
 ]
 
 #======================================================================#
@@ -47,6 +48,12 @@ class UnitTransformer():
     def __init__(self, X):
         self.mean = X.mean(dim=(0, 1), keepdim=True)
         self.std = X.std(dim=(0, 1), keepdim=True) + 1e-8
+
+    def to(self, device):
+        self.mean = self.mean.to(device)
+        self.std = self.std.to(device)
+        return self
+
 
     def encode(self, x):
         x = (x - self.mean) / (self.std)
