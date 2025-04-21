@@ -46,10 +46,13 @@ def load_dataset(
         dataset_name (str): Name of the dataset to load ('elasticity', 'airfoil', or 'cylinder_flow')
         
     Returns:
-        tuple: (train_data, test_data) containing the loaded datasets
+        tuple: (train_data, test_data, y_normalizer) containing the loaded datasets and optional normalizer object
     """
+    #----------------------------------------------------------------#
+    # Geo-FNO datasets
+    #----------------------------------------------------------------#
     if dataset_name == 'elasticity':
-        DATADIR = os.path.join(DATADIR_BASE, 'GeoFNO', 'elasticity')
+        DATADIR = os.path.join(DATADIR_BASE, 'Geo-FNO', 'elasticity')
         PATH_Sigma = os.path.join(DATADIR, 'Meshes', 'Random_UnitCell_sigma_10.npy')
         PATH_XY = os.path.join(DATADIR, 'Meshes', 'Random_UnitCell_XY_10.npy')
 
@@ -61,35 +64,109 @@ def load_dataset(
         ntrain = 1000
         ntest = 200
         
-        y_normalizer = bench.UnitTransformer(input_s[:ntrain])
+        y_normalizer = bench.UnitGaussianNormalizer(input_s[:ntrain])
         input_s = y_normalizer.encode(input_s)
 
         dataset = TensorDataset(input_xy, input_s)
         train_data = Subset(dataset, range(ntrain))
         test_data = Subset(dataset, range(len(dataset)-ntest, len(dataset)))
         
-        return train_data, test_data, y_normalizer
+        return train_data, test_data, bench.IdentityNormalizer(), y_normalizer
     
-    elif dataset_name == 'darcy':
-        DATADIR = os.path.join(DATADIR_BASE, 'GeoFNO', 'darcy')
-        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
-        
-    elif dataset_name == 'ns':
-        DATADIR = os.path.join(DATADIR_BASE, 'GeoFNO', 'ns')
-        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
-        
     elif dataset_name == 'plasticity':
-        DATADIR = os.path.join(DATADIR_BASE, 'GeoFNO', 'plasticity')
+        DATADIR = os.path.join(DATADIR_BASE, 'Geo-FNO', 'plasticity')
         raise NotImplementedError(f'Dataset {dataset_name} not implemented')
         
     elif dataset_name == 'pipe':
-        DATADIR = os.path.join(DATADIR_BASE, 'GeoFNO', 'pipe')
+        DATADIR = os.path.join(DATADIR_BASE, 'Geo-FNO', 'pipe')
         raise NotImplementedError(f'Dataset {dataset_name} not implemented')
         
     elif dataset_name == 'airfoil_steady':
-        DATADIR = os.path.join(DATADIR_BASE, 'GeoFNO', 'airfoil')
+        DATADIR = os.path.join(DATADIR_BASE, 'Geo-FNO', 'airfoil', 'naca')
+
+        INPUT_X = os.path.join(DATADIR, 'NACA_Cylinder_X.npy')
+        INPUT_Y = os.path.join(DATADIR, 'NACA_Cylinder_Y.npy')
+        OUTPUT_Sigma = os.path.join(DATADIR, 'NACA_Cylinder_Q.npy')
+
+        ntrain = 1000
+        ntest = 200
+
+        r1 = 1
+        r2 = 1
+        s1 = int(((221 - 1) / r1) + 1)
+        s2 = int(((51 - 1) / r2) + 1)
+
+        inputX = np.load(INPUT_X)
+        inputX = torch.tensor(inputX, dtype=torch.float)
+        inputY = np.load(INPUT_Y)
+        inputY = torch.tensor(inputY, dtype=torch.float)
+        input = torch.stack([inputX, inputY], dim=-1)
+
+        output = np.load(OUTPUT_Sigma)[:, 4]
+        output = torch.tensor(output, dtype=torch.float)
+
+        x_train = input[:ntrain, ::r1, ::r2][:, :s1, :s2]
+        y_train = output[:ntrain, ::r1, ::r2][:, :s1, :s2]
+        x_test = input[ntrain:ntrain + ntest, ::r1, ::r2][:, :s1, :s2]
+        y_test = output[ntrain:ntrain + ntest, ::r1, ::r2][:, :s1, :s2]
+
+        x_train = x_train.reshape(ntrain, -1, 2)
+        y_train = y_train.reshape(ntrain, -1, 1)
+
+        x_test = x_test.reshape(ntest, -1, 2)
+        y_test = y_test.reshape(ntest, -1, 1)
+        
+        x_normalizer = bench.UnitCubeNormalizer(x_train)
+        x_train = x_normalizer.encode(x_train)
+        x_test  = x_normalizer.encode(x_test)
+
+        y_normalizer = bench.UnitGaussianNormalizer(y_train)
+        y_train = y_normalizer.encode(y_train)
+        y_test  = y_normalizer.encode(y_test)
+        
+        # # input grid extrema
+        # x_min = x_train[:,:,0].min()
+        # x_max = x_train[:,:,0].max()
+        # y_min = x_train[:,:,1].min()
+        # y_max = x_train[:,:,1].max()
+        # print(f"Grid min/max: {x_min}, {x_max}, {y_min}, {y_max}")
+
+        # # output mean, std
+        # o_mean = y_train.mean()
+        # o_std = y_train.std()
+        # print(f"Output mean, std: {o_mean}, {o_std}")
+
+        train_data = TensorDataset(x_train, y_train)
+        test_data  = TensorDataset(x_test , y_test)
+
+        return train_data, test_data, x_normalizer, y_normalizer
+        
+    #----------------------------------------------------------------#
+    # FNO datasets
+    #----------------------------------------------------------------#
+    elif dataset_name == 'darcy':
+        import scipy
+
+        DATADIR = os.path.join(DATADIR_BASE, 'FNO', 'darcy')
+        
+        train_path = os.path.join(DATADIR, 'piececonst_r421_N1024_smooth1.mat')
+        test_path  = os.path.join(DATADIR, 'piececonst_r421_N1024_smooth2.mat')
+
+        train_data = scipy.io.loadmat(train_path)['coeffs']
+        test_data = scipy.io.loadmat(test_path)['coeffs']
+
+        train_data = torch.tensor(train_data, dtype=torch.float)
+        test_data = torch.tensor(test_data, dtype=torch.float)
+
         raise NotImplementedError(f'Dataset {dataset_name} not implemented')
         
+    elif dataset_name == 'navier_stokes':
+        DATADIR = os.path.join(DATADIR_BASE, 'FNO', 'ns')
+        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
+        
+    #----------------------------------------------------------------#
+    # MeshGraphNets datasets
+    #----------------------------------------------------------------#
     elif dataset_name in ['airfoil', 'cylinder_flow']:
         DATADIR = os.path.join(DATADIR_BASE, 'MeshGraphNets', dataset_name)
 
@@ -113,7 +190,7 @@ def load_dataset(
         # Looks like there is some disparity bw train_data and test_data
         train_data, test_data = split_timeseries_dataset(train_data, split=[0.8, 0.2])
         
-        return train_data, test_data, None
+        return train_data, test_data, None, None
         
     else:
         raise ValueError(f"Dataset {dataset_name} not found.") 

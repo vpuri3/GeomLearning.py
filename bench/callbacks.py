@@ -165,53 +165,53 @@ class TimeseriesCallback(mlutils.Callback):
 
 #======================================================================#
 class SteadyStateCallback(mlutils.Callback):
-    def __init__(self, case_dir: str, y_normalizer):
+    def __init__(self, case_dir: str, x_normalizer, y_normalizer):
         super().__init__(case_dir)
+        self.x_normalizer = x_normalizer
         self.y_normalizer = y_normalizer
 
     @torch.no_grad()
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
         
         trainer.model.eval()
+        device = trainer.device
+
+        lossfun = bench.TestLoss()
+        x_normalizer = self.x_normalizer.to(device)
+        y_normalizer = self.y_normalizer.to(device)
         
-        y_normalizer = self.y_normalizer.to(trainer.device)
-        
-        # N, MSE = 0, 0.0
+        _N, _rel_error = 0, 0.
+        N_, rel_error_ = 0, 0.
 
-        # for batch in trainer._loader_:
-        #     x = batch[0].to(trainer.device)
-        #     y = batch[1].to(trainer.device)
-        #     yh = trainer.model(x)
-            
-        #     n = trainer.get_batch_size(batch, trainer._loader_)
-        #     N += n
-        #     MSE += ((yh - y).pow(2).mean() * n).item()
-                
-        #     del x, y, yh
-
-        # MSE = MSE / N
-
-        # print(f"Train MSE: {MSE:.8e}")
-
-        test_loss = bench.TestLoss()
-        
-        N, L = 0, 0.0
-        rel_error = 0
-        for batch in trainer.loader_:
-            n = trainer.get_batch_size(batch, trainer.loader_)
-            N += n
-            x = batch[0].to(trainer.device)
-            y = batch[1].to(trainer.device)
-
+        for batch in trainer._loader_:
+            x, y = batch[0].to(device), batch[1].to(device)
             yh = trainer.model(x)
             yh = y_normalizer.decode(yh)
             y  = y_normalizer.decode(y)
-            rel_loss = test_loss.rel(yh,y)
-            rel_error += rel_loss.item()
-            print(f'{n}', f'{rel_loss.item():.8e}')
+            l = lossfun.rel(yh,y)
+            _n = trainer.get_batch_size(batch, trainer._loader_)
+            _N += _n
+            _rel_error += l.item() * _n
+            del x, y, yh
+            
+        for batch in trainer.loader_:
+            x, y = batch[0].to(device), batch[1].to(device)
+            yh = trainer.model(x)
+            yh = y_normalizer.decode(yh)
+            y  = y_normalizer.decode(y)
+            l = lossfun.rel(yh,y)
+            n_ = trainer.get_batch_size(batch, trainer.loader_)
+            N_ += n_
+            rel_error_ += l.item() * n_
+            del x, y, yh
 
-        rel_error = rel_error #/ N
-        print(f'Relative Error (test): {rel_error:.8e}')
+        _rel_error /= _N
+        rel_error_ /= N_
+
+        print(f'Relative Error (train / test): {_rel_error:.8e} / {rel_error_:.8e}')
+        
+        with open(os.path.join(ckpt_dir, 'rel_error.json'), 'w') as f:
+            json.dump({'train_rel_error': _rel_error, 'test_rel_error': rel_error_}, f)
 
         return
 

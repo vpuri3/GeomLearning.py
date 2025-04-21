@@ -41,7 +41,7 @@ def main(cfg, device):
     # DATA
     #=================#
     
-    _data, data_, y_normalizer = bench.load_dataset(
+    _data, data_, x_normalizer, y_normalizer = bench.load_dataset(
         cfg.dataset,
         DATADIR_BASE,
         PROJDIR,
@@ -55,7 +55,7 @@ def main(cfg, device):
         train_rollout_noise=cfg.train_rollout_noise,
     )
     
-    if cfg.dataset in ['elasticity', 'darcy']:
+    if cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
         c_in = 2
         c_out = 1
         time_cond = False
@@ -186,8 +186,8 @@ def main(cfg, device):
         callback = bench.SparsityCallback(case_dir,)
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
         callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type in [-1,])
-    elif cfg.dataset in ['elasticity', 'darcy']:
-        callback = bench.SteadyStateCallback(case_dir, y_normalizer)
+    elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
+        callback = bench.SteadyStateCallback(case_dir, x_normalizer, y_normalizer)
         
     if cfg.train and cfg.epochs > 0:
 
@@ -199,6 +199,8 @@ def main(cfg, device):
             batch_size_ = _batch_size_ = 1 # 50
         elif cfg.dataset == 'elasticity':
             batch_size_ = _batch_size_ = 200
+        elif cfg.dataset == 'airfoil_steady':
+            batch_size_ = _batch_size_ = 50
         
         lossfun = torch.nn.MSELoss()
         gnn_loader = cfg.dataset in ['airfoil', 'cylinder_flow']

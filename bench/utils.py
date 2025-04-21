@@ -2,8 +2,9 @@
 import torch
 
 __all__ = [
-    'IdentityTransformer',
-    'UnitTransformer',
+    'IdentityNormalizer',
+    'UnitCubeNormalizer',
+    'UnitGaussianNormalizer',
     'make_optimizer',
     'TestLoss',
 ]
@@ -33,10 +34,12 @@ def make_optimizer(model, lr, weight_decay=0.0):
     return optimizer
 
 #======================================================================#
-class IdentityTransformer():
-    def __init__(self, X):
-        self.mean = X.mean(dim=0, keepdim=True)
-        self.std = X.std(dim=0, keepdim=True) + 1e-8
+class IdentityNormalizer():
+    def __init__(self):
+        pass
+    
+    def to(self, device):
+        return self
 
     def encode(self, x):
         return x
@@ -44,7 +47,33 @@ class IdentityTransformer():
     def decode(self, x):
         return x
 
-class UnitTransformer():
+#======================================================================#
+class UnitCubeNormalizer():
+    def __init__(self, X):
+        xmin = X[:,:,0].min().item()
+        ymin = X[:,:,1].min().item()
+
+        xmax = X[:,:,0].max().item()
+        ymax = X[:,:,1].max().item()
+
+        self.min = torch.tensor([xmin, ymin])
+        self.max = torch.tensor([xmax, ymax])
+
+    def to(self, device):
+        self.min = self.min.to(device)
+        self.max = self.max.to(device)
+
+        return self
+
+    def encode(self, x):
+        x = (x - self.min) / (self.max - self.min)
+        return x
+
+    def decode(self, x):
+        return x * (self.max - self.min) + self.min
+
+#======================================================================#
+class UnitGaussianNormalizer():
     def __init__(self, X):
         self.mean = X.mean(dim=(0, 1), keepdim=True)
         self.std = X.std(dim=(0, 1), keepdim=True) + 1e-8
@@ -54,7 +83,6 @@ class UnitTransformer():
         self.std = self.std.to(device)
         return self
 
-
     def encode(self, x):
         x = (x - self.mean) / (self.std)
         return x
@@ -62,50 +90,7 @@ class UnitTransformer():
     def decode(self, x):
         return x * self.std + self.mean
 
-    def transform(self, X, inverse=True, component='all'):
-        if component == 'all' or 'all-reduce':
-            if inverse:
-                orig_shape = X.shape
-                return (X * (self.std - 1e-8) + self.mean).view(orig_shape)
-            else:
-                return (X - self.mean) / self.std
-        else:
-            if inverse:
-                orig_shape = X.shape
-                return (X * (self.std[:, component] - 1e-8) + self.mean[:, component]).view(orig_shape)
-            else:
-                return (X - self.mean[:, component]) / self.std[:, component]
-
 #======================================================================#
-class UnitGaussianNormalizer(object):
-    def __init__(self, x, eps=0.00001, time_last=True):
-        super(UnitGaussianNormalizer, self).__init__()
-
-        self.mean = torch.mean(x, 0)
-        self.std = torch.std(x, 0)
-        self.eps = eps
-        self.time_last = time_last  # if the time dimension is the last dim
-
-    def encode(self, x):
-        x = (x - self.mean) / (self.std + self.eps)
-        return x
-
-    def decode(self, x, sample_idx=None):
-        # sample_idx is the spatial sampling mask
-        if sample_idx is None:
-            std = self.std + self.eps  # n
-            mean = self.mean
-        else:
-            if self.mean.ndim == sample_idx.ndim or self.time_last:
-                std = self.std[sample_idx] + self.eps  # batch*n
-                mean = self.mean[sample_idx]
-            if self.mean.ndim > sample_idx.ndim and not self.time_last:
-                std = self.std[..., sample_idx] + self.eps  # T*batch*n
-                mean = self.mean[..., sample_idx]
-        # x is in shape of batch*(spatial discretization size) or T*batch*(spatial discretization size)
-        x = (x * std) + mean
-        return x
-
 class TestLoss():
     def __init__(self, d=2, p=2, size_average=True, reduction=True):
         super(TestLoss, self).__init__()
