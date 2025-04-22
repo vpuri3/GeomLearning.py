@@ -79,7 +79,52 @@ def load_dataset(
         
     elif dataset_name == 'pipe':
         DATADIR = os.path.join(DATADIR_BASE, 'Geo-FNO', 'pipe')
-        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
+        
+        INPUT_X = os.path.join(DATADIR, 'Pipe_X.npy')
+        INPUT_Y = os.path.join(DATADIR, 'Pipe_Y.npy')
+        OUTPUT_Sigma = os.path.join(DATADIR, 'Pipe_Q.npy')
+
+        ntrain = 1000
+        ntest = 200
+        N = 1200
+        
+        r1 = 1
+        r2 = 1
+        s1 = int(((129 - 1) / r1) + 1)
+        s2 = int(((129 - 1) / r2) + 1)
+
+        inputX = np.load(INPUT_X)
+        inputX = torch.tensor(inputX, dtype=torch.float)
+        inputY = np.load(INPUT_Y)
+        inputY = torch.tensor(inputY, dtype=torch.float)
+        input = torch.stack([inputX, inputY], dim=-1)
+
+        output = np.load(OUTPUT_Sigma)[:, 0]
+        output = torch.tensor(output, dtype=torch.float)
+        x_train = input[:N][:ntrain, ::r1, ::r2][:, :s1, :s2]
+        y_train = output[:N][:ntrain, ::r1, ::r2][:, :s1, :s2]
+        x_test = input[:N][-ntest:, ::r1, ::r2][:, :s1, :s2]
+        y_test = output[:N][-ntest:, ::r1, ::r2][:, :s1, :s2]
+
+        x_train = x_train.reshape(ntrain, -1, 2)
+        y_train = y_train.reshape(ntrain, -1, 1)
+
+        x_test = x_test.reshape(ntest, -1, 2)
+        y_test = y_test.reshape(ntest, -1, 1)
+
+        x_normalizer = bench.UnitGaussianNormalizer(x_train)
+        y_normalizer = bench.UnitGaussianNormalizer(y_train)
+
+        x_train = x_normalizer.encode(x_train)
+        y_train = y_normalizer.encode(y_train)
+
+        x_test  = x_normalizer.encode(x_test)
+        y_test  = y_normalizer.encode(y_test)
+
+        train_data = TensorDataset(x_train, y_train)
+        test_data  = TensorDataset(x_test , y_test )
+
+        return train_data, test_data, x_normalizer, y_normalizer
         
     elif dataset_name == 'airfoil_steady':
         DATADIR = os.path.join(DATADIR_BASE, 'Geo-FNO', 'airfoil', 'naca')

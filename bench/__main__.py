@@ -197,9 +197,7 @@ def main(cfg, device):
             batch_size_ = _batch_size_ = 1 # 20
         elif cfg.dataset == 'cylinder_flow':
             batch_size_ = _batch_size_ = 1 # 50
-        elif cfg.dataset == 'elasticity':
-            batch_size_ = _batch_size_ = 200
-        elif cfg.dataset == 'airfoil_steady':
+        elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
             batch_size_ = _batch_size_ = 50
         
         lossfun = torch.nn.MSELoss()
