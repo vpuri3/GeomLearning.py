@@ -116,9 +116,12 @@ def load_dataset(
         x_test = x_test.reshape(ntest, -1, 2)
         y_test = y_test.reshape(ntest, -1, 1)
         
-        x_normalizer = bench.UnitCubeNormalizer(x_train)
-        x_train = x_normalizer.encode(x_train)
-        x_test  = x_normalizer.encode(x_test)
+        x_normalizer = bench.IdentityNormalizer()
+        y_normalizer = bench.IdentityNormalizer()
+        
+        # x_normalizer = bench.UnitCubeNormalizer(x_train)
+        # x_train = x_normalizer.encode(x_train)
+        # x_test  = x_normalizer.encode(x_test)
 
         y_normalizer = bench.UnitGaussianNormalizer(y_train)
         y_train = y_normalizer.encode(y_train)
@@ -130,6 +133,20 @@ def load_dataset(
         # y_min = x_train[:,:,1].min()
         # y_max = x_train[:,:,1].max()
         # print(f"Grid min/max: {x_min}, {x_max}, {y_min}, {y_max}")
+        # # input grid mean, std
+        # x_mean = x_train[:,:,0].mean()
+        # y_mean = x_train[:,:,1].mean()
+        # x_std = x_train[:,:,0].std()
+        # y_std = x_train[:,:,1].std()
+        # print(f"Grid mean, std: {x_mean}, {x_std}, {y_mean}, {y_std}")
+
+        # import matplotlib.pyplot as plt
+        # plt.figure()
+        # plt.scatter(x_train[0,:,0], x_train[0,:,1], c=y_train[0,:,0], cmap='viridis', s=1)
+        # plt.xlim(-1, 1)
+        # plt.ylim(-1, 1)
+        # plt.savefig('airfoil_train.png')
+        # exit()
 
         # # output mean, std
         # o_mean = y_train.mean()

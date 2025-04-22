@@ -209,7 +209,7 @@ def main(cfg, device):
             device=device, gnn_loader=gnn_loader, stats_every=cfg.epochs//10,
             make_optimizer=bench.make_optimizer, weight_decay=cfg.weight_decay, epochs=cfg.epochs,
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
-            lossfun=lossfun, clip_grad_norm=1.,
+            lossfun=lossfun, clip_grad_norm=cfg.clip_grad_norm,
         )
         
         # LR scheduler
@@ -323,6 +323,7 @@ class Config:
     one_cycle_div_factor: float = 25
     one_cycle_final_div_factor: float = 1000
     one_cycle_three_phase: bool = False
+    clip_grad_norm: float = 1.0
 
     # model
     model_type: int = 0 # 0: Transolver, 1: TS1, ..., -1: MeshGraphNet
