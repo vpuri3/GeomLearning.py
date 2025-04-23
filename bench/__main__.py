@@ -55,14 +55,26 @@ def main(cfg, device):
         train_rollout_noise=cfg.train_rollout_noise,
     )
     
-    if cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
-        c_in = 2
+    if cfg.dataset in ['elasticity', 'darcy', 'airfoil_steady', 'pipe']:
+        c_in = 2 if not cfg.dataset in ['darcy'] else 3
         c_out = 1
         time_cond = False
 
         if GLOBAL_RANK == 0:
             print(f"Loaded {cfg.dataset} dataset with {len(_data)} train and {len(data_)} test cases.")
-    
+            
+    elif cfg.dataset in ['plasticity']:
+        c_in = 0
+        c_out = 0
+
+        time_cond = True
+            
+    elif cfg.dataset in ['navier_stokes']:
+        c_in  = 12
+        c_out = 1
+
+        time_cond = True
+
     elif cfg.dataset in ['airfoil', 'cylinder_flow']:
         
         c_in = 11  # node_type (7) + pos (2) + vel0 (2)
@@ -256,18 +268,41 @@ def main(cfg, device):
 
             trainer.batch_lossfun = batch_lossfun
             
+        if cfg.dataset in ['darcy']:
+            
+            def batch_lossfun(trainer, model, batch):
+                x, y = batch
+                yh = model(x)
+                
+                r = 5
+                h = int(((421 - 1) / r) + 1)
+                s = h
+                dx = 1.0 / s
+
+                l2loss = lossfun(yh, y)
+                deriv_loss = bench.darcy_deriv_loss(yh, y, s, dx)
+                
+                loss = 0.01 * deriv_loss + l2loss
+                return loss
+            
+            trainer.batch_lossfun = batch_lossfun
+
         if cfg.dataset in ['airfoil', 'cylinder_flow']:
             if GLOBAL_RANK == 0:
                 print(f"Using masked loss for timeseries datasets {cfg.dataset}")
             batch_lossfun = am.MaskedLoss(mask=True)
             trainer.batch_lossfun = batch_lossfun
-
+            
         #-------------#
-        # load snapshot and train
+        # load snapshot
         #-------------#
 
         if cfg.restart_file is not None:
             trainer.load(cfg.restart_file)
+
+        #-------------#
+        # train
+        #-------------#
 
         trainer.train()
 

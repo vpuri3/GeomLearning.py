@@ -74,8 +74,64 @@ def load_dataset(
         return train_data, test_data, bench.IdentityNormalizer(), y_normalizer
     
     elif dataset_name == 'plasticity':
+        import scipy.io as scio
+
         DATADIR = os.path.join(DATADIR_BASE, 'Geo-FNO', 'plasticity')
-        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
+        data_path = os.path.join(DATADIR, 'plas_N987_T20.mat')
+        
+        N = 987
+        ntrain = 900
+        ntest = 80
+
+        s1 = 101
+        s2 = 31
+        T = 20
+        Deformation = 4
+
+        r1 = 1
+        r2 = 1
+        s1 = int(((s1 - 1) / r1) + 1)
+        s2 = int(((s2 - 1) / r2) + 1)
+
+        data = scio.loadmat(data_path)
+        input = torch.tensor(data['input'], dtype=torch.float)
+        output = torch.tensor(data['output'], dtype=torch.float).transpose(-2, -1)
+        x_train = input[:ntrain, ::r1][:, :s1].reshape(ntrain, s1, 1).repeat(1, 1, s2)
+        x_train = x_train.reshape(ntrain, -1, 1)
+        y_train = output[:ntrain, ::r1, ::r2][:, :s1, :s2]
+        y_train = y_train.reshape(ntrain, -1, Deformation, T)
+        x_test = input[-ntest:, ::r1][:, :s1].reshape(ntest, s1, 1).repeat(1, 1, s2)
+        x_test = x_test.reshape(ntest, -1, 1)
+        y_test = output[-ntest:, ::r1, ::r2][:, :s1, :s2]
+        y_test = y_test.reshape(ntest, -1, Deformation, T)
+
+        x_normalizer = bench.UnitGaussianNormalizer(x_train)
+        x_train = x_normalizer.encode(x_train)
+        x_test = x_normalizer.encode(x_test)
+
+        x = np.linspace(0, 1, s1)
+        y = np.linspace(0, 1, s2)
+        x, y = np.meshgrid(x, y)
+        pos = np.c_[x.ravel(), y.ravel()]
+        pos = torch.tensor(pos, dtype=torch.float).unsqueeze(0)
+
+        pos_train = pos.repeat(ntrain, 1, 1)
+        pos_test = pos.repeat(ntest, 1, 1)
+
+        t = np.linspace(0, 1, T)
+        t = torch.tensor(t, dtype=torch.float).unsqueeze(0)
+        t_train = t.repeat(ntrain, 1)
+        t_test = t.repeat(ntest, 1)
+        
+        print(pos_train.shape, t_train.shape, x_train.shape, y_train.shape)
+        exit()
+
+        train_data = TensorDataset(pos_train, t_train, x_train, y_train)
+        test_data  = TensorDataset(pos_test, t_test, x_test, y_test)
+        
+        # collate_fn = random_collate_fn
+        
+        return train_data, test_data, x_normalizer, y_normalizer
         
     elif dataset_name == 'pipe':
         DATADIR = os.path.join(DATADIR_BASE, 'Geo-FNO', 'pipe')
@@ -207,24 +263,120 @@ def load_dataset(
     # FNO datasets
     #----------------------------------------------------------------#
     elif dataset_name == 'darcy':
-        import scipy
+        import scipy.io as scio
 
         DATADIR = os.path.join(DATADIR_BASE, 'FNO', 'darcy')
-        
+
         train_path = os.path.join(DATADIR, 'piececonst_r421_N1024_smooth1.mat')
-        test_path  = os.path.join(DATADIR, 'piececonst_r421_N1024_smooth2.mat')
+        test_path = os.path.join(DATADIR, 'piececonst_r421_N1024_smooth2.mat')
+        ntrain = 1000
+        ntest = 200
+        
+        r = 5 # downsample
+        h = int(((421 - 1) / r) + 1)
+        s = h
+        dx = 1.0 / s
 
-        train_data = scipy.io.loadmat(train_path)['coeffs']
-        test_data = scipy.io.loadmat(test_path)['coeffs']
+        train_data = scio.loadmat(train_path)
+        x_train = train_data['coeff'][:ntrain, ::r, ::r][:, :s, :s]
+        x_train = x_train.reshape(ntrain, -1, 1)
+        x_train = torch.from_numpy(x_train).float()
+        y_train = train_data['sol'][:ntrain, ::r, ::r][:, :s, :s]
+        y_train = y_train.reshape(ntrain, -1, 1)
+        y_train = torch.from_numpy(y_train)
 
-        train_data = torch.tensor(train_data, dtype=torch.float)
-        test_data = torch.tensor(test_data, dtype=torch.float)
+        test_data = scio.loadmat(test_path)
+        x_test = test_data['coeff'][:ntest, ::r, ::r][:, :s, :s]
+        x_test = x_test.reshape(ntest, -1, 1)
+        x_test = torch.from_numpy(x_test).float()
+        y_test = test_data['sol'][:ntest, ::r, ::r][:, :s, :s]
+        y_test = y_test.reshape(ntest, -1, 1)
+        y_test = torch.from_numpy(y_test)
 
-        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
+        x_normalizer = bench.UnitGaussianNormalizer(x_train)
+        y_normalizer = bench.UnitGaussianNormalizer(y_train)
+
+        x_train = x_normalizer.encode(x_train)
+        y_train = y_normalizer.encode(y_train)
+
+        x_test = x_normalizer.encode(x_test)
+        y_test = y_normalizer.encode(y_test)
+
+        x = np.linspace(0, 1, s)
+        y = np.linspace(0, 1, s)
+        x, y = np.meshgrid(x, y)
+        pos = np.c_[x.ravel(), y.ravel()]
+        pos = torch.tensor(pos, dtype=torch.float).unsqueeze(0)
+
+        pos_train = pos.repeat(ntrain, 1, 1)
+        pos_test = pos.repeat(ntest, 1, 1)
+        
+        input_train = torch.cat([pos_train, x_train], dim=-1)
+        output_train = y_train.to(torch.float)
+        
+        input_test = torch.cat([pos_test, x_test], dim=-1)
+        output_test = y_test.to(torch.float)
+        
+        train_data = TensorDataset(input_train, output_train)
+        test_data  = TensorDataset(input_test , output_test )
+
+        return train_data, test_data, x_normalizer, y_normalizer
         
     elif dataset_name == 'navier_stokes':
-        DATADIR = os.path.join(DATADIR_BASE, 'FNO', 'ns')
-        raise NotImplementedError(f'Dataset {dataset_name} not implemented')
+        import scipy.io as scio
+
+        DATADIR = os.path.join(DATADIR_BASE, 'FNO', 'navier_stokes')
+        data_path = os.path.join(DATADIR, 'NavierStokes_V1e-5_N1200_T20.mat')
+        
+        r = 1
+        h = int(((64 - 1) / r) + 1)
+        ntrain = 1000
+        ntest = 200
+        T_in = 10
+        T = 10
+
+        data = scio.loadmat(data_path)
+        train_a = data['u'][:ntrain, ::r, ::r, :T_in][:, :h, :h, :]
+        train_a = train_a.reshape(train_a.shape[0], -1, train_a.shape[-1])
+        train_a = torch.from_numpy(train_a)
+        train_u = data['u'][:ntrain, ::r, ::r, T_in:T + T_in][:, :h, :h, :]
+        train_u = train_u.reshape(train_u.shape[0], -1, train_u.shape[-1])
+        train_u = torch.from_numpy(train_u)
+
+        test_a = data['u'][-ntest:, ::r, ::r, :T_in][:, :h, :h, :]
+        test_a = test_a.reshape(test_a.shape[0], -1, test_a.shape[-1])
+        test_a = torch.from_numpy(test_a)
+        test_u = data['u'][-ntest:, ::r, ::r, T_in:T + T_in][:, :h, :h, :]
+        test_u = test_u.reshape(test_u.shape[0], -1, test_u.shape[-1])
+        test_u = torch.from_numpy(test_u)
+
+        x = np.linspace(0, 1, h)
+        y = np.linspace(0, 1, h)
+        x, y = np.meshgrid(x, y)
+        pos = np.c_[x.ravel(), y.ravel()]
+        pos = torch.tensor(pos, dtype=torch.float).unsqueeze(0)
+        pos_train = pos.repeat(ntrain, 1, 1)
+        pos_test = pos.repeat(ntest, 1, 1)
+        
+        # print(pos_train.shape) # [1000, 4096,  2]
+        # print(train_a.shape)   # [1000, 4096, 10]
+        # print(train_u.shape)   # [1000, 4096, 10]
+        
+        train_input = torch.cat([pos_train, train_a], dim=-1)
+        test_input  = torch.cat([pos_test , test_a ], dim=-1)
+
+        train_output = train_u
+        test_output  = test_u
+        
+        train_dataset = TensorDataset(train_input, train_output)
+        test_dataset  = TensorDataset(test_input , test_output )
+        
+        x_normalizer = bench.IdentityNormalizer()
+        y_normalizer = bench.IdentityNormalizer()
+        
+        # no normalization?
+
+        return train_dataset, test_dataset, x_normalizer, y_normalizer
         
     #----------------------------------------------------------------#
     # MeshGraphNets datasets

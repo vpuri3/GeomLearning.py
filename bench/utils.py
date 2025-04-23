@@ -1,11 +1,15 @@
 #
 import torch
+import einops
+import torch.nn.functional as F
 
 __all__ = [
+    'make_optimizer',
+    'darcy_deriv_loss',
+    #
     'IdentityNormalizer',
     'UnitCubeNormalizer',
     'UnitGaussianNormalizer',
-    'make_optimizer',
     'TestLoss',
 ]
 
@@ -32,6 +36,30 @@ def make_optimizer(model, lr, weight_decay=0.0):
     ], lr=lr)
     
     return optimizer
+
+#======================================================================#
+def central_diff(x: torch.Tensor, h: float, resolution: int):
+    # assuming PBC
+    # x: (batch, n, feats), h is the step size, assuming n = h*w
+    x = einops.rearrange(x, 'b (h w) c -> b h w c', h=resolution, w=resolution)
+    x = F.pad(x,
+              (0, 0, 1, 1, 1, 1), mode='constant', value=0.)  # [b c t h+2 w+2]
+    grad_x = (x[:, 1:-1, 2:, :] - x[:, 1:-1, :-2, :]) / (2 * h)  # f(x+h) - f(x-h) / 2h
+    grad_y = (x[:, 2:, 1:-1, :] - x[:, :-2, 1:-1, :]) / (2 * h)  # f(x+h) - f(x-h) / 2h
+
+    return grad_x, grad_y
+
+def darcy_deriv_loss(yh, y, s, dx):
+    yh = einops.rearrange(yh, 'b (h w) c -> b c h w', h=s)
+    yh = yh[..., 1:-1, 1:-1].contiguous()
+    yh = F.pad(yh, (1, 1, 1, 1), "constant", 0)
+    yh = einops.rearrange(yh, 'b c h w -> b (h w) c')
+
+    gt_grad_x, gt_grad_y = central_diff(y, dx, s)
+    pred_grad_x, pred_grad_y = central_diff(yh, dx, s)
+    deriv_loss = F.mse_loss(pred_grad_x, gt_grad_x) + F.mse_loss(pred_grad_y, gt_grad_y)
+
+    return deriv_loss
 
 #======================================================================#
 class IdentityNormalizer():
