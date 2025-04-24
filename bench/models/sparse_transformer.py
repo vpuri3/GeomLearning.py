@@ -28,8 +28,8 @@ class SwiGLU(nn.Module):
         return u * self.silu(v)
 
 # the incremental speedup isn't worth dealing with versioning hell
-# FastGELU = nn.GELU
-FastGELU = lambda: nn.GELU(approximate='tanh')
+FastGELU = nn.GELU
+# FastGELU = lambda: nn.GELU(approximate='tanh')
 
 ACTIVATIONS = {
     'gelu': FastGELU(),

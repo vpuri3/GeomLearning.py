@@ -4,6 +4,7 @@ import json
 
 import torch
 import torch_geometric as pyg
+import torch.distributed as dist
 
 import gc
 import shutil
@@ -177,7 +178,6 @@ class SteadyStateCallback(mlutils.Callback):
         device = trainer.device
 
         lossfun = bench.TestLoss()
-        x_normalizer = self.x_normalizer.to(device)
         y_normalizer = self.y_normalizer.to(device)
         
         _N, _rel_error = 0, 0.
@@ -205,13 +205,32 @@ class SteadyStateCallback(mlutils.Callback):
             rel_error_ += l.item() * n_
             del x, y, yh
 
+        if trainer.DDP:
+            _rel_error = torch.tensor(_rel_error, device=trainer.device)
+            rel_error_ = torch.tensor(rel_error_, device=trainer.device)
+
+            _N = torch.tensor(_N, device=trainer.device)
+            N_ = torch.tensor(N_, device=trainer.device)
+
+            dist.all_reduce(_rel_error, dist.ReduceOp.SUM)
+            dist.all_reduce(rel_error_, dist.ReduceOp.SUM)
+
+            dist.all_reduce(_N, dist.ReduceOp.SUM)
+            dist.all_reduce(N_, dist.ReduceOp.SUM)
+
+            _N, _rel_error = _N.item(), _rel_error.item()
+            N_, rel_error_ = N_.item(), rel_error_.item()
+
         _rel_error /= _N
         rel_error_ /= N_
 
-        print(f'Relative Error (train / test): {_rel_error:.8e} / {rel_error_:.8e}')
+        if trainer.GLOBAL_RANK == 0:
+            print(f'Relative Error (train / test): {_rel_error:.8e} / {rel_error_:.8e}')
         
         with open(os.path.join(ckpt_dir, 'rel_error.json'), 'w') as f:
             json.dump({'train_rel_error': _rel_error, 'test_rel_error': rel_error_}, f)
+            
+        gc.collect()
 
         return
 

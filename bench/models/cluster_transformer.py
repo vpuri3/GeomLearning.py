@@ -29,7 +29,9 @@ class GEGLU(nn.Module):
         x, gates = x.chunk(2, dim = -1)
         return x * F.gelu(gates, **self.kw)
 
-FastGELU = lambda: nn.GELU(approximate='tanh')
+# the incremental speedup isn't worth dealing with versioning hell
+FastGELU = nn.GELU
+# FastGELU = lambda: nn.GELU(approximate='tanh')
 
 ACTIVATIONS = {
     'gelu': FastGELU(),
