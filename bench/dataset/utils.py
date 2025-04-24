@@ -1,4 +1,5 @@
 import os
+import gc
 import copy
 import numpy as np
 import torch
@@ -71,7 +72,12 @@ def load_dataset(
         train_data = Subset(dataset, range(ntrain))
         test_data = Subset(dataset, range(len(dataset)-ntest, len(dataset)))
         
-        return train_data, test_data, bench.IdentityNormalizer(), y_normalizer
+        metadata = dict(
+            x_normalizer=bench.IdentityNormalizer(),
+            y_normalizer=y_normalizer,
+        )
+        
+        return train_data, test_data, metadata
     
     elif dataset_name == 'plasticity':
         import scipy.io as scio
@@ -130,8 +136,15 @@ def load_dataset(
         test_data  = TensorDataset(pos_test, t_test, x_test, y_test)
         
         # collate_fn = random_collate_fn
+
+        metadata = dict(
+            x_normalizer=x_normalizer,
+            y_normalizer=y_normalizer,
+            H=s1,
+            W=s2,
+        )
         
-        return train_data, test_data, x_normalizer, y_normalizer
+        return train_data, test_data, metadata
         
     elif dataset_name == 'pipe':
         DATADIR = os.path.join(DATADIR_BASE, 'Geo-FNO', 'pipe')
@@ -157,10 +170,10 @@ def load_dataset(
 
         output = np.load(OUTPUT_Sigma)[:, 0]
         output = torch.tensor(output, dtype=torch.float)
-        x_train = input[:N][:ntrain, ::r1, ::r2][:, :s1, :s2]
+        x_train = input[ :N][:ntrain, ::r1, ::r2][:, :s1, :s2]
         y_train = output[:N][:ntrain, ::r1, ::r2][:, :s1, :s2]
-        x_test = input[:N][-ntest:, ::r1, ::r2][:, :s1, :s2]
-        y_test = output[:N][-ntest:, ::r1, ::r2][:, :s1, :s2]
+        x_test = input[  :N][-ntest:, ::r1, ::r2][:, :s1, :s2]
+        y_test = output[ :N][-ntest:, ::r1, ::r2][:, :s1, :s2]
 
         x_train = x_train.reshape(ntrain, -1, 2)
         y_train = y_train.reshape(ntrain, -1, 1)
@@ -180,7 +193,14 @@ def load_dataset(
         train_data = TensorDataset(x_train, y_train)
         test_data  = TensorDataset(x_test , y_test )
 
-        return train_data, test_data, x_normalizer, y_normalizer
+        metadata = dict(
+            x_normalizer=x_normalizer,
+            y_normalizer=y_normalizer,
+            H=s1,
+            W=s2,
+        )
+        
+        return train_data, test_data, metadata
         
     elif dataset_name == 'airfoil_steady':
         DATADIR = os.path.join(DATADIR_BASE, 'Geo-FNO', 'airfoil', 'naca')
@@ -228,36 +248,17 @@ def load_dataset(
         y_train = y_normalizer.encode(y_train)
         y_test  = y_normalizer.encode(y_test)
         
-        # # input grid extrema
-        # x_min = x_train[:,:,0].min()
-        # x_max = x_train[:,:,0].max()
-        # y_min = x_train[:,:,1].min()
-        # y_max = x_train[:,:,1].max()
-        # print(f"Grid min/max: {x_min}, {x_max}, {y_min}, {y_max}")
-        # # input grid mean, std
-        # x_mean = x_train[:,:,0].mean()
-        # y_mean = x_train[:,:,1].mean()
-        # x_std = x_train[:,:,0].std()
-        # y_std = x_train[:,:,1].std()
-        # print(f"Grid mean, std: {x_mean}, {x_std}, {y_mean}, {y_std}")
-
-        # import matplotlib.pyplot as plt
-        # plt.figure()
-        # plt.scatter(x_train[0,:,0], x_train[0,:,1], c=y_train[0,:,0], cmap='viridis', s=1)
-        # plt.xlim(-1, 1)
-        # plt.ylim(-1, 1)
-        # plt.savefig('airfoil_train.png')
-        # exit()
-
-        # # output mean, std
-        # o_mean = y_train.mean()
-        # o_std = y_train.std()
-        # print(f"Output mean, std: {o_mean}, {o_std}")
-
         train_data = TensorDataset(x_train, y_train)
         test_data  = TensorDataset(x_test , y_test)
 
-        return train_data, test_data, x_normalizer, y_normalizer
+        metadata = dict(
+            x_normalizer=x_normalizer,
+            y_normalizer=y_normalizer,
+            H=s1,
+            W=s2,
+        )
+        
+        return train_data, test_data, metadata
         
     #----------------------------------------------------------------#
     # FNO datasets
@@ -320,7 +321,14 @@ def load_dataset(
         train_data = TensorDataset(input_train, output_train)
         test_data  = TensorDataset(input_test , output_test )
 
-        return train_data, test_data, x_normalizer, y_normalizer
+        gc.collect()
+        
+        metadata = dict(
+            x_normalizer=x_normalizer,
+            y_normalizer=y_normalizer,
+        )
+
+        return train_data, test_data, metadata
         
     elif dataset_name == 'navier_stokes':
         import scipy.io as scio
@@ -375,8 +383,13 @@ def load_dataset(
         y_normalizer = bench.IdentityNormalizer()
         
         # no normalization?
-
-        return train_dataset, test_dataset, x_normalizer, y_normalizer
+        
+        metadata = dict(
+            x_normalizer=x_normalizer,
+            y_normalizer=y_normalizer,
+        )
+        
+        return train_dataset, test_dataset, metadata
         
     #----------------------------------------------------------------#
     # MeshGraphNets datasets
@@ -404,7 +417,7 @@ def load_dataset(
         # Looks like there is some disparity bw train_data and test_data
         train_data, test_data = split_timeseries_dataset(train_data, split=[0.8, 0.2])
         
-        return train_data, test_data, None, None
+        return train_data, test_data, None
         
     else:
         raise ValueError(f"Dataset {dataset_name} not found.") 

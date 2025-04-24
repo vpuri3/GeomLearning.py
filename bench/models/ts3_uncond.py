@@ -144,7 +144,7 @@ class SliceAttention(nn.Module):
         ### (1) Slicing
 
         xq = self.wtq # [H M D]
-        xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1)
+        xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1) # [B N C]
         xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B H N D]
         xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
 
@@ -318,6 +318,103 @@ class TS3Uncond(nn.Module):
         x = self.final_layer(x)
 
         return x
+
+#======================================================================#
+# SliceAttention with Conv 2D
+#======================================================================#
+class SliceAttention_Structured_Mesh_2D(nn.Module):
+    def __init__(self, hidden_dim, num_heads=8, num_slices=32, qk_norm=False, H=None, W=None):
+        super().__init__()
+
+        assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
+
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.num_slices = num_slices
+        self.head_dim = hidden_dim // num_heads
+        self.qk_norm = qk_norm
+        
+        self.kernel = 3
+        self.H = H
+        self.W = W
+        
+        if H is None or W is None:
+            raise ValueError("H and W must be provided")
+
+        ### (1) Get slice weights
+        # self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
+        self.wt_kv_proj = nn.Conv2d(self.hidden_dim, 2 * self.hidden_dim, kernel_size=3, padding=1)
+        
+        self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_slices, self.head_dim))
+        nn.init.normal_(self.wtq, mean=0.0, std=0.1)
+
+        self.mix = SliceHeadMixingConv(self.num_heads, self.num_slices)
+        self.gn1 = nn.LayerNorm(self.head_dim)
+        self.gn2 = nn.LayerNorm(self.head_dim)
+        self.ln1 = nn.LayerNorm(self.hidden_dim)
+        self.ln2 = nn.LayerNorm(self.hidden_dim)
+
+        ### (2) Attention among slice tokens
+        self.mha = MultiHeadAttention(self.hidden_dim, self.num_heads)
+        
+        ### (3) Deslice and return
+        self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
+        
+        self.alphaC = nn.Parameter(torch.full([self.hidden_dim], 1.0))
+        
+    def forward(self, x):
+        
+        # x: [B N C]
+
+        ### (1) Slicing
+
+        B, N, C = x.shape
+        x = einops.rearrange(x, 'b (h w) c -> b c h w', h=self.H)
+        xkv = self.wt_kv_proj(x) # [B 2C H W]
+        xk, xv = einops.rearrange(xkv, 'b c h w -> b (h w) c', h=self.H).chunk(2, dim=-1) # [B N C]
+
+        xq = self.wtq # [H M D]
+        xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B H N D]
+        xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
+
+        if self.qk_norm:
+            xq = F.normalize(xq, p=2, dim=-1)
+            xk = F.normalize(xk, p=2, dim=-1)
+        
+        slice_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B H M N]
+        slice_scores = self.mix(slice_scores)
+        
+        if self.qk_norm:
+            M = self.num_slices
+            N = x.shape[1]
+            slice_weights = slice_scores * (M / N)
+            slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
+        else:
+            slice_weights = F.softmax(slice_scores, dim=-2)
+            slice_token = einsum(slice_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
+            slice_token = slice_token / (slice_weights.sum(dim=-1, keepdim=True) + 1e-5)
+
+        slice_token = rearrange(slice_token, 'b h m d -> b m (h d)')
+        slice_token = self.ln1(slice_token)
+
+        ### (2) Attention among slice tokens
+        
+        out_token = slice_token * self.alphaC + self.mha(slice_token)
+        
+        out_token = self.ln2(out_token)
+        out_token = rearrange(out_token, 'b m (h d) -> b h m d', h=self.num_heads)
+
+        ### (3) Deslice
+
+        out = einsum(out_token, slice_weights, 'b h m d, b h m n -> b h n d')
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        out = self.out_proj(out)
+        
+        return out
+
+#======================================================================#
+#
+
 
 #======================================================================#
 #

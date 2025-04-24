@@ -41,7 +41,7 @@ def main(cfg, device):
     # DATA
     #=================#
     
-    _data, data_, x_normalizer, y_normalizer = bench.load_dataset(
+    _data, data_, metadata = bench.load_dataset(
         cfg.dataset,
         DATADIR_BASE,
         PROJDIR,
@@ -158,26 +158,21 @@ def main(cfg, device):
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
             )
         elif cfg.model_type == 1:
-            model = bench.TS1Uncond(
+            H, W = (metadata['H'], metadata['W']) if cfg.conv2d else (None, None)
+            model = bench.ClusterTransformer(
+                in_dim=c_in, out_dim=c_out,
+                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
+                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_clusters=cfg.num_slices,
+                qk_norm=cfg.qk_norm,
+                conv2d=cfg.conv2d, H=H, W=W,
+            )
+        elif cfg.model_type == 9:
+            model = bench.SparseTransformer(
                 in_dim=c_in, out_dim=c_out,
                 hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
                 num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
                 qk_norm=cfg.qk_norm,
                 k_val=cfg.topk,
-            )
-        elif cfg.model_type == 2:
-            model = bench.TS2Uncond(
-                in_dim=c_in, out_dim=c_out,
-                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
-                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
-                qk_norm=cfg.qk_norm,
-            )
-        elif cfg.model_type == 3:
-            model = bench.TS3Uncond(
-                in_dim=c_in, out_dim=c_out,
-                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
-                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
-                qk_norm=cfg.qk_norm,
             )
         else:
             raise NotImplementedError("No unconditioned model selected.")
@@ -194,12 +189,12 @@ def main(cfg, device):
 
     callback = mlutils.Callback(case_dir)
 
-    if cfg.model_type in [1,] and (time_cond == False):
+    if cfg.model_type in [9,] and (time_cond == False):
         callback = bench.SparsityCallback(case_dir,)
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
         callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type in [-1,])
     elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
-        callback = bench.SteadyStateCallback(case_dir, x_normalizer, y_normalizer)
+        callback = bench.SteadyStateCallback(case_dir, metadata['x_normalizer'], metadata['y_normalizer'])
         
     if cfg.train and cfg.epochs > 0:
 
@@ -359,14 +354,15 @@ class Config:
     clip_grad_norm: float = 1.0
 
     # model
-    model_type: int = 0 # 0: Transolver, 1: TS1, ..., -1: MeshGraphNet
+    model_type: int = 0 # -1: MeshGraphNet, 0: Transolver, 1: ClusterTransformer, 9: SparseTransformer
     act: str = 'gelu'
     hidden_dim: int = 128
-    num_layers: int = 5
+    num_layers: int = 8
     num_heads: int = 8
     mlp_ratio: float = 2.0
-    num_slices: int = 32
+    num_slices: int = 64
     qk_norm: bool = False
+    conv2d: bool = False
 
     topk: int = 0
     gamma_min: float = 0e-4

@@ -42,8 +42,7 @@ def central_diff(x: torch.Tensor, h: float, resolution: int):
     # assuming PBC
     # x: (batch, n, feats), h is the step size, assuming n = h*w
     x = einops.rearrange(x, 'b (h w) c -> b h w c', h=resolution, w=resolution)
-    x = F.pad(x,
-              (0, 0, 1, 1, 1, 1), mode='constant', value=0.)  # [b c t h+2 w+2]
+    x = F.pad(x, (0, 0, 1, 1, 1, 1), mode='constant', value=0.)  # [b c t h+2 w+2]
     grad_x = (x[:, 1:-1, 2:, :] - x[:, 1:-1, :-2, :]) / (2 * h)  # f(x+h) - f(x-h) / 2h
     grad_y = (x[:, 2:, 1:-1, :] - x[:, :-2, 1:-1, :]) / (2 * h)  # f(x+h) - f(x-h) / 2h
 
