@@ -9,24 +9,6 @@ import bench
 from bench.dataset.timeseries import TimeseriesDataset, TimeseriesDatasetTransform
 
 #======================================================================#
-class TransformTensorDataset(TensorDataset):
-    def __init__(self, *tensors, transform=None):
-        super().__init__(*tensors)
-        self.transform = transform
-
-    def __getitem__(self, index):
-        x = super().__getitem__(index)
-        return self.transform(x)
-    
-class NormalizationTransform:
-    def __init__(self, mean, std):
-        self.mean = mean
-        self.std = std
-
-    def __call__(self, x):
-        return (x - self.mean) / self.std
-    
-#======================================================================#
 def load_dataset(
         dataset_name: str,
         DATADIR_BASE: str,
