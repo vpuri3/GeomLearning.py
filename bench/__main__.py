@@ -152,11 +152,19 @@ def main(cfg, device):
         if cfg.model_type == -1:
             model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
         elif cfg.model_type == 0:
-            model = bench.Transolver(
-                space_dim=c_in, out_dim=c_out, fun_dim=0,
-                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
-            )
+            if cfg.conv2d:
+                model = bench.Transolver_Structured_Mesh_2D(
+                    space_dim=c_in, out_dim=c_out, fun_dim=0,
+                    n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
+                    n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
+                    H=metadata['H'], W=metadata['W'],
+                )
+            else:
+                model = bench.Transolver(
+                    space_dim=c_in, out_dim=c_out, fun_dim=0,
+                    n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
+                    n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
+                )
         elif cfg.model_type == 1:
             H, W = (metadata['H'], metadata['W']) if cfg.conv2d else (None, None)
             model = bench.ClusterTransformer(

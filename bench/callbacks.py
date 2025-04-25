@@ -226,12 +226,9 @@ class SteadyStateCallback(mlutils.Callback):
 
         if trainer.GLOBAL_RANK == 0:
             print(f'Relative Error (train / test): {_rel_error:.8e} / {rel_error_:.8e}')
-        
-        with open(os.path.join(ckpt_dir, 'rel_error.json'), 'w') as f:
-            json.dump({'train_rel_error': _rel_error, 'test_rel_error': rel_error_}, f)
+            with open(os.path.join(ckpt_dir, 'rel_error.json'), 'w') as f:
+                json.dump({'train_rel_error': _rel_error, 'test_rel_error': rel_error_}, f)
             
-        gc.collect()
-
         return
 
 #======================================================================#
