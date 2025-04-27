@@ -26,10 +26,10 @@ def load_dataset(
     """Load a dataset by name.
     
     Args:
-        dataset_name (str): Name of the dataset to load ('elasticity', 'airfoil', or 'cylinder_flow')
+        dataset_name (str): Name of the dataset to load.
         
     Returns:
-        tuple: (train_data, test_data, y_normalizer) containing the loaded datasets and optional normalizer object
+        tuple: (train_data, test_data, metadata) containing the loaded datasets and optional metadata dictionary
     """
     #----------------------------------------------------------------#
     # Geo-FNO datasets

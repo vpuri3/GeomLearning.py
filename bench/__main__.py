@@ -167,7 +167,7 @@ def main(cfg, device):
                 )
         elif cfg.model_type == 1:
             H, W = (metadata['H'], metadata['W']) if cfg.conv2d else (None, None)
-            model = bench.ClusterTransformer(
+            model = bench.ClusterAttentionTransformer(
                 in_dim=c_in, out_dim=c_out,
                 hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
                 num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_clusters=cfg.num_slices,
@@ -252,7 +252,7 @@ def main(cfg, device):
         #-------------#
         # batch_lossfun
         #-------------#
-        if (cfg.model_type in [1,]) and cfg.dataset == 'elasticity':
+        if (cfg.model_type in [9,]) and cfg.dataset == 'elasticity':
             gamma_schedule = mlutils.DecayScheduler(
                 init_val=cfg.gamma_init, min_val=cfg.gamma_min,
                 total_steps=trainer.total_steps // 2,
@@ -362,7 +362,7 @@ class Config:
     clip_grad_norm: float = 1.0
 
     # model
-    model_type: int = 0 # -1: MeshGraphNet, 0: Transolver, 1: ClusterTransformer, 9: SparseTransformer
+    model_type: int = 0 # -1: MeshGraphNet, 0: Transolver, 1: ClusterAttentionTransformer, 9: SparseTransformer
     act: str = 'gelu'
     hidden_dim: int = 128
     num_layers: int = 8

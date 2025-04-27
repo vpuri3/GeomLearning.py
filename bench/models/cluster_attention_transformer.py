@@ -9,7 +9,7 @@ from einops import rearrange, einsum
 from mlutils.utils import check_package_version_lteq
 
 __all__ = [
-    "ClusterTransformer",
+    "ClusterAttentionTransformer",
 ]
 
 class SwiGLU(nn.Module):
@@ -18,16 +18,13 @@ class SwiGLU(nn.Module):
         return x * F.silu(gates)
     
 class GEGLU(nn.Module):
-    def __init__(self):
-        super().__init__()
-        if check_package_version_lteq('torch', '2.4.0'):
-            self.kw = {}
-        else:
-            self.kw = {'approximate': 'tanh'}
-
     def forward(self, x):
+        if check_package_version_lteq('torch', '2.4.0'):
+            kw = {}
+        else:
+            kw = {'approximate': 'tanh'}
         x, gates = x.chunk(2, dim = -1)
-        return x * F.gelu(gates, **self.kw)
+        return x * F.gelu(gates, **kw)
 
 # the incremental speedup isn't worth dealing with versioning hell
 FastGELU = nn.GELU
@@ -142,7 +139,7 @@ class ClusterAttention(nn.Module):
         
         # x: [B N C]
 
-        ### (1) Slicing
+        ### (1) Aggregate cluster tokens
 
         xq = self.wtq # [H M D]
         
@@ -267,7 +264,7 @@ class FinalLayer(nn.Module):
 #======================================================================#
 # MODEL
 #======================================================================#
-class ClusterTransformer(nn.Module):
+class ClusterAttentionTransformer(nn.Module):
     def __init__(self,
         in_dim,
         out_dim,
