@@ -133,7 +133,7 @@ class ClusterAttention(nn.Module):
         ### (3) Disaggregate cluster tokens and return
         self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
         
-        self.alphaC = nn.Parameter(torch.full([self.hidden_dim], 1.0))
+        self.alpha = nn.Parameter(torch.full([self.hidden_dim], 1.0))
         
     def forward(self, x):
         
@@ -166,23 +166,23 @@ class ClusterAttention(nn.Module):
             cluster_weights = cluster_scores * (M / N)
             cluster_token = einsum(cluster_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
         else:
-            cluster_weights = F.softmax(cluster_scores, dim=-2)
-            cluster_token = einsum(cluster_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
-            cluster_token = cluster_token / (cluster_weights.sum(dim=-1, keepdim=True) + 1e-5)
-
+            encode_weights = F.softmax(cluster_scores, dim=-1)
+            decode_weights = F.softmax(cluster_scores, dim=-2)
+            cluster_token = einsum(encode_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
+            
         cluster_token = rearrange(cluster_token, 'b h m d -> b m (h d)')
         cluster_token = self.ln1(cluster_token)
 
         ### (2) Attention among cluster tokens
         
-        out_token = cluster_token * self.alphaC + self.mha(cluster_token)
+        out_token = cluster_token * self.alpha + self.mha(cluster_token)
         
         out_token = self.ln2(out_token)
         out_token = rearrange(out_token, 'b m (h d) -> b h m d', h=self.num_heads)
 
         ### (3) Disaggregate cluster tokens
 
-        out = einsum(out_token, cluster_weights, 'b h m d, b h m n -> b h n d')
+        out = einsum(out_token, decode_weights, 'b h m d, b h m n -> b h n d')
         out = rearrange(out, 'b h n d -> b n (h d)')
         out = self.out_proj(out)
         
