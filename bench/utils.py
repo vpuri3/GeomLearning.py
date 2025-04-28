@@ -1,6 +1,7 @@
 #
 import torch
 import einops
+from torch import nn
 import torch.nn.functional as F
 
 __all__ = [
@@ -11,6 +12,7 @@ __all__ = [
     'UnitCubeNormalizer',
     'UnitGaussianNormalizer',
     'TestLoss',
+    'RelL2Loss',
 ]
 
 #======================================================================#
@@ -159,5 +161,17 @@ class TestLoss():
 
     def __call__(self, x, y):
         return self.rel(x, y)
+
+class RelL2Loss(nn.Module):
+    def forward(self, pred, target):
+        assert pred.shape == target.shape
+        dims = tuple(range(1, len(pred.shape)))
+
+        error = torch.sum((pred - target) ** 2, dims).sqrt()
+        target = torch.sum(target ** 2, dims).sqrt()
+
+        loss = torch.mean(error / target)
+        return loss
+
 #======================================================================#
 #
