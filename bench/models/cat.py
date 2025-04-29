@@ -129,11 +129,10 @@ class ClusterAttention(nn.Module):
 
         ### (2) Attention among cluster tokens
         self.mha = MultiHeadAttention(self.hidden_dim, self.num_heads)
+        self.alpha = nn.Parameter(torch.full([self.hidden_dim], 1.0))
         
         ### (3) Disaggregate cluster tokens and return
         self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
-        
-        self.alpha = nn.Parameter(torch.full([self.hidden_dim], 1.0))
         
     def forward(self, x):
         
@@ -141,43 +140,41 @@ class ClusterAttention(nn.Module):
 
         ### (1) Aggregate cluster tokens
 
-        xq = self.wtq # [H M D]
+        q = self.wtq # [H M D]
         
         if self.conv2d:
             x = rearrange(x, 'b (l w) c -> b c l w', l=self.H)
-            xk, xv = self.wt_kv_proj(x).chunk(2, dim=1) # [B C H W]
-            xk = rearrange(xk, 'b (h d) l w -> b h (l w) d', h=self.num_heads) # [B H N D]
-            xv = rearrange(xv, 'b (h d) l w -> b h (l w) d', h=self.num_heads)
+            k, v = self.wt_kv_proj(x).chunk(2, dim=1) # [B C H W]
+            k = rearrange(k, 'b (h d) l w -> b h (l w) d', h=self.num_heads) # [B H N D]
+            v = rearrange(v, 'b (h d) l w -> b h (l w) d', h=self.num_heads)
         else:
-            xk, xv = self.wt_kv_proj(x).chunk(2, dim=-1) # [B N C]
-            xk = rearrange(xk, 'b n (h d) -> b h n d', h=self.num_heads) # [B H N D]
-            xv = rearrange(xv, 'b n (h d) -> b h n d', h=self.num_heads)
+            k, v = self.wt_kv_proj(x).chunk(2, dim=-1) # [B N C]
+            k = rearrange(k, 'b n (h d) -> b h n d', h=self.num_heads) # [B H N D]
+            v = rearrange(v, 'b n (h d) -> b h n d', h=self.num_heads)
 
         if self.qk_norm:
-            xq = F.normalize(xq, p=2, dim=-1)
-            xk = F.normalize(xk, p=2, dim=-1)
+            q = F.normalize(q, p=2, dim=-1)
+            k = F.normalize(k, p=2, dim=-1)
         
-        cluster_scores = einsum(xq, xk, 'h m d, b h n d -> b h m n') # [B H M N]
-        cluster_scores = self.mix(cluster_scores)
+        scores = einsum(q, k, 'h m d, b h n d -> b h m n') # [B H M N]
+        scores = self.mix(scores)
         
-        encode_weights = F.softmax(cluster_scores, dim=-1)
-        decode_weights = F.softmax(cluster_scores, dim=-2)
+        encode_weights = F.softmax(scores, dim=-1)
+        decode_weights = F.softmax(scores, dim=-2)
 
-        cluster_token = einsum(encode_weights, xv, 'b h m n, b h n d -> b h m d') # [B H M D]
-        cluster_token = rearrange(cluster_token, 'b h m d -> b m (h d)')
-        # cluster_token = self.ln1(cluster_token)
+        z = einsum(encode_weights, v, 'b h m n, b h n d -> b h m d') # [B H M D]
+        z = rearrange(z, 'b h m d -> b m (h d)')
 
         ### (2) Attention among cluster tokens
         
-        out_token = cluster_token * self.alpha + self.mha(self.ln1(cluster_token))
-        # out_token = cluster_token * self.alpha + self.mha(cluster_token)
-        
-        # out_token = self.ln2(out_token)
-        out_token = rearrange(out_token, 'b m (h d) -> b h m d', h=self.num_heads)
+        z = self.ln1(z)
+        z = z * self.alpha + self.mha(z)
+        z = self.ln2(z)
+        z = rearrange(z, 'b m (h d) -> b h m d', h=self.num_heads)
 
         ### (3) Disaggregate cluster tokens
 
-        out = einsum(out_token, decode_weights, 'b h m d, b h m n -> b h n d')
+        out = einsum(z, decode_weights, 'b h m d, b h m n -> b h n d')
         out = rearrange(out, 'b h n d -> b n (h d)')
         out = self.out_proj(out)
         
