@@ -4,6 +4,7 @@ from einops import rearrange, einsum
 
 __all__ = [
     "LNO",
+    "CNO",
 ]
 
 # "model": {
@@ -139,6 +140,65 @@ class LNO(torch.nn.Module):
             z = block(z)
         
         r = torch.einsum("bij,bjc->bic", score_decode, z)
+        r = self.out_mlp(r)
+        return r
+
+    def _init_weights(self, module):
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.weight.data.normal_(mean=0.0, std=0.0002)
+            if isinstance(module, torch.nn.Linear) and module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, torch.nn.LayerNorm):
+            module.weight.data.fill_(1.0)
+            module.bias.data.zero_()
+
+#======================================================================#
+    
+class CNO(torch.nn.Module):
+    def __init__(self, n_block, n_mode, n_dim, n_head, n_layer, x_dim, y1_dim, y2_dim, act, model_attr):
+        super().__init__()
+        self.n_block = n_block
+        self.n_mode = n_mode
+        self.n_dim = n_dim
+        self.n_head = n_head
+        self.n_layer = n_layer
+        self.act = ACTIVATION[act]
+        
+        self.x_dim = x_dim
+        self.y1_dim = y1_dim
+        if model_attr["time"]:
+            self.y2_dim = 1
+        else:
+            self.y2_dim = y2_dim
+        
+        self.trunk_projector = MLP(self.x_dim, self.n_dim, self.n_dim, self.n_layer, self.act)
+        self.branch_projector = MLP(self.y1_dim, self.n_dim, self.n_dim, self.n_layer, self.act)
+        self.out_mlp = MLP(self.n_dim, self.n_dim, self.y2_dim, self.n_layer, self.act)
+        self.attention_projector = MLP(self.n_dim, self.n_dim, self.n_mode * self.n_head, self.n_layer, self.act)
+        self.attn_blocks = torch.nn.Sequential(*[AttentionBlock(self.n_mode, self.n_dim, self.n_head, self.act) for _ in range(0, self.n_block)])
+
+    def forward(self, x, y=None):
+        if y is None:
+            y = x
+        x = self.trunk_projector(x)
+        y = self.branch_projector(y)
+
+        score = self.attention_projector(x)
+        score = rearrange(score, 'b n (m h) -> b h n m', h=self.n_head)
+        score_encode = torch.softmax(score, dim=-2)
+        score_decode = torch.softmax(score, dim=-1)
+        
+        y = rearrange(y, 'b n (h d) -> b h n d', h=self.n_head)
+        z = einsum(score_encode, y, "b h n m, b h n d -> b h m d")
+        z = rearrange(z, 'b h m d -> b m (h d)')
+        
+        for block in self.attn_blocks:
+            z = block(z)
+        
+        z = rearrange(z, 'b m (h d) -> b h m d', h=self.n_head)
+        r = einsum(score_decode, z, "b h n m, b h m d -> b h n d")
+        r = rearrange(r, 'b h n d -> b n (h d)')
+
         r = self.out_mlp(r)
         return r
 

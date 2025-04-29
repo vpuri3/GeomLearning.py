@@ -37,7 +37,7 @@ ACTIVATIONS = {
     'geglu': GEGLU(),
 }
 
-class MultiHeadAttention(nn.Module):
+class MultiHeadedSelfAttention(nn.Module):
     def __init__(self, hidden_dim, num_heads=8):
         super().__init__()
 
@@ -128,7 +128,7 @@ class ClusterAttention(nn.Module):
         self.ln2 = nn.LayerNorm(self.hidden_dim)
 
         ### (2) Attention among cluster tokens
-        self.mha = MultiHeadAttention(self.hidden_dim, self.num_heads)
+        self.mha = MultiHeadedSelfAttention(self.hidden_dim, self.num_heads)
         self.alpha = nn.Parameter(torch.full([self.hidden_dim], 1.0))
         
         ### (3) Disaggregate cluster tokens and return
