@@ -1,7 +1,6 @@
 import torch
 import math
-from einops import rearrange
-from module.addition import NystromAttention
+from einops import rearrange, einsum
 
 __all__ = [
     "LNO",

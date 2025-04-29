@@ -114,38 +114,7 @@ def main(cfg, device):
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
             )
         elif cfg.model_type == 1:
-            model = am.TS1( # Physics attention + AdaLN conditioning
-                in_dim=c_in, out_dim=c_out,
-                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
-            )
-        elif cfg.model_type == 2:
-            model = am.TS2( # Slice attention + AdaLN conditioning (query size [M, D])
-                in_dim=c_in, out_dim=c_out,
-                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
-            )
-        elif cfg.model_type == 3:
-            model = am.TS3( # Slice attention + slice query conditioning (query size [M, D])
-                in_dim=c_in, out_dim=c_out,
-                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
-                qk_norm=cfg.qk_norm,
-            )
-        elif cfg.model_type == 4:
-            model = am.TS4( # Slice attention + slice query conditioning (query size [H, M, D])
-                in_dim=c_in, out_dim=c_out,
-                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
-                qk_norm=cfg.qk_norm,
-            )
-        elif cfg.model_type == 5:
-            model = am.TS5( # Slice attention (full permute) + slice query conditioning (query size [H, M, D])
-                in_dim=c_in, out_dim=c_out,
-                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
-                qk_norm=cfg.qk_norm,
-            )
+            raise NotImplementedError("CAT not implemented for time-conditioned problems.")
         else:
             raise NotImplementedError("No time-conditioned model selected.")
     else:
