@@ -3,71 +3,20 @@ import math
 from einops import rearrange
 from module.addition import NystromAttention
 
+__all__ = [
+    "LNO",
+]
 
-def Attention_Vanilla(q, k, v):
-    score = torch.softmax(torch.einsum("bhic,bhjc->bhij", q, k) / math.sqrt(k.shape[-1]), dim=-1)
-    r = torch.einsum("bhij,bhjc->bhic", score, v)
-    return r
-
-class LinearAttention_Galerkin_and_Fourier(torch.nn.Module):
-    def __init__(self, attn_type, n_dim, n_head, use_ln=False):
-        super().__init__()
-        self.attn_type = attn_type
-        self.n_dim = n_dim
-        self.n_head = n_head
-        self.dim_head = self.n_dim // self.n_head
-        self.use_ln = use_ln
-        self.to_qkv = torch.nn.Linear(n_dim, n_dim*3, bias = False)
-        self.project_out = (not self.n_head == 1)
-
-        if attn_type == 'galerkin':
-            if not self.use_ln:
-                self.k_norm = torch.nn.InstanceNorm1d(self.dim_head)
-                self.v_norm = torch.nn.InstanceNorm1d(self.dim_head)
-            else:
-                self.k_norm = torch.nn.LayerNorm(self.dim_head)
-                self.v_norm = torch.nn.LayerNorm(self.dim_head)
-
-        elif attn_type == 'fourier':
-            if not self.use_ln:
-                self.q_norm = torch.nn.InstanceNorm1d(self.dim_head)
-                self.k_norm = torch.nn.InstanceNorm1d(self.dim_head)
-            else:
-                self.q_norm = torch.nn.LayerNorm(self.dim_head)
-                self.k_norm = torch.nn.LayerNorm(self.dim_head)
-
-        else:
-            raise Exception(f'Unknown attention type {attn_type}')
-
-        self.to_out = torch.nn.Sequential(
-            torch.nn.Linear(self.n_dim, self.n_dim),
-            torch.nn.Dropout(0.0)
-        ) if self.project_out else torch.nn.Identity()
-
-    def norm_wrt_domain(self, x, norm_fn):
-        b = x.shape[0]
-        return rearrange(
-            norm_fn(rearrange(x, 'b h n d -> (b h) n d')),
-            '(b h) n d -> b h n d', b=b)
-
-    def forward(self, x):
-        qkv = self.to_qkv(x).chunk(3, dim=-1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.n_head), qkv)
-
-        if self.attn_type == 'galerkin':
-            k = self.norm_wrt_domain(k, self.k_norm)
-            v = self.norm_wrt_domain(v, self.v_norm)
-        elif self.attn_type == "fourier":
-            q = self.norm_wrt_domain(q, self.q_norm)
-            k = self.norm_wrt_domain(k, self.k_norm)
-        else:
-            raise NotImplementedError("Invalid Attention Type!")
-
-        dots = torch.matmul(k.transpose(-1, -2), v)
-        out = torch.matmul(q, dots) * (1./q.shape[2])
-        out = rearrange(out, 'b h n d -> b n (h d)')
-        return self.to_out(out)
-
+# "model": {
+#     "name": "LNO",
+#     "n_block": 4,
+#     "n_mode": 256,
+#     "n_dim" : 192,
+#     "n_head" : 8,
+#     "n_layer": 3,
+#     "attn": "Attention_Vanilla",
+#     "act": "GELU"
+# },
 
 ACTIVATION = {
     "Sigmoid": torch.nn.Sigmoid(),
@@ -78,9 +27,11 @@ ACTIVATION = {
     "GELU": torch.nn.GELU()
 }
 
-ATTENTION = {
-    "Attention_Vanilla": Attention_Vanilla,
-}
+#======================================================================#
+def Attention_Vanilla(q, k, v):
+    score = torch.softmax(torch.einsum("bhic,bhjc->bhij", q, k) / math.sqrt(k.shape[-1]), dim=-1)
+    r = torch.einsum("bhij,bhjc->bhic", score, v)
+    return r
 
 class MLP(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, n_layer, act):
@@ -101,73 +52,57 @@ class MLP(torch.nn.Module):
         r = self.output(r)
         return r
         
-# "model": {
-#     "name": "LNO",
-#     "n_block": 4,
-#     "n_mode": 256,
-#     "n_dim" : 192,
-#     "n_head" : 8,
-#     "n_layer": 3,
-#     "attn": "Attention_Vanilla",
-#     "act": "GELU"
-# },
+#======================================================================#
+class SelfAttention(torch.nn.Module):
+    def __init__(self, n_mode, n_dim, n_head, attn):
+        super().__init__()
+        self.n_mode = n_mode
+        self.n_dim = n_dim
+        self.n_head = n_head
+        self.Wq = torch.nn.Linear(self.n_dim, self.n_dim)
+        self.Wk = torch.nn.Linear(self.n_dim, self.n_dim)
+        self.Wv = torch.nn.Linear(self.n_dim, self.n_dim)
+        self.attn = attn
+        self.proj = torch.nn.Linear(self.n_dim, self.n_dim)
+    
+    def forward(self, x):
+        B, N, D = x.size()
+        q = self.Wq(x).view(B, N, self.n_head, D // self.n_head).permute(0, 2, 1, 3)
+        k = self.Wk(x).view(B, N, self.n_head, D // self.n_head).permute(0, 2, 1, 3)
+        v = self.Wv(x).view(B, N, self.n_head, D // self.n_head).permute(0, 2, 1, 3)
+        r = self.attn(q, k, v).permute(0, 2, 1, 3).contiguous().view(B, N, D)
+        r = self.proj(r)
+        return r
+
+class AttentionBlock(torch.nn.Module):
+    def __init__(self, n_mode, n_dim, n_head, act):
+        super().__init__()
+        self.n_mode = n_mode
+        self.n_dim = n_dim
+        self.n_head = n_head
+        self.act = act
+        
+        self.self_attn = SelfAttention(self.n_mode, self.n_dim, self.n_head, Attention_Vanilla)
+        
+        self.ln1 = torch.nn.LayerNorm(self.n_dim)
+        self.ln2 = torch.nn.LayerNorm(self.n_dim)
+        self.drop = torch.nn.Dropout(0.0)
+        
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(self.n_dim, self.n_dim*2),
+            self.act,
+            torch.nn.Linear(self.n_dim*2, self.n_dim),
+        )
+
+    def forward(self, y):   
+        y = y + self.drop(self.self_attn(self.ln1(y)))
+        y = y + self.mlp(self.ln2(y))
+        return y
 
 #======================================================================#
-class LNO(torch.nn.Module):
-    class SelfAttention(torch.nn.Module):
-        def __init__(self, n_mode, n_dim, n_head, attn):
-            super().__init__()
-            self.n_mode = n_mode
-            self.n_dim = n_dim
-            self.n_head = n_head
-            self.Wq = torch.nn.Linear(self.n_dim, self.n_dim)
-            self.Wk = torch.nn.Linear(self.n_dim, self.n_dim)
-            self.Wv = torch.nn.Linear(self.n_dim, self.n_dim)
-            self.attn = attn
-            self.proj = torch.nn.Linear(self.n_dim, self.n_dim)
-        
-        def forward(self, x):
-            B, N, D = x.size()
-            q = self.Wq(x).view(B, N, self.n_head, D // self.n_head).permute(0, 2, 1, 3)
-            k = self.Wk(x).view(B, N, self.n_head, D // self.n_head).permute(0, 2, 1, 3)
-            v = self.Wv(x).view(B, N, self.n_head, D // self.n_head).permute(0, 2, 1, 3)
-            r = self.attn(q, k, v).permute(0, 2, 1, 3).contiguous().view(B, N, D)
-            r = self.proj(r)
-            return r
     
-    class AttentionBlock(torch.nn.Module):
-        def __init__(self, n_mode, n_dim, n_head, attn, act):
-            super().__init__()
-            self.n_mode = n_mode
-            self.n_dim = n_dim
-            self.n_head = n_head
-            self.attn = attn
-            self.act = act
-            
-            if self.attn == "Galerkin":
-                self.self_attn = LinearAttention_Galerkin_and_Fourier('galerkin', self.n_dim, self.n_head, use_ln=True)
-            elif self.attn == "Nystrom":
-                self.self_attn = NystromAttention(self.n_dim, heads =self.n_head, dim_head=self.n_dim//self.n_head, dropout=0.0)
-            else:
-                self.self_attn = LNO.SelfAttention(self.n_mode, self.n_dim, self.n_head, ATTENTION[self.attn])
-            
-            self.ln1 = torch.nn.LayerNorm(self.n_dim)
-            self.ln2 = torch.nn.LayerNorm(self.n_dim)
-            self.drop = torch.nn.Dropout(0.0)
-            
-            self.mlp = torch.nn.Sequential(
-                torch.nn.Linear(self.n_dim, self.n_dim*2),
-                self.act,
-                torch.nn.Linear(self.n_dim*2, self.n_dim),
-            )
-
-        def forward(self, y):   
-            y = y + self.drop(self.self_attn(self.ln1(y)))
-            y = y + self.mlp(self.ln2(y))
-            return y
-
-        
-    def __init__(self, n_block, n_mode, n_dim, n_head, n_layer, x_dim, y1_dim, y2_dim, attn, act, model_attr):
+class LNO(torch.nn.Module):
+    def __init__(self, n_block, n_mode, n_dim, n_head, n_layer, x_dim, y1_dim, y2_dim, act, model_attr):
         super().__init__()
         self.n_block = n_block
         self.n_mode = n_mode
@@ -187,18 +122,11 @@ class LNO(torch.nn.Module):
         self.branch_projector = MLP(self.y1_dim, self.n_dim, self.n_dim, self.n_layer, self.act)
         self.out_mlp = MLP(self.n_dim, self.n_dim, self.y2_dim, self.n_layer, self.act)
         self.attention_projector = MLP(self.n_dim, self.n_dim, self.n_mode, self.n_layer, self.act)
-        self.attn_blocks = torch.nn.Sequential(*[LNO.AttentionBlock(self.n_mode, self.n_dim, self.n_head, attn, self.act) for _ in range(0, self.n_block)])
-        
-    def _init_weights(self, module):
-        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
-            module.weight.data.normal_(mean=0.0, std=0.0002)
-            if isinstance(module, torch.nn.Linear) and module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, torch.nn.LayerNorm):
-            module.weight.data.fill_(1.0)
-            module.bias.data.zero_()
+        self.attn_blocks = torch.nn.Sequential(*[AttentionBlock(self.n_mode, self.n_dim, self.n_head, self.act) for _ in range(0, self.n_block)])
 
-    def forward(self, x, y):
+    def forward(self, x, y=None):
+        if y is None:
+            y = x
         x = self.trunk_projector(x)
         y = self.branch_projector(y)
 
@@ -214,6 +142,15 @@ class LNO(torch.nn.Module):
         r = torch.einsum("bij,bjc->bic", score_decode, z)
         r = self.out_mlp(r)
         return r
+
+    def _init_weights(self, module):
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.weight.data.normal_(mean=0.0, std=0.0002)
+            if isinstance(module, torch.nn.Linear) and module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, torch.nn.LayerNorm):
+            module.weight.data.fill_(1.0)
+            module.bias.data.zero_()
 
 #======================================================================#
 #

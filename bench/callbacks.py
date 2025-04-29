@@ -24,7 +24,7 @@ from am.callbacks import hstack_dataframes_across_ranks, vstack_dataframes_acros
 __all__ = [
     'TimeseriesCallback',
     'SparsityCallback',
-    'SteadyStateCallback',
+    'RelL2Callback',
 ]
 
 #======================================================================#
@@ -165,7 +165,7 @@ class TimeseriesCallback(mlutils.Callback):
         return
 
 #======================================================================#
-class SteadyStateCallback(mlutils.Callback):
+class RelL2Callback(mlutils.Callback):
     def __init__(self, case_dir: str, x_normalizer, y_normalizer):
         super().__init__(case_dir)
         self.x_normalizer = x_normalizer
@@ -174,60 +174,64 @@ class SteadyStateCallback(mlutils.Callback):
     @torch.no_grad()
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
         
-        trainer.model.eval()
-        device = trainer.device
-
-        lossfun = bench.TestLoss()
-        y_normalizer = self.y_normalizer.to(device)
-        
-        _N, _rel_error = 0, 0.
-        N_, rel_error_ = 0, 0.
-
-        for batch in trainer._loader_:
-            x, y = batch[0].to(device), batch[1].to(device)
-            yh = trainer.model(x)
-            yh = y_normalizer.decode(yh)
-            y  = y_normalizer.decode(y)
-            l = lossfun.rel(yh,y)
-            _n = trainer.get_batch_size(batch, trainer._loader_)
-            _N += _n
-            _rel_error += l.item() * _n
-            del x, y, yh
-            
-        for batch in trainer.loader_:
-            x, y = batch[0].to(device), batch[1].to(device)
-            yh = trainer.model(x)
-            yh = y_normalizer.decode(yh)
-            y  = y_normalizer.decode(y)
-            l = lossfun.rel(yh,y)
-            n_ = trainer.get_batch_size(batch, trainer.loader_)
-            N_ += n_
-            rel_error_ += l.item() * n_
-            del x, y, yh
-
-        if trainer.DDP:
-            _rel_error = torch.tensor(_rel_error, device=trainer.device)
-            rel_error_ = torch.tensor(rel_error_, device=trainer.device)
-
-            _N = torch.tensor(_N, device=trainer.device)
-            N_ = torch.tensor(N_, device=trainer.device)
-
-            dist.all_reduce(_rel_error, dist.ReduceOp.SUM)
-            dist.all_reduce(rel_error_, dist.ReduceOp.SUM)
-
-            dist.all_reduce(_N, dist.ReduceOp.SUM)
-            dist.all_reduce(N_, dist.ReduceOp.SUM)
-
-            _N, _rel_error = _N.item(), _rel_error.item()
-            N_, rel_error_ = N_.item(), rel_error_.item()
-
-        _rel_error /= _N
-        rel_error_ /= N_
-
         if trainer.GLOBAL_RANK == 0:
-            print(f'Relative Error (train / test): {_rel_error:.8e} / {rel_error_:.8e}')
             with open(os.path.join(ckpt_dir, 'rel_error.json'), 'w') as f:
-                json.dump({'train_rel_error': _rel_error, 'test_rel_error': rel_error_}, f)
+                json.dump(trainer.stat_vals, f)
+            
+        # trainer.model.eval()
+        # device = trainer.device
+
+        # lossfun = bench.RelL2Loss()
+        # y_normalizer = self.y_normalizer.to(device)
+        
+        # _N, _rel_error = 0, 0.
+        # N_, rel_error_ = 0, 0.
+
+        # for batch in trainer._loader_:
+        #     x, y = batch[0].to(device), batch[1].to(device)
+        #     yh = trainer.model(x)
+        #     yh = y_normalizer.decode(yh)
+        #     y  = y_normalizer.decode(y)
+        #     l = lossfun.rel(yh,y)
+        #     _n = trainer.get_batch_size(batch, trainer._loader_)
+        #     _N += _n
+        #     _rel_error += l.item() * _n
+        #     del x, y, yh
+            
+        # for batch in trainer.loader_:
+        #     x, y = batch[0].to(device), batch[1].to(device)
+        #     yh = trainer.model(x)
+        #     yh = y_normalizer.decode(yh)
+        #     y  = y_normalizer.decode(y)
+        #     l = lossfun.rel(yh,y)
+        #     n_ = trainer.get_batch_size(batch, trainer.loader_)
+        #     N_ += n_
+        #     rel_error_ += l.item() * n_
+        #     del x, y, yh
+
+        # if trainer.DDP:
+        #     _rel_error = torch.tensor(_rel_error, device=trainer.device)
+        #     rel_error_ = torch.tensor(rel_error_, device=trainer.device)
+
+        #     _N = torch.tensor(_N, device=trainer.device)
+        #     N_ = torch.tensor(N_, device=trainer.device)
+
+        #     dist.all_reduce(_rel_error, dist.ReduceOp.SUM)
+        #     dist.all_reduce(rel_error_, dist.ReduceOp.SUM)
+
+        #     dist.all_reduce(_N, dist.ReduceOp.SUM)
+        #     dist.all_reduce(N_, dist.ReduceOp.SUM)
+
+        #     _N, _rel_error = _N.item(), _rel_error.item()
+        #     N_, rel_error_ = N_.item(), rel_error_.item()
+
+        # _rel_error /= _N
+        # rel_error_ /= N_
+
+        # if trainer.GLOBAL_RANK == 0:
+        #     print(f'Relative Error (train / test): {_rel_error:.8e} / {rel_error_:.8e}')
+        #     with open(os.path.join(ckpt_dir, 'rel_error.json'), 'w') as f:
+        #         json.dump({'train_rel_error': _rel_error, 'test_rel_error': rel_error_}, f)
             
         return
 

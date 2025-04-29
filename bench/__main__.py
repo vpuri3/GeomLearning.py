@@ -149,7 +149,13 @@ def main(cfg, device):
         else:
             raise NotImplementedError("No time-conditioned model selected.")
     else:
-        if cfg.model_type == -1:
+        if cfg.model_type == -2:
+            model = bench.LNO(
+                    n_block=4, n_mode=256, n_dim=192, n_head=8, n_layer=3, act="GELU",
+                    x_dim=c_in, y1_dim=c_in, y2_dim=c_out,
+                    model_attr={"time": time_cond,}
+            )
+        elif cfg.model_type == -1:
             model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
         elif cfg.model_type == 0:
             if cfg.conv2d:
@@ -202,7 +208,7 @@ def main(cfg, device):
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
         callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type in [-1,])
     elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
-        callback = bench.SteadyStateCallback(case_dir, metadata['x_normalizer'], metadata['y_normalizer'])
+        callback = bench.RelL2Callback(case_dir, metadata['x_normalizer'], metadata['y_normalizer'])
         
     if cfg.train and cfg.epochs > 0:
 
@@ -215,7 +221,16 @@ def main(cfg, device):
         elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
             batch_size_ = _batch_size_ = 50
         
-        lossfun = torch.nn.MSELoss()
+        if cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
+            lf = bench.RelL2Loss()
+            def lossfun(yh, y):
+                y_normalizer = metadata['y_normalizer'].to(y.device)
+                yh = y_normalizer.decode(yh)
+                y  = y_normalizer.decode(y)
+                return lf(yh, y)
+        else:
+            lossfun = torch.nn.MSELoss()
+
         gnn_loader = cfg.dataset in ['airfoil', 'cylinder_flow']
 
         kw = dict(
@@ -372,6 +387,7 @@ class Config:
     qk_norm: bool = False
     conv2d: bool = False
 
+    # sparse transformer
     topk: int = 0
     gamma_min: float = 0e-4
     gamma_init: float = 1e-2
