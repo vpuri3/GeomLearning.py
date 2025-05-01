@@ -47,8 +47,6 @@ class MultiHeadedSelfAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = hidden_dim // num_heads 
         
-        # Attn scores [B H M M] can be mixed whichever way.
-        # self.mix = ClusterHeadMixingConv(self.num_heads, self.num_clusters)
         self.qkv_proj = nn.Linear(hidden_dim, 3 * hidden_dim)
         self.out_proj = nn.Linear(hidden_dim, hidden_dim)
 
@@ -67,6 +65,30 @@ class MultiHeadedSelfAttention(nn.Module):
         out = self.out_proj(out)
 
         return out
+    
+class SelfAttentionBlock(nn.Module):
+    def __init__(self, hidden_dim, num_heads, if_mlp=False, mlp_ratio=2, act=None):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(hidden_dim)
+        self.mha = MultiHeadedSelfAttention(hidden_dim, num_heads)
+        self.alpha1 = nn.Parameter(torch.full([hidden_dim], 1.0))
+        self.if_mlp = if_mlp
+        if self.if_mlp:
+            self.ln2 = nn.LayerNorm(hidden_dim)
+            self.mlp = MLP(hidden_dim, int(hidden_dim * mlp_ratio), hidden_dim, act=act)
+            self.alpha2 = nn.Parameter(torch.full([hidden_dim], 1.0))
+
+    def forward(self, x):
+        # do pre norm instead?
+        # x = x * self.alpha + self.mha(self.ln1(x))
+        
+        x = self.ln1(x)
+        x = x * self.alpha1 + self.mha(x)
+        if self.if_mlp:
+            x = self.ln2(x)
+            x = x * self.alpha2 + self.mlp(x)
+
+        return x
 
 class ClusterHeadMixingConv(nn.Module):
     def __init__(self, H:int, M: int, positive_weights=False):
@@ -97,7 +119,8 @@ class ClusterHeadMixingConv(nn.Module):
 #======================================================================#
 class ClusterAttention(nn.Module):
     def __init__(
-            self, hidden_dim, num_heads=8, num_clusters=32, qk_norm=False,
+            self, hidden_dim, num_heads=8, num_clusters=32,
+            num_projection_blocks=1, qk_norm=False, if_mlp=False, mlp_ratio=2, act=None,
             conv2d=False, H=None, W=None,
         ):
         super().__init__()
@@ -108,6 +131,7 @@ class ClusterAttention(nn.Module):
         self.num_heads = num_heads
         self.num_clusters = num_clusters
         self.head_dim = hidden_dim // num_heads
+        self.num_projection_blocks = num_projection_blocks
         self.qk_norm = qk_norm
 
         self.conv2d = conv2d
@@ -124,18 +148,22 @@ class ClusterAttention(nn.Module):
         nn.init.normal_(self.wtq, mean=0.0, std=0.1)
 
         self.mix = ClusterHeadMixingConv(self.num_heads, self.num_clusters)
-        self.ln1 = nn.LayerNorm(self.hidden_dim)
-        self.ln2 = nn.LayerNorm(self.hidden_dim)
+        self.ln = nn.LayerNorm(self.hidden_dim)
 
         ### (2) Attention among cluster tokens
-        self.mha = MultiHeadedSelfAttention(self.hidden_dim, self.num_heads)
-        self.alpha = nn.Parameter(torch.full([self.hidden_dim], 1.0))
+        self.blocks = nn.ModuleList([
+            SelfAttentionBlock(
+                self.hidden_dim, self.num_heads,
+                if_mlp=if_mlp, mlp_ratio=mlp_ratio, act=act,
+            )
+            for _ in range(self.num_projection_blocks)
+        ])
         
         ### (3) Disaggregate cluster tokens and return
         self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
         
     def forward(self, x):
-        
+
         # x: [B N C]
 
         ### (1) Aggregate cluster tokens
@@ -159,17 +187,17 @@ class ClusterAttention(nn.Module):
         scores = einsum(q, k, 'h m d, b h n d -> b h m n') # [B H M N]
         scores = self.mix(scores)
         
-        encode_weights = F.softmax(scores, dim=-1)
-        decode_weights = F.softmax(scores, dim=-2)
+        encode_weights = F.softmax(scores, dim=-1) # sum over N
+        decode_weights = F.softmax(scores, dim=-2) # sum over M
 
         z = einsum(encode_weights, v, 'b h m n, b h n d -> b h m d') # [B H M D]
-        z = rearrange(z, 'b h m d -> b m (h d)')
+        z = rearrange(z, 'b h m d -> b m (h d)') # [B M C]
 
         ### (2) Attention among cluster tokens
-        
-        z = self.ln1(z)
-        z = z * self.alpha + self.mha(z)
-        z = self.ln2(z)
+
+        for block in self.blocks:
+            z = block(z) # [B M C]
+        z = self.ln(z)
         z = rearrange(z, 'b m (h d) -> b h m d', h=self.num_heads)
 
         ### (3) Disaggregate cluster tokens
@@ -177,7 +205,7 @@ class ClusterAttention(nn.Module):
         out = einsum(z, decode_weights, 'b h m d, b h m n -> b h n d')
         out = rearrange(out, 'b h n d -> b n (h d)')
         out = self.out_proj(out)
-        
+
         return out
 
 #======================================================================#
@@ -200,7 +228,7 @@ class MLP(nn.Module):
         x = self.fc2(x)
         return x
 
-class Block(nn.Module):
+class ClusterAttentionBlock(nn.Module):
     """Transformer encoder block."""
 
     def __init__(self,
@@ -208,6 +236,8 @@ class Block(nn.Module):
             hidden_dim: int,
             mlp_ratio=2,
             num_clusters=32,
+            num_projection_blocks=1,
+            if_projection_mlp=False,
             qk_norm=False,
             act=None,
             conv2d=False,
@@ -222,10 +252,10 @@ class Block(nn.Module):
             hidden_dim,
             num_heads=num_heads,
             num_clusters=num_clusters,
+            num_projection_blocks=num_projection_blocks,
+            if_mlp=if_projection_mlp, mlp_ratio=mlp_ratio, act=act,
             qk_norm=qk_norm,
-            conv2d=conv2d,
-            H=H,
-            W=W,
+            conv2d=conv2d, H=H, W=W,
         )
         
         self.mlp = MLP(
@@ -237,10 +267,12 @@ class Block(nn.Module):
         
     def forward(self, x):
         # x: [B, N, C]
+        
+        # apply LN to both branches? add scaling factor?
        
         x = x + self.att(self.ln1(x))
         x = x + self.mlp(self.ln2(x))
-
+        
         return x
 
 class FinalLayer(nn.Module):
@@ -265,6 +297,8 @@ class ClusterAttentionTransformer(nn.Module):
         num_heads=8,
         mlp_ratio=1,
         num_clusters=32,
+        num_projection_blocks=1,
+        if_projection_mlp=False,
         qk_norm=False,
         act=None,
         conv2d=False,
@@ -285,11 +319,13 @@ class ClusterAttentionTransformer(nn.Module):
         )
         
         self.blocks = nn.ModuleList([
-            Block(
+            ClusterAttentionBlock(
                 num_heads=num_heads,
                 hidden_dim=hidden_dim,
                 mlp_ratio=mlp_ratio,
                 num_clusters=num_clusters,
+                num_projection_blocks=num_projection_blocks,
+                if_projection_mlp=if_projection_mlp,
                 qk_norm=qk_norm,
                 act=act,
                 conv2d=conv2d,

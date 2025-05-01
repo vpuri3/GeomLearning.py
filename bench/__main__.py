@@ -146,6 +146,7 @@ def main(cfg, device):
                 in_dim=c_in, out_dim=c_out,
                 hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
                 num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_clusters=cfg.num_slices,
+                num_projection_blocks=cfg.num_projection_blocks, if_projection_mlp=cfg.if_projection_mlp,
                 qk_norm=cfg.qk_norm,
                 conv2d=cfg.conv2d, H=H, W=W,
             )
@@ -257,22 +258,30 @@ def main(cfg, device):
             
         if cfg.dataset in ['darcy']:
             
-            def batch_lossfun(trainer, model, batch):
-                x, y = batch
-                yh = model(x)
-                
-                r = 5
-                h = int(((421 - 1) / r) + 1)
-                s = h
-                dx = 1.0 / s
+            # r = 5
+            # h = int(((421 - 1) / r) + 1)
+            # s = h
+            # dx = 1.0 / s
+            # lf = bench.RelL2Loss()
 
-                l2loss = lossfun(yh, y)
-                deriv_loss = bench.darcy_deriv_loss(yh, y, s, dx)
+            # def batch_lossfun(trainer, model, batch):
+            #     x, y = batch
+            #     yh = model(x)
                 
-                loss = 0.01 * deriv_loss + l2loss
-                return loss
+            #     y_normalizer = metadata['y_normalizer'].to(y.device)
+            #     yh = y_normalizer.decode(yh)
+            #     y  = y_normalizer.decode(y)
+                
+            #     l2loss = lossfun(yh, y)
+            #     (gt_grad_x, gt_grad_y), (pred_grad_x, pred_grad_y) = bench.darcy_deriv_loss(y, dx, s)
+            #     deriv_loss = lf(pred_grad_x, gt_grad_x) + lf(pred_grad_y, gt_grad_y)
+                
+            #     loss = 0.1 * deriv_loss + l2loss
+            #     return loss
             
-            trainer.batch_lossfun = batch_lossfun
+            # trainer.batch_lossfun = batch_lossfun
+            
+            pass
 
         if cfg.dataset in ['airfoil', 'cylinder_flow']:
             if GLOBAL_RANK == 0:
@@ -340,8 +349,8 @@ class Config:
     learning_rate: float = 1e-4
     schedule: str = None
     one_cycle_pct_start:float = 0.05
-    one_cycle_div_factor: float = 25
-    one_cycle_final_div_factor: float = 1000
+    one_cycle_div_factor: float = 1e4
+    one_cycle_final_div_factor: float = 1e4
     one_cycle_three_phase: bool = False
     clip_grad_norm: float = 1.0
 
@@ -353,6 +362,8 @@ class Config:
     num_heads: int = 8
     mlp_ratio: float = 2.0
     num_slices: int = 64
+    num_projection_blocks: int = 1
+    if_projection_mlp: bool = False
     qk_norm: bool = False
     conv2d: bool = False
 
@@ -368,11 +379,14 @@ if __name__ == "__main__":
     
     DISTRIBUTED = mlutils.is_torchrun()
     GLOBAL_RANK = int(os.environ['RANK']) if DISTRIBUTED else 0
+    WORLD_SIZE = int(os.environ['WORLD_SIZE']) if DISTRIBUTED else 1
     device = mlutils.select_device()
 
     #===============#
     cfg = CLI(Config, as_positional=False)
     #===============#
+    
+    cfg.world_size = WORLD_SIZE
 
     if not (cfg.train or cfg.eval):
         print("No mode selected. Select one of train, eval")

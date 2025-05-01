@@ -308,6 +308,8 @@ def load_dataset(
         metadata = dict(
             x_normalizer=x_normalizer,
             y_normalizer=y_normalizer,
+            H=s,
+            W=s,
         )
 
         return train_data, test_data, metadata

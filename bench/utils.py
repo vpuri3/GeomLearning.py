@@ -57,9 +57,8 @@ def darcy_deriv_loss(yh, y, s, dx):
 
     gt_grad_x, gt_grad_y = central_diff(y, dx, s)
     pred_grad_x, pred_grad_y = central_diff(yh, dx, s)
-    deriv_loss = F.mse_loss(pred_grad_x, gt_grad_x) + F.mse_loss(pred_grad_y, gt_grad_y)
 
-    return deriv_loss
+    return (gt_grad_x, gt_grad_y), (pred_grad_x, pred_grad_y)
 
 #======================================================================#
 class IdentityNormalizer():
