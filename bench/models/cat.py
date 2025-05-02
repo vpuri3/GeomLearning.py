@@ -79,14 +79,16 @@ class SelfAttentionBlock(nn.Module):
             self.alpha2 = nn.Parameter(torch.full([hidden_dim], 1.0))
 
     def forward(self, x):
-        # do pre norm instead?
-        # x = x * self.alpha + self.mha(self.ln1(x))
-        
-        x = self.ln1(x)
-        x = x * self.alpha1 + self.mha(x)
+        # pre norm
+        x = x + self.mha(self.ln1(x))
         if self.if_mlp:
-            x = self.ln2(x)
-            x = x * self.alpha2 + self.mlp(x)
+            x = x + self.mlp(self.ln2(x))
+        
+        # x = self.ln1(x)
+        # x = x * self.alpha1 + self.mha(x)
+        # if self.if_mlp:
+        #     x = self.ln2(x)
+        #     x = x * self.alpha2 + self.mlp(x)
 
         return x
 
@@ -132,7 +134,7 @@ class ClusterAttention(nn.Module):
         self.num_heads = num_heads
         self.num_clusters = num_clusters
         self.head_dim = hidden_dim // num_heads
-        self.num_projection_heads = num_projection_heads if num_projection_heads is None else num_heads
+        self.num_projection_heads = num_projection_heads if num_projection_heads is not None else num_heads
         self.num_projection_blocks = num_projection_blocks
         self.qk_norm = qk_norm
 
