@@ -120,8 +120,9 @@ class ClusterHeadMixingConv(nn.Module):
 class ClusterAttention(nn.Module):
     def __init__(
             self, hidden_dim, num_heads=8, num_clusters=32,
-            num_projection_blocks=1, qk_norm=False, if_mlp=False, mlp_ratio=2, act=None,
-            conv2d=False, H=None, W=None,
+            num_projection_heads=None, num_projection_blocks=1,
+            if_mlp=False, mlp_ratio=2, act=None,
+            qk_norm=False, conv2d=False, H=None, W=None,
         ):
         super().__init__()
 
@@ -131,6 +132,7 @@ class ClusterAttention(nn.Module):
         self.num_heads = num_heads
         self.num_clusters = num_clusters
         self.head_dim = hidden_dim // num_heads
+        self.num_projection_heads = num_projection_heads if num_projection_heads is None else num_heads
         self.num_projection_blocks = num_projection_blocks
         self.qk_norm = qk_norm
 
@@ -144,10 +146,10 @@ class ClusterAttention(nn.Module):
         else:
             self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
 
-        self.wtq = nn.Parameter(torch.empty(self.num_heads, self.num_clusters, self.head_dim))
+        self.wtq = nn.Parameter(torch.empty(self.num_projection_heads, self.num_clusters, self.head_dim))
         nn.init.normal_(self.wtq, mean=0.0, std=0.1)
 
-        self.mix = ClusterHeadMixingConv(self.num_heads, self.num_clusters)
+        self.mix = ClusterHeadMixingConv(self.num_projection_heads, self.num_clusters)
         self.ln = nn.LayerNorm(self.hidden_dim)
 
         ### (2) Attention among cluster tokens
@@ -173,12 +175,12 @@ class ClusterAttention(nn.Module):
         if self.conv2d:
             x = rearrange(x, 'b (l w) c -> b c l w', l=self.H)
             k, v = self.wt_kv_proj(x).chunk(2, dim=1) # [B C H W]
-            k = rearrange(k, 'b (h d) l w -> b h (l w) d', h=self.num_heads) # [B H N D]
-            v = rearrange(v, 'b (h d) l w -> b h (l w) d', h=self.num_heads)
+            k = rearrange(k, 'b (h d) l w -> b h (l w) d', h=self.num_projection_heads) # [B H N D]
+            v = rearrange(v, 'b (h d) l w -> b h (l w) d', h=self.num_projection_heads)
         else:
             k, v = self.wt_kv_proj(x).chunk(2, dim=-1) # [B N C]
-            k = rearrange(k, 'b n (h d) -> b h n d', h=self.num_heads) # [B H N D]
-            v = rearrange(v, 'b n (h d) -> b h n d', h=self.num_heads)
+            k = rearrange(k, 'b n (h d) -> b h n d', h=self.num_projection_heads) # [B H N D]
+            v = rearrange(v, 'b n (h d) -> b h n d', h=self.num_projection_heads)
 
         if self.qk_norm:
             q = F.normalize(q, p=2, dim=-1)
@@ -198,7 +200,7 @@ class ClusterAttention(nn.Module):
         for block in self.blocks:
             z = block(z) # [B M C]
         z = self.ln(z)
-        z = rearrange(z, 'b m (h d) -> b h m d', h=self.num_heads)
+        z = rearrange(z, 'b m (h d) -> b h m d', h=self.num_projection_heads)
 
         ### (3) Disaggregate cluster tokens
 
@@ -236,6 +238,7 @@ class ClusterAttentionBlock(nn.Module):
             hidden_dim: int,
             mlp_ratio=2,
             num_clusters=32,
+            num_projection_heads=None,
             num_projection_blocks=1,
             if_projection_mlp=False,
             qk_norm=False,
@@ -252,6 +255,7 @@ class ClusterAttentionBlock(nn.Module):
             hidden_dim,
             num_heads=num_heads,
             num_clusters=num_clusters,
+            num_projection_heads=num_projection_heads,
             num_projection_blocks=num_projection_blocks,
             if_mlp=if_projection_mlp, mlp_ratio=mlp_ratio, act=act,
             qk_norm=qk_norm,
@@ -297,6 +301,7 @@ class ClusterAttentionTransformer(nn.Module):
         num_heads=8,
         mlp_ratio=1,
         num_clusters=32,
+        num_projection_heads=None,
         num_projection_blocks=1,
         if_projection_mlp=False,
         qk_norm=False,
@@ -324,6 +329,7 @@ class ClusterAttentionTransformer(nn.Module):
                 hidden_dim=hidden_dim,
                 mlp_ratio=mlp_ratio,
                 num_clusters=num_clusters,
+                num_projection_heads=num_projection_heads,
                 num_projection_blocks=num_projection_blocks,
                 if_projection_mlp=if_projection_mlp,
                 qk_norm=qk_norm,

@@ -143,18 +143,28 @@ def main(cfg, device):
         elif cfg.model_type == 1:
             H, W = (metadata['H'], metadata['W']) if cfg.conv2d else (None, None)
             model = bench.ClusterAttentionTransformer(
-                in_dim=c_in, out_dim=c_out,
-                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
-                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_clusters=cfg.num_slices,
-                num_projection_blocks=cfg.num_projection_blocks, if_projection_mlp=cfg.if_projection_mlp,
+                in_dim=c_in,
+                out_dim=c_out,
+                hidden_dim=cfg.hidden_dim,
+                num_layers=cfg.num_layers,
+                num_heads=cfg.num_heads,
+                mlp_ratio=cfg.mlp_ratio,
+                num_clusters=cfg.num_slices,
+                num_projection_heads=cfg.num_projection_heads,
+                num_projection_blocks=cfg.num_projection_blocks,
+                if_projection_mlp=cfg.if_projection_mlp,
                 qk_norm=cfg.qk_norm,
                 conv2d=cfg.conv2d, H=H, W=W,
             )
         elif cfg.model_type == 9:
             model = bench.SparseTransformer(
-                in_dim=c_in, out_dim=c_out,
-                hidden_dim=cfg.hidden_dim, num_layers=cfg.num_layers,
-                num_heads=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, num_slices=cfg.num_slices,
+                in_dim=c_in,
+                out_dim=c_out,
+                hidden_dim=cfg.hidden_dim,
+                num_layers=cfg.num_layers,
+                num_heads=cfg.num_heads,
+                mlp_ratio=cfg.mlp_ratio,
+                num_slices=cfg.num_slices,
                 qk_norm=cfg.qk_norm,
                 k_val=cfg.topk,
             )
@@ -362,6 +372,7 @@ class Config:
     num_heads: int = 8
     mlp_ratio: float = 2.0
     num_slices: int = 64
+    num_projection_heads: int = None
     num_projection_blocks: int = 1
     if_projection_mlp: bool = False
     qk_norm: bool = False
