@@ -356,9 +356,9 @@ class Config:
     epochs: int = 100
     batch_size: int = 1
     weight_decay: float = 0e-0
-    learning_rate: float = 1e-4
-    schedule: str = None
-    one_cycle_pct_start:float = 0.05
+    learning_rate: float = 1e-3
+    schedule: str = 'OneCycleLR'
+    one_cycle_pct_start:float = 0.10
     one_cycle_div_factor: float = 1e4
     one_cycle_final_div_factor: float = 1e4
     one_cycle_three_phase: bool = False
@@ -370,7 +370,7 @@ class Config:
     hidden_dim: int = 128
     num_layers: int = 8
     num_heads: int = 8
-    mlp_ratio: float = 2.0
+    mlp_ratio: float = 4.0
     num_slices: int = 64
     num_projection_heads: int = None
     num_projection_blocks: int = 1

@@ -58,7 +58,6 @@ class MultiHeadedSelfAttention(nn.Module):
 
         scale = q.shape[-1] ** -0.5
         dots = einsum(q, k, 'b h q d, b h k d -> b h q k') * scale
-        # dots = self.mix(dots) # remove scale?
         attn = F.softmax(dots, dim=-1)
         out = einsum(attn, v, 'b h q k, b h k d -> b h q d')
         out = rearrange(out, 'b h n d -> b n (h d)')
@@ -79,17 +78,10 @@ class SelfAttentionBlock(nn.Module):
             self.alpha2 = nn.Parameter(torch.full([hidden_dim], 1.0))
 
     def forward(self, x):
-        # pre norm
-        x = x + self.mha(self.ln1(x))
+        x = x + self.mha(self.ln1(x)) # [B, N, C]
         if self.if_mlp:
             x = x + self.mlp(self.ln2(x))
         
-        # x = self.ln1(x)
-        # x = x * self.alpha1 + self.mha(x)
-        # if self.if_mlp:
-        #     x = self.ln2(x)
-        #     x = x * self.alpha2 + self.mlp(x)
-
         return x
 
 class ClusterHeadMixingConv(nn.Module):
@@ -128,8 +120,6 @@ class ClusterAttention(nn.Module):
         ):
         super().__init__()
 
-        assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
-
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
         self.num_clusters = num_clusters
@@ -137,6 +127,9 @@ class ClusterAttention(nn.Module):
         self.num_projection_heads = num_projection_heads if num_projection_heads is not None else num_heads
         self.num_projection_blocks = num_projection_blocks
         self.qk_norm = qk_norm
+
+        assert self.hidden_dim % self.num_heads == 0, "hidden_dim must be divisible by num_heads"
+        assert self.hidden_dim % self.num_projection_heads == 0, "hidden_dim must be divisible by num_projection_heads"
 
         self.conv2d = conv2d
         self.H = H
@@ -272,11 +265,7 @@ class ClusterAttentionBlock(nn.Module):
         )
         
     def forward(self, x):
-        # x: [B, N, C]
-        
-        # apply LN to both branches? add scaling factor?
-       
-        x = x + self.att(self.ln1(x))
+        x = x + self.att(self.ln1(x)) # [B, N, C]
         x = x + self.mlp(self.ln2(x))
         
         return x
