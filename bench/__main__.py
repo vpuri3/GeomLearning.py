@@ -119,10 +119,11 @@ def main(cfg, device):
             raise NotImplementedError("No time-conditioned model selected.")
     else:
         if cfg.model_type == -2:
+            n_dim = 192 if cfg.dataset == 'elasticity' else 128
             model = bench.LNO(
-                    n_block=4, n_mode=256, n_dim=192, n_head=8, n_layer=3, act="GELU",
-                    x_dim=c_in, y1_dim=c_in, y2_dim=c_out,
-                    model_attr={"time": time_cond,}
+                n_block=4, n_mode=256, n_dim=n_dim, n_head=8, n_layer=3, act="GELU",
+                x_dim=c_in, y1_dim=c_in, y2_dim=c_out,
+                model_attr={"time": time_cond,}
             )
         elif cfg.model_type == -1:
             model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
@@ -202,6 +203,8 @@ def main(cfg, device):
             batch_size_ = _batch_size_ = 50
         
         if cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
+            if GLOBAL_RANK == 0:
+                print(f"Using RelL2Loss for {cfg.dataset} dataset")
             lf = bench.RelL2Loss()
             def lossfun(yh, y):
                 y_normalizer = metadata['y_normalizer'].to(y.device)
@@ -209,6 +212,8 @@ def main(cfg, device):
                 y  = y_normalizer.decode(y)
                 return lf(yh, y)
         else:
+            if GLOBAL_RANK == 0:
+                print(f"Using MSELoss for {cfg.dataset} dataset")
             lossfun = torch.nn.MSELoss()
 
         gnn_loader = cfg.dataset in ['airfoil', 'cylinder_flow']
