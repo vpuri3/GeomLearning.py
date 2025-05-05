@@ -41,7 +41,7 @@ class MultiHeadedSelfAttention(nn.Module):
     def __init__(self, hidden_dim, num_heads=8):
         super().__init__()
 
-        assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
+        assert hidden_dim % num_heads == 0, f"hidden_dim must be divisible by num_heads. Got {hidden_dim} and {num_heads}."
 
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
@@ -66,7 +66,7 @@ class MultiHeadedSelfAttention(nn.Module):
         return out
     
 class SelfAttentionBlock(nn.Module):
-    def __init__(self, hidden_dim, num_heads, if_mlp=False, mlp_ratio=2, act=None):
+    def __init__(self, hidden_dim, num_heads, if_mlp=False, mlp_ratio=4, act=None):
         super().__init__()
         self.ln1 = nn.LayerNorm(hidden_dim)
         self.mha = MultiHeadedSelfAttention(hidden_dim, num_heads)
@@ -78,7 +78,9 @@ class SelfAttentionBlock(nn.Module):
             self.alpha2 = nn.Parameter(torch.full([hidden_dim], 1.0))
 
     def forward(self, x):
-        x = x + self.mha(self.ln1(x)) # [B, N, C]
+        # x: [B, N, C]
+
+        x = x + self.mha(self.ln1(x))
         if self.if_mlp:
             x = x + self.mlp(self.ln2(x))
         
@@ -115,22 +117,19 @@ class ClusterAttention(nn.Module):
     def __init__(
             self, hidden_dim, num_heads=8, num_clusters=32,
             num_projection_heads=None, num_projection_blocks=1,
-            if_mlp=False, mlp_ratio=2, act=None,
+            if_mlp=False, mlp_ratio=4, act=None,
             qk_norm=False, conv2d=False, H=None, W=None,
         ):
         super().__init__()
 
         self.hidden_dim = hidden_dim
-        self.num_heads = num_heads
         self.num_clusters = num_clusters
-        self.head_dim = hidden_dim // num_heads
         self.num_projection_heads = num_projection_heads if num_projection_heads is not None else num_heads
-        self.num_projection_blocks = num_projection_blocks
+        self.projection_head_dim = self.hidden_dim // self.num_projection_heads
+
+        assert self.hidden_dim % self.num_projection_heads == 0, f"hidden_dim must be divisible by num_projection_heads. Got {self.hidden_dim} and {self.num_projection_heads}."
+
         self.qk_norm = qk_norm
-
-        assert self.hidden_dim % self.num_heads == 0, "hidden_dim must be divisible by num_heads"
-        assert self.hidden_dim % self.num_projection_heads == 0, "hidden_dim must be divisible by num_projection_heads"
-
         self.conv2d = conv2d
         self.H = H
         self.W = W
@@ -141,7 +140,7 @@ class ClusterAttention(nn.Module):
         else:
             self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
 
-        self.wtq = nn.Parameter(torch.empty(self.num_projection_heads, self.num_clusters, self.head_dim))
+        self.wtq = nn.Parameter(torch.empty(self.num_projection_heads, self.num_clusters, self.projection_head_dim))
         nn.init.normal_(self.wtq, mean=0.0, std=0.1)
 
         self.mix = ClusterHeadMixingConv(self.num_projection_heads, self.num_clusters)
@@ -150,10 +149,10 @@ class ClusterAttention(nn.Module):
         ### (2) Attention among cluster tokens
         self.blocks = nn.ModuleList([
             SelfAttentionBlock(
-                self.hidden_dim, self.num_heads,
+                self.hidden_dim, num_heads,
                 if_mlp=if_mlp, mlp_ratio=mlp_ratio, act=act,
             )
-            for _ in range(self.num_projection_blocks)
+            for _ in range(num_projection_blocks)
         ])
         
         ### (3) Disaggregate cluster tokens and return
@@ -180,7 +179,7 @@ class ClusterAttention(nn.Module):
         if self.qk_norm:
             q = F.normalize(q, p=2, dim=-1)
             k = F.normalize(k, p=2, dim=-1)
-        
+            
         scores = einsum(q, k, 'h m d, b h n d -> b h m n') # [B H M N]
         scores = self.mix(scores)
         
@@ -236,8 +235,8 @@ class ClusterAttentionBlock(nn.Module):
             num_projection_heads=None,
             num_projection_blocks=1,
             if_projection_mlp=False,
-            qk_norm=False,
             act=None,
+            qk_norm=False,
             conv2d=False,
             H=None,
             W=None,
@@ -265,7 +264,9 @@ class ClusterAttentionBlock(nn.Module):
         )
         
     def forward(self, x):
-        x = x + self.att(self.ln1(x)) # [B, N, C]
+        # x: [B, N, C]
+
+        x = x + self.att(self.ln1(x))
         x = x + self.mlp(self.ln2(x))
         
         return x
@@ -290,13 +291,13 @@ class ClusterAttentionTransformer(nn.Module):
         num_layers=5,
         hidden_dim=128,
         num_heads=8,
-        mlp_ratio=1,
-        num_clusters=32,
+        mlp_ratio=4,
+        num_clusters=64,
         num_projection_heads=None,
         num_projection_blocks=1,
         if_projection_mlp=False,
-        qk_norm=False,
         act=None,
+        qk_norm=False,
         conv2d=False,
         H=None,
         W=None,
@@ -309,7 +310,7 @@ class ClusterAttentionTransformer(nn.Module):
 
         self.x_embedding = MLP(
             in_features=in_dim,
-            hidden_features=hidden_dim * 2,
+            hidden_features=int(hidden_dim * mlp_ratio),
             out_features=hidden_dim,
             act=act,
         )
@@ -323,8 +324,8 @@ class ClusterAttentionTransformer(nn.Module):
                 num_projection_heads=num_projection_heads,
                 num_projection_blocks=num_projection_blocks,
                 if_projection_mlp=if_projection_mlp,
-                qk_norm=qk_norm,
                 act=act,
+                qk_norm=qk_norm,
                 conv2d=conv2d,
                 H=H,
                 W=W,
