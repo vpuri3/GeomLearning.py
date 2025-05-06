@@ -119,15 +119,20 @@ def main(cfg, device):
             raise NotImplementedError("No time-conditioned model selected.")
     else:
         if cfg.model_type == -2:
+            if GLOBAL_RANK == 0:
+                print(f"Using LNO.")
             n_dim = 192 if cfg.dataset == 'elasticity' else 128
+            n_layer = 3 if cfg.dataset == 'elasticity' else 2
             model = bench.LNO(
-                n_block=4, n_mode=256, n_dim=n_dim, n_head=8, n_layer=3, act="GELU",
+                n_block=4, n_mode=256, n_dim=n_dim, n_head=8, n_layer=n_layer, act="GELU",
                 x_dim=c_in, y1_dim=c_in, y2_dim=c_out,
                 model_attr={"time": time_cond,}
             )
         elif cfg.model_type == -1:
             model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
         elif cfg.model_type == 0:
+            if GLOBAL_RANK == 0:
+                print(f"Using Transolver with {cfg.hidden_dim} hidden dim, {cfg.num_layers} layers, {cfg.num_heads} heads, {cfg.mlp_ratio} mlp ratio, {cfg.num_slices} slices")
             if cfg.conv2d:
                 model = bench.Transolver_Structured_Mesh_2D(
                     space_dim=c_in, out_dim=c_out, fun_dim=0,
@@ -143,6 +148,8 @@ def main(cfg, device):
                 )
         elif cfg.model_type == 1:
             H, W = (metadata['H'], metadata['W']) if cfg.conv2d else (None, None)
+            if GLOBAL_RANK == 0:
+                print(f"Using CAT with {cfg.hidden_dim} hidden dim, {cfg.num_layers} layers, {cfg.num_heads} heads, {cfg.mlp_ratio} mlp ratio, {cfg.num_slices} slices")
             model = bench.ClusterAttentionTransformer(
                 in_dim=c_in,
                 out_dim=c_out,
@@ -158,6 +165,8 @@ def main(cfg, device):
                 conv2d=cfg.conv2d, H=H, W=W,
             )
         elif cfg.model_type == 9:
+            if GLOBAL_RANK == 0:
+                print(f"Using SparseTransformer.")
             model = bench.SparseTransformer(
                 in_dim=c_in,
                 out_dim=c_out,
