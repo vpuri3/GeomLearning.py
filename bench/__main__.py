@@ -226,12 +226,12 @@ def main(cfg, device):
             lossfun = torch.nn.MSELoss()
 
         gnn_loader = cfg.dataset in ['airfoil', 'cylinder_flow']
-
+        
         kw = dict(
             device=device, gnn_loader=gnn_loader, stats_every=cfg.epochs//10,
             make_optimizer=bench.make_optimizer, weight_decay=cfg.weight_decay, epochs=cfg.epochs,
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
-            lossfun=lossfun, clip_grad_norm=cfg.clip_grad_norm,
+            lossfun=lossfun, clip_grad_norm=cfg.clip_grad_norm, adam_betas=(cfg.adam_beta1, cfg.adam_beta2),
         )
         
         # LR scheduler
@@ -376,11 +376,13 @@ class Config:
     one_cycle_div_factor: float = 1e4
     one_cycle_final_div_factor: float = 1e4
     one_cycle_three_phase: bool = False
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.999
     clip_grad_norm: float = 1.0
 
     # model
     model_type: int = 0 # -1: MeshGraphNet, 0: Transolver, 1: ClusterAttentionTransformer, 9: SparseTransformer
-    act: str = 'gelu'
+    act: str = None
     hidden_dim: int = 128
     num_layers: int = 8
     num_heads: int = 8

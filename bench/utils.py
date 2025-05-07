@@ -15,7 +15,9 @@ __all__ = [
 ]
 
 #======================================================================#
-def make_optimizer(model, lr, weight_decay=0.0):
+def make_optimizer(model, lr, weight_decay=0.0, adam_betas=None):
+    adam_betas = adam_betas if adam_betas is not None else (0.9, 0.999)
+
     decay = []
     no_decay = []
 
@@ -26,7 +28,7 @@ def make_optimizer(model, lr, weight_decay=0.0):
             no_decay.append(param)
         elif 'alpha' in name or 'temperature' in name:
             no_decay.append(param)
-        elif 'wtq' in name:
+        elif 'latent' in name:
             no_decay.append(param)
         else:
             decay.append(param)
@@ -34,7 +36,7 @@ def make_optimizer(model, lr, weight_decay=0.0):
     optimizer = torch.optim.AdamW([
         {'params': decay, 'weight_decay': weight_decay},
         {'params': no_decay, 'weight_decay': 0.0}
-    ], lr=lr)
+    ], lr=lr, betas=adam_betas)
     
     return optimizer
 

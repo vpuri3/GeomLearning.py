@@ -41,7 +41,8 @@ class Trainer:
         weight_decay=None,
         clip_grad_norm=None,
 
-        make_optimizer=None, # (model, lr, weight_decay) -> optimizer
+        make_optimizer=None, # (model, lr, weight_decay, adam_betas) -> optimizer
+        adam_betas=None,
         Schedule=None,
         
         # OneCycleLR schedule
@@ -138,7 +139,7 @@ class Trainer:
         if make_optimizer is None:
             self.opt = optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
         else:
-            self.opt = make_optimizer(self.model, lr, weight_decay)
+            self.opt = make_optimizer(model=self.model, lr=lr, weight_decay=weight_decay, adam_betas=adam_betas)
 
         self.clip_grad_norm = clip_grad_norm
 
