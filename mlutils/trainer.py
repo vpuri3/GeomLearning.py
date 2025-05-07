@@ -405,17 +405,17 @@ class Trainer:
 
         return
     
-    def to_device(self, x):
+    def move_to_device(self, x):
         return x.to(self.device) if isinstance(x, torch.Tensor) else x
 
     def batch_loss(self, batch):
         if self.batch_lossfun is not None:
             if isinstance(batch, tuple) or isinstance(batch, list):
-                batch = [self.to_device(x) for x in batch]
+                batch = [self.move_to_device(x) for x in batch]
             elif isinstance(batch, dict):
-                batch = {k: self.to_device(v) for k, v in batch.items()}
+                batch = {k: self.move_to_device(v) for k, v in batch.items()}
             elif isinstance(batch, torch.Tensor):
-                batch = self.to_device(batch)
+                batch = self.move_to_device(batch)
             else:
                 batch = batch.to(self.device)
             loss = self.batch_lossfun(self, self.model, batch)
