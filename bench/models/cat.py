@@ -27,8 +27,8 @@ class GEGLU(nn.Module):
         return x * F.gelu(gates, **kw)
 
 # the incremental speedup isn't worth dealing with versioning hell
-FastGELU = nn.GELU
-# FastGELU = lambda: nn.GELU(approximate='tanh')
+# FastGELU = nn.GELU
+FastGELU = lambda: nn.GELU(approximate='tanh')
 
 ACTIVATIONS = {
     'gelu': FastGELU(),
@@ -37,8 +37,27 @@ ACTIVATIONS = {
     'geglu': GEGLU(),
 }
 
+#======================================================================#
+# Vanilla Self-Attention Block
+#======================================================================#
+class MLPBlock(nn.Module):
+    def __init__(self, in_features: int, hidden_features: int, out_features: int, act: str = None):
+        super().__init__()
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = ACTIVATIONS[act] if act else ACTIVATIONS['gelu']
+        if act in ['swiglu', 'geglu']:
+            self.fc2 = nn.Linear(hidden_features // 2, out_features)
+        else:
+            self.fc2 = nn.Linear(hidden_features, out_features)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.fc2(x)
+        return x
+
 class MultiHeadedSelfAttention(nn.Module):
-    def __init__(self, hidden_dim, num_heads=8):
+    def __init__(self, hidden_dim: int, num_heads: int = 8):
         super().__init__()
 
         assert hidden_dim % num_heads == 0, f"hidden_dim must be divisible by num_heads. Got {hidden_dim} and {num_heads}."
@@ -66,26 +85,24 @@ class MultiHeadedSelfAttention(nn.Module):
         return out
     
 class SelfAttentionBlock(nn.Module):
-    def __init__(self, hidden_dim, num_heads, if_mlp=False, mlp_ratio=4, act=None):
+    def __init__(self, hidden_dim: int, num_heads: int, mlp_ratio: int = 4, act: str = None):
         super().__init__()
         self.ln1 = nn.LayerNorm(hidden_dim)
+        self.ln2 = nn.LayerNorm(hidden_dim)
         self.mha = MultiHeadedSelfAttention(hidden_dim, num_heads)
-        self.alpha1 = nn.Parameter(torch.full([hidden_dim], 1.0))
-        self.if_mlp = if_mlp
-        if self.if_mlp:
-            self.ln2 = nn.LayerNorm(hidden_dim)
-            self.mlp = MLP(hidden_dim, int(hidden_dim * mlp_ratio), hidden_dim, act=act)
-            self.alpha2 = nn.Parameter(torch.full([hidden_dim], 1.0))
+        self.mlp = MLPBlock(hidden_dim, int(hidden_dim * mlp_ratio), hidden_dim, act=act)
 
     def forward(self, x):
         # x: [B, N, C]
 
         x = x + self.mha(self.ln1(x))
-        if self.if_mlp:
-            x = x + self.mlp(self.ln2(x))
+        x = x + self.mlp(self.ln2(x))
         
         return x
 
+#======================================================================#
+# Cluster Attention Block
+#======================================================================#
 class ClusterHeadMixingConv(nn.Module):
     def __init__(self, H:int, M: int, positive_weights=False):
         super().__init__()
@@ -110,15 +127,12 @@ class ClusterHeadMixingConv(nn.Module):
 
         return x
     
-#======================================================================#
-# CLUSTER ATTENTION
-#======================================================================#
 class ClusterAttention(nn.Module):
     def __init__(
             self, hidden_dim, num_heads=8, num_clusters=32,
             num_projection_heads=None, num_projection_blocks=1,
-            if_mlp=False, mlp_ratio=4, act=None,
-            qk_norm=False, conv2d=False, H=None, W=None,
+            mlp_ratio=4, act=None,
+            qk_norm=False,
         ):
         super().__init__()
 
@@ -129,28 +143,26 @@ class ClusterAttention(nn.Module):
 
         assert self.hidden_dim % self.num_projection_heads == 0, f"hidden_dim must be divisible by num_projection_heads. Got {self.hidden_dim} and {self.num_projection_heads}."
 
-        self.qk_norm = qk_norm
-        self.conv2d = conv2d
-        self.H = H
-        self.W = W
-
         ### (1) Get cluster weights
-        if self.conv2d:
-            self.wt_kv_proj = nn.Conv2d(self.hidden_dim, 2 * self.hidden_dim, kernel_size=3, padding=1)
-        else:
-            self.wt_kv_proj = nn.Linear(self.hidden_dim, 2 * self.hidden_dim)
+        self.qk_norm = qk_norm
+        self.kv_proj = ResidualMLP(
+            input_dim=self.hidden_dim,
+            hidden_dim=int(2 * self.hidden_dim),
+            output_dim=int(2 * self.hidden_dim),
+            num_layers=2,
+            act=act,
+        )
 
-        self.wtq = nn.Parameter(torch.empty(self.num_projection_heads, self.num_clusters, self.projection_head_dim))
-        nn.init.normal_(self.wtq, mean=0.0, std=0.1)
+        self.latent_q = nn.Parameter(torch.empty(self.hidden_dim, self.num_clusters))
+        nn.init.normal_(self.latent_q, mean=0.0, std=0.1)
 
         self.mix = ClusterHeadMixingConv(self.num_projection_heads, self.num_clusters)
-        self.ln = nn.LayerNorm(self.hidden_dim)
 
         ### (2) Attention among cluster tokens
         self.blocks = nn.ModuleList([
             SelfAttentionBlock(
                 self.hidden_dim, num_heads,
-                if_mlp=if_mlp, mlp_ratio=mlp_ratio, act=act,
+                mlp_ratio=mlp_ratio, act=act,
             )
             for _ in range(num_projection_blocks)
         ])
@@ -164,17 +176,10 @@ class ClusterAttention(nn.Module):
 
         ### (1) Aggregate cluster tokens
 
-        q = self.wtq # [H M D]
-        
-        if self.conv2d:
-            x = rearrange(x, 'b (l w) c -> b c l w', l=self.H)
-            k, v = self.wt_kv_proj(x).chunk(2, dim=1) # [B C H W]
-            k = rearrange(k, 'b (h d) l w -> b h (l w) d', h=self.num_projection_heads) # [B H N D]
-            v = rearrange(v, 'b (h d) l w -> b h (l w) d', h=self.num_projection_heads)
-        else:
-            k, v = self.wt_kv_proj(x).chunk(2, dim=-1) # [B N C]
-            k = rearrange(k, 'b n (h d) -> b h n d', h=self.num_projection_heads) # [B H N D]
-            v = rearrange(v, 'b n (h d) -> b h n d', h=self.num_projection_heads)
+        q = self.latent_q.view(self.num_projection_heads, self.num_clusters, self.projection_head_dim) # [H M D]
+        k, v = self.kv_proj(x).chunk(2, dim=-1) # [B N C]
+        k = rearrange(k, 'b n (h d) -> b h n d', h=self.num_projection_heads) # [B H N D]
+        v = rearrange(v, 'b n (h d) -> b h n d', h=self.num_projection_heads)
 
         if self.qk_norm:
             q = F.normalize(q, p=2, dim=-1)
@@ -182,7 +187,7 @@ class ClusterAttention(nn.Module):
             
         scores = einsum(q, k, 'h m d, b h n d -> b h m n') # [B H M N]
         scores = self.mix(scores)
-        
+
         encode_weights = F.softmax(scores, dim=-1) # sum over N
         decode_weights = F.softmax(scores, dim=-2) # sum over M
 
@@ -193,34 +198,33 @@ class ClusterAttention(nn.Module):
 
         for block in self.blocks:
             z = block(z) # [B M C]
-        z = self.ln(z)
         z = rearrange(z, 'b m (h d) -> b h m d', h=self.num_projection_heads)
 
         ### (3) Disaggregate cluster tokens
 
-        out = einsum(z, decode_weights, 'b h m d, b h m n -> b h n d')
-        out = rearrange(out, 'b h n d -> b n (h d)')
-        out = self.out_proj(out)
+        x = einsum(z, decode_weights, 'b h m d, b h m n -> b h n d')
+        x = rearrange(x, 'b h n d -> b n (h d)')
+        x = self.out_proj(x)
 
-        return out
+        return x
 
 #======================================================================#
 # BLOCK
 #======================================================================#
 
-class MLP(nn.Module):
-    def __init__(self, in_features, hidden_features, out_features, act=None):
+class ResidualMLP(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, num_layers: int = 1, act: str = None):
         super().__init__()
-        self.fc1 = nn.Linear(in_features, hidden_features)
+        assert act not in ['swiglu', 'geglu'], "ResidualMLP does not support swiglu or geglu activations"
         self.act = ACTIVATIONS[act] if act else ACTIVATIONS['gelu']
-        if act in ['swiglu', 'geglu']:
-            self.fc2 = nn.Linear(hidden_features // 2, out_features)
-        else:
-            self.fc2 = nn.Linear(hidden_features, out_features)
-
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.fcs = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers)])
+        self.fc2 = nn.Linear(hidden_dim, output_dim)
+        
     def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
+        x = self.act(self.fc1(x))
+        for fc in self.fcs:
+            x = x + self.act(fc(x))
         x = self.fc2(x)
         return x
 
@@ -237,9 +241,6 @@ class ClusterAttentionBlock(nn.Module):
             if_projection_mlp=False,
             act=None,
             qk_norm=False,
-            conv2d=False,
-            H=None,
-            W=None,
     ):
         super().__init__()
         self.ln1 = nn.LayerNorm(hidden_dim)
@@ -251,12 +252,11 @@ class ClusterAttentionBlock(nn.Module):
             num_clusters=num_clusters,
             num_projection_heads=num_projection_heads,
             num_projection_blocks=num_projection_blocks,
-            if_mlp=if_projection_mlp, mlp_ratio=mlp_ratio, act=act,
+            mlp_ratio=mlp_ratio, act=act,
             qk_norm=qk_norm,
-            conv2d=conv2d, H=H, W=W,
         )
         
-        self.mlp = MLP(
+        self.mlp = MLPBlock(
             in_features=hidden_dim,
             hidden_features=int(hidden_dim * mlp_ratio),
             out_features=hidden_dim,
@@ -268,14 +268,21 @@ class ClusterAttentionBlock(nn.Module):
 
         x = x + self.att(self.ln1(x))
         x = x + self.mlp(self.ln2(x))
-        
+
         return x
 
 class FinalLayer(nn.Module):
-    def __init__(self, hidden_dim, out_dim):
+    def __init__(self, hidden_dim, out_dim, act=None):
         super().__init__()
         self.ln = nn.LayerNorm(hidden_dim)
         self.mlp = nn.Linear(hidden_dim, out_dim)
+        # self.mlp = ResidualMLP(
+        #     input_dim=hidden_dim,
+        #     hidden_dim=hidden_dim,
+        #     output_dim=out_dim,
+        #     num_layers=2,
+        #     act=act,
+        # )
 
     def forward(self, x):
         x = self.mlp(self.ln(x))
@@ -308,12 +315,19 @@ class ClusterAttentionTransformer(nn.Module):
         self.num_clusters = num_clusters
         self.num_heads = num_heads
 
-        self.x_embedding = MLP(
+        self.x_proj = MLPBlock(
             in_features=in_dim,
             hidden_features=int(hidden_dim * mlp_ratio),
             out_features=hidden_dim,
             act=act,
         )
+        # self.x_proj = ResidualMLP(
+        #     input_dim=in_dim,
+        #     hidden_dim=hidden_dim,
+        #     output_dim=hidden_dim,
+        #     num_layers=2,
+        #     act=act,
+        # )
         
         self.blocks = nn.ModuleList([
             ClusterAttentionBlock(
@@ -323,17 +337,13 @@ class ClusterAttentionTransformer(nn.Module):
                 num_clusters=num_clusters,
                 num_projection_heads=num_projection_heads,
                 num_projection_blocks=num_projection_blocks,
-                if_projection_mlp=if_projection_mlp,
                 act=act,
                 qk_norm=qk_norm,
-                conv2d=conv2d,
-                H=H,
-                W=W,
             )
             for _ in range(num_layers)
         ])
 
-        self.final_layer = FinalLayer(hidden_dim, out_dim)
+        self.out_proj = FinalLayer(hidden_dim, out_dim, act=act)
 
         self.initialize_weights()
 
@@ -342,22 +352,93 @@ class ClusterAttentionTransformer(nn.Module):
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=0.02)
+            trunc_normal_(m.weight, mean=0., std=0.02)
             if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
+                nn.init.constant_(m.bias, 0.)
         elif isinstance(m, (nn.LayerNorm,)):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-            
+            nn.init.constant_(m.bias, 0.)
+            nn.init.constant_(m.weight, 1.)
+
     def forward(self, x):
         # x: [B, N, C]
 
-        x = self.x_embedding(x)
+        x = self.x_proj(x)
         for block in self.blocks:
             x = block(x)
-        x = self.final_layer(x)
+        x = self.out_proj(x)
 
         return x
+
+#======================================================================#
+class CAT(torch.nn.Module):
+    def __init__(self,
+        in_dim,
+        out_dim,
+        num_layers=5,
+        hidden_dim=128,
+        num_heads=8,
+        mlp_ratio=2,
+        num_clusters=64,
+        num_projection_heads=None,
+        num_projection_blocks=1,
+        if_projection_mlp=False,
+        act=None,
+        qk_norm=False,
+        conv2d=False,
+        H=None,
+        W=None,
+        # n_block, n_mode, n_dim, n_head, n_layer, x_dim,
+        # y1_dim, y2_dim, act, model_attr,
+    ):
+        super().__init__()
+        self.n_block = num_projection_blocks
+        self.n_mode = num_clusters
+        self.n_dim = hidden_dim
+        self.n_head = num_heads
+        self.n_layer = 2
+        self.act = act
+
+        self.x_dim = in_dim
+        self.y1_dim = in_dim
+        self.y2_dim = out_dim
+
+        self.trunk_projector = ResidualMLP(self.x_dim, self.n_dim, self.n_dim, self.n_layer, self.act)
+        self.branch_projector = ResidualMLP(self.y1_dim, self.n_dim, self.n_dim, self.n_layer, self.act)
+        self.out_mlp = ResidualMLP(self.n_dim, self.n_dim, self.y2_dim, self.n_layer, self.act)
+        self.attention_projector = ResidualMLP(self.n_dim, self.n_dim, self.n_mode, self.n_layer, self.act)
+        self.attn_blocks = torch.nn.Sequential(
+            *[SelfAttentionBlock(
+                hidden_dim=self.n_dim, num_heads=self.n_head, mlp_ratio=2, act=self.act,
+            ) for _ in range(0, self.n_block)]
+        )
+
+    def forward(self, x):
+        y = x
+        x = self.trunk_projector(x)
+        y = self.branch_projector(y)
+
+        score = self.attention_projector(x)
+        score_encode = torch.softmax(score, dim=1)
+        score_decode = torch.softmax(score, dim=-1)
+        
+        z = torch.einsum("bij,bic->bjc", score_encode, y)
+        
+        for block in self.attn_blocks:
+            z = block(z)
+        
+        r = torch.einsum("bij,bjc->bic", score_decode, z)
+        r = self.out_mlp(r)
+        return r
+
+    def _init_weights(self, module):
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.weight.data.normal_(mean=0.0, std=0.0002)
+            # module.weight.data.normal_(mean=0.0, std=0.02)
+            if isinstance(module, torch.nn.Linear) and module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, torch.nn.LayerNorm):
+            module.weight.data.fill_(1.0)
+            module.bias.data.zero_()
 
 #======================================================================#
 #
