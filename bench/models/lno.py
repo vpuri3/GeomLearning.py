@@ -152,4 +152,76 @@ class LNO(torch.nn.Module):
             module.bias.data.zero_()
 
 #======================================================================#
+from bench.models.cat import ResidualMLP, SelfAttentionBlock
+
+class CAT(torch.nn.Module):
+    def __init__(self,
+        in_dim,
+        out_dim,
+        num_layers=5,
+        hidden_dim=128,
+        num_heads=8,
+        mlp_ratio=2,
+        num_clusters=64,
+        num_projection_heads=None,
+        num_projection_blocks=1,
+        if_projection_mlp=False,
+        act=None,
+        qk_norm=False,
+        conv2d=False,
+        H=None,
+        W=None,
+        # n_block, n_mode, n_dim, n_head, n_layer, x_dim,
+        # y1_dim, y2_dim, act, model_attr,
+    ):
+        super().__init__()
+        self.n_block = num_projection_blocks
+        self.n_mode = num_clusters
+        self.n_dim = hidden_dim
+        self.n_head = num_heads
+        self.n_layer = 2
+        self.act = act
+
+        self.x_dim = in_dim
+        self.y1_dim = in_dim
+        self.y2_dim = out_dim
+
+        self.trunk_projector = ResidualMLP(self.x_dim, self.n_dim, self.n_dim, self.n_layer, self.act)
+        self.branch_projector = ResidualMLP(self.y1_dim, self.n_dim, self.n_dim, self.n_layer, self.act)
+        self.out_mlp = ResidualMLP(self.n_dim, self.n_dim, self.y2_dim, self.n_layer, self.act)
+        self.attention_projector = ResidualMLP(self.n_dim, self.n_dim, self.n_mode, self.n_layer, self.act)
+        self.attn_blocks = torch.nn.Sequential(
+            *[SelfAttentionBlock(
+                hidden_dim=self.n_dim, num_heads=self.n_head, mlp_ratio=2, act=self.act,
+            ) for _ in range(0, self.n_block)]
+        )
+
+    def forward(self, x):
+        y = x
+        x = self.trunk_projector(x)
+        y = self.branch_projector(y)
+
+        score = self.attention_projector(x)
+        score_encode = torch.softmax(score, dim=1)
+        score_decode = torch.softmax(score, dim=-1)
+        
+        z = torch.einsum("bij,bic->bjc", score_encode, y)
+        
+        for block in self.attn_blocks:
+            z = block(z)
+        
+        r = torch.einsum("bij,bjc->bic", score_decode, z)
+        r = self.out_mlp(r)
+        return r
+
+    def _init_weights(self, module):
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.weight.data.normal_(mean=0.0, std=0.0002)
+            if isinstance(module, torch.nn.Linear) and module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, torch.nn.LayerNorm):
+            module.weight.data.fill_(1.0)
+            module.bias.data.zero_()
+
+#======================================================================#
 #
