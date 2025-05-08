@@ -139,6 +139,7 @@ def main(cfg, device):
                     n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
                     n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
                     H=metadata['H'], W=metadata['W'],
+                    unified_pos=cfg.unified_pos,
                 )
             else:
                 model = bench.Transolver(
@@ -160,9 +161,7 @@ def main(cfg, device):
                 num_clusters=cfg.num_slices,
                 num_projection_heads=cfg.num_projection_heads,
                 num_projection_blocks=cfg.num_projection_blocks,
-                if_projection_mlp=cfg.if_projection_mlp,
                 qk_norm=cfg.qk_norm,
-                conv2d=cfg.conv2d, H=H, W=W,
             )
         elif cfg.model_type == 9:
             if GLOBAL_RANK == 0:
@@ -210,7 +209,7 @@ def main(cfg, device):
             batch_size_ = _batch_size_ = 1 # 50
         elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
             batch_size_ = _batch_size_ = 50
-        
+
         if cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
             if GLOBAL_RANK == 0:
                 print(f"Using RelL2Loss for {cfg.dataset} dataset")
@@ -246,7 +245,7 @@ def main(cfg, device):
             kw['one_cycle_three_phase'] = cfg.one_cycle_three_phase
         else:
             kw = dict(**kw, Schedule=cfg.schedule, lr=cfg.learning_rate,)
-            
+
         # Noise schedule
         kw['noise_schedule'] = cfg.noise_schedule
         kw['noise_init'] = cfg.noise_init
@@ -281,38 +280,36 @@ def main(cfg, device):
             trainer.batch_lossfun = batch_lossfun
             
         if cfg.dataset in ['darcy']:
-            
-            # r = 5
-            # h = int(((421 - 1) / r) + 1)
-            # s = h
-            # dx = 1.0 / s
-            # lf = bench.RelL2Loss()
 
-            # def batch_lossfun(trainer, model, batch):
-            #     x, y = batch
-            #     yh = model(x)
-                
-            #     y_normalizer = metadata['y_normalizer'].to(y.device)
-            #     yh = y_normalizer.decode(yh)
-            #     y  = y_normalizer.decode(y)
-                
-            #     l2loss = lossfun(yh, y)
-            #     (gt_grad_x, gt_grad_y), (pred_grad_x, pred_grad_y) = bench.darcy_deriv_loss(y, dx, s)
-            #     deriv_loss = lf(pred_grad_x, gt_grad_x) + lf(pred_grad_y, gt_grad_y)
-                
-            #     loss = 0.1 * deriv_loss + l2loss
-            #     return loss
-            
-            # trainer.batch_lossfun = batch_lossfun
-            
-            pass
+            r = 5
+            h = int(((421 - 1) / r) + 1)
+            s = h
+            dx = 1.0 / s
+            lf = bench.RelL2Loss()
+
+            def batch_lossfun(trainer, model, batch):
+                x, y = batch
+                yh = model(x)
+
+                y_normalizer = metadata['y_normalizer'].to(y.device)
+                yh = y_normalizer.decode(yh)
+                y  = y_normalizer.decode(y)
+
+                l2 = lf(yh, y)
+                (gt_grad_x, gt_grad_y), (pred_grad_x, pred_grad_y) = bench.darcy_deriv_loss(yh, y, s, dx)
+                deriv_loss = lf(pred_grad_x, gt_grad_x) + lf(pred_grad_y, gt_grad_y)
+
+                loss = 0.1 * deriv_loss + l2
+                return loss
+
+            trainer.batch_lossfun = batch_lossfun
 
         if cfg.dataset in ['airfoil', 'cylinder_flow']:
             if GLOBAL_RANK == 0:
                 print(f"Using masked loss for timeseries datasets {cfg.dataset}")
             batch_lossfun = am.MaskedLoss(mask=True)
             trainer.batch_lossfun = batch_lossfun
-            
+
         #-------------#
         # load snapshot
         #-------------#
@@ -386,13 +383,14 @@ class Config:
     hidden_dim: int = 128
     num_layers: int = 8
     num_heads: int = 8
-    mlp_ratio: float = 4.0
+    mlp_ratio: float = 2.
     num_slices: int = 64
     num_projection_heads: int = None
     num_projection_blocks: int = 1
-    if_projection_mlp: bool = False
     qk_norm: bool = False
+    # if_projection_mlp: bool = False
     conv2d: bool = False
+    unified_pos: bool = False
 
     # sparse transformer
     topk: int = 0
@@ -413,8 +411,6 @@ if __name__ == "__main__":
     cfg = CLI(Config, as_positional=False)
     #===============#
     
-    cfg.world_size = WORLD_SIZE
-
     if not (cfg.train or cfg.eval):
         print("No mode selected. Select one of train, eval")
         exit()

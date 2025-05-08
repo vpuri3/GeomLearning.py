@@ -291,12 +291,8 @@ class ClusterAttentionTransformer(nn.Module):
         num_clusters=64,
         num_projection_heads=None,
         num_projection_blocks=1,
-        if_projection_mlp=False,
         act=None,
         qk_norm=False,
-        conv2d=False,
-        H=None,
-        W=None,
     ):
         super().__init__()
         
