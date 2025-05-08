@@ -106,7 +106,7 @@ class Trainer:
         self._data = _data
         self.data_ = data_
 
-        self._batch_size = 32 if _batch_size is None else _batch_size
+        self._batch_size = 1 if _batch_size is None else _batch_size
         self._batch_size_ = len(_data) if _batch_size_ is None else _batch_size_
         self.batch_size_ = batch_size_
 
@@ -298,12 +298,16 @@ class Trainer:
         _args  = dict(shuffle=_shuffle , sampler=_sampler )
         _args_ = dict(shuffle=_shuffle_, sampler=_sampler_)
         args_  = dict(shuffle=shuffle_ , sampler=sampler_ )
+        
+        _batch_size  = self._batch_size // self.WORLD_SIZE if self.DISTRIBUTED else self._batch_size
+        _batch_size_ = self._batch_size_
+        batch_size_  = self.batch_size_
 
-        self._loader  = DL(self._data, batch_size=self._batch_size , collate_fn=self.collate_fn, **_args )
-        self._loader_ = DL(self._data, batch_size=self._batch_size_, collate_fn=self.collate_fn, **_args_)
+        self._loader  = DL(self._data, batch_size=_batch_size , collate_fn=self.collate_fn, **_args )
+        self._loader_ = DL(self._data, batch_size=_batch_size_, collate_fn=self.collate_fn, **_args_)
 
         if self.data_ is not None:
-            self.loader_ = DL(self.data_, batch_size=self.batch_size_, collate_fn=self.collate_fn, **args_)
+            self.loader_ = DL(self.data_, batch_size=batch_size_, collate_fn=self.collate_fn, **args_)
         else:
             self.loader_ = None
 
