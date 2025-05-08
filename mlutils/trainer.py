@@ -134,12 +134,14 @@ class Trainer:
         # OPTIMIZER
         ###
 
+        adam_betas = (0.9, 0.999) if adam_betas is None else adam_betas
+
         if lr is None:
             lr = 1e-3
         if weight_decay is None:
             weight_decay = 0.0
         if make_optimizer is None:
-            self.opt = optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
+            self.opt = optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay, betas=adam_betas)
         else:
             self.opt = make_optimizer(model=self.model, lr=lr, weight_decay=weight_decay, adam_betas=adam_betas)
 
