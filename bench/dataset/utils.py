@@ -403,6 +403,82 @@ def load_dataset(
         
         return train_data, test_data, None
         
+    #----------------------------------------------------------------#
+    # ShapeNet-Car datasets
+    #----------------------------------------------------------------#
+    elif dataset_name == 'shapenet_car':
+        import meshio
+        from pathlib import Path
+        from tqdm import tqdm
+        
+        SRC = os.path.join(DATADIR_BASE, 'ShapeNet-Car', 'mlcfd_data', 'training_data')
+        DST = os.path.join(DATADIR_BASE, 'ShapeNet-Car', 'preprocessed')
+        
+        SRC = Path(SRC).expanduser()
+        DST = Path(DST).expanduser()
+        
+        uris = []
+        for i in range(9):
+            param_uri = SRC / f"param{i}"
+            for name in sorted(os.listdir(param_uri)):
+                # param folders contain .npy/.py/txt files
+                if "." in name:
+                    continue
+                potential_uri = param_uri / name
+                assert os.path.isdir(potential_uri)
+                uris.append(potential_uri)
+        print(f"found {len(uris)} samples")
+
+        # .vtk files contains points that dont belong to the mesh -> filter them out
+        mesh_point_counts = []
+        for uri in tqdm(uris):
+            reluri = uri.relative_to(SRC)
+            out = DST / reluri
+            out.mkdir(exist_ok=True, parents=True)
+
+            # filter out mesh points that are not part of the shape
+            mesh = meshio.read(uri / "quadpress_smpl.vtk")
+            assert len(mesh.cells) == 1
+            cell_block = mesh.cells[0]
+            assert cell_block.type == "quad"
+            unique = np.unique(cell_block.data)
+            mesh_point_counts.append(len(unique))
+            mesh_points = torch.from_numpy(mesh.points[unique]).float()
+            pressure = torch.from_numpy(np.load(uri / "press.npy")[unique]).float()
+            torch.save(mesh_points, out / "mesh_points.th")
+            torch.save(pressure, out / "pressure.th")
+
+            # generate sdf
+            for resolution in [32, 40, 48, 64, 80]:
+                torch.save(sdf(mesh, resolution=resolution), out / f"sdf_res{resolution}.th")
+
+        exit()
+
+        # PATH_Sigma = os.path.join(DATADIR, 'Meshes', 'Random_UnitCell_sigma_10.npy')
+        # PATH_XY = os.path.join(DATADIR, 'Meshes', 'Random_UnitCell_XY_10.npy')
+
+        # input_s = np.load(PATH_Sigma)
+        # input_s = torch.tensor(input_s, dtype=torch.float).permute(1, 0).unsqueeze(-1)
+        # input_xy = np.load(PATH_XY)
+        # input_xy = torch.tensor(input_xy, dtype=torch.float).permute(2, 0, 1)
+        
+        # ntrain = 1000
+        # ntest = 200
+        
+        # y_normalizer = bench.UnitGaussianNormalizer(input_s[:ntrain])
+        # input_s = y_normalizer.encode(input_s)
+
+        # dataset = TensorDataset(input_xy, input_s)
+        # train_data = Subset(dataset, range(ntrain))
+        # test_data = Subset(dataset, range(len(dataset)-ntest, len(dataset)))
+        
+        # metadata = dict(
+        #     x_normalizer=bench.IdentityNormalizer(),
+        #     y_normalizer=y_normalizer,
+        # )
+        
+        # return train_data, test_data, metadata
+    
     else:
         raise ValueError(f"Dataset {dataset_name} not found.") 
 
@@ -435,5 +511,46 @@ def split_timeseries_dataset(dataset, split=None, indices=None):
 
     return subsets
     
+#======================================================================#
+def sdf(mesh, resolution):
+    import meshio
+    import tempfile
+    import open3d as o3d
+
+    quads = mesh.cells_dict["quad"]
+
+    idx = np.flatnonzero(quads[:, -1] == 0)
+    out0 = np.empty((quads.shape[0], 2, 3), dtype=quads.dtype)
+
+    out0[:, 0, 1:] = quads[:, 1:-1]
+    out0[:, 1, 1:] = quads[:, 2:]
+
+    out0[..., 0] = quads[:, 0, None]
+
+    out0.shape = (-1, 3)
+
+    mask = np.ones(out0.shape[0], dtype=bool)
+    mask[idx * 2 + 1] = 0
+    quad_to_tri = out0[mask]
+
+    cells = [("triangle", quad_to_tri)]
+
+    new_mesh = meshio.Mesh(mesh.points, cells)
+
+    with tempfile.NamedTemporaryFile(delete=True, suffix=".ply") as tf:
+        new_mesh.write(tf, file_format="ply")
+        open3d_mesh = o3d.io.read_triangle_mesh(tf.name)
+    open3d_mesh = o3d.t.geometry.TriangleMesh.from_legacy(open3d_mesh)
+    scene = o3d.t.geometry.RaycastingScene()
+    _ = scene.add_triangles(open3d_mesh)
+
+    domain_min = torch.tensor([-2.0, -1.0, -4.5])
+    domain_max = torch.tensor([2.0, 4.5, 6.0])
+    tx = np.linspace(domain_min[0], domain_max[0], resolution)
+    ty = np.linspace(domain_min[1], domain_max[1], resolution)
+    tz = np.linspace(domain_min[2], domain_max[2], resolution)
+    grid = np.stack(np.meshgrid(tx, ty, tz, indexing="ij"), axis=-1).astype(np.float32)
+    return torch.from_numpy(scene.compute_signed_distance(grid).numpy()).float()
+
 #======================================================================#
 #
