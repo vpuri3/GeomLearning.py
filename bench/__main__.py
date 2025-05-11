@@ -148,9 +148,19 @@ def main(cfg, device):
                     n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
                 )
         elif cfg.model_type == 1:
-            H, W = (metadata['H'], metadata['W']) if cfg.conv2d else (None, None)
             if GLOBAL_RANK == 0:
-                print(f"Using CAT with {cfg.hidden_dim} hidden dim, {cfg.num_layers} layers, {cfg.num_heads} heads, {cfg.mlp_ratio} mlp ratio, {cfg.num_slices} slices")
+                print(
+                    f"Using CAT with\n" +
+                    f"hidden_dim={cfg.hidden_dim}\n" +
+                    f"num_layers={cfg.num_layers}\n" +
+                    f"num_heads={cfg.num_heads}\n" +
+                    f"mlp_ratio={cfg.mlp_ratio}\n" +
+                    f"num_slices={cfg.num_slices}\n" +
+                    f"num_projection_heads={cfg.num_projection_heads}\n" +
+                    f"num_projection_blocks={cfg.num_projection_blocks}\n" +
+                    f"qk_norm={cfg.qk_norm}\n" +
+                    f"cluster_head_mixing={cfg.cluster_head_mixing}"
+                )
             model = bench.ClusterAttentionTransformer(
                 in_dim=c_in,
                 out_dim=c_out,
@@ -163,6 +173,8 @@ def main(cfg, device):
                 num_projection_blocks=cfg.num_projection_blocks,
                 qk_norm=cfg.qk_norm,
             )
+            if GLOBAL_RANK == 0:
+                print(f"Parameters: {sum(p.numel() for p in model.parameters())}")
         elif cfg.model_type == 9:
             if GLOBAL_RANK == 0:
                 print(f"Using SparseTransformer.")
@@ -388,7 +400,7 @@ class Config:
     num_projection_heads: int = None
     num_projection_blocks: int = 1
     qk_norm: bool = False
-    # if_projection_mlp: bool = False
+    cluster_head_mixing: bool = True
     conv2d: bool = False
     unified_pos: bool = False
 

@@ -125,7 +125,7 @@ class ClusterAttention(nn.Module):
             self, hidden_dim, num_heads=8, num_clusters=32,
             num_projection_heads=None, num_projection_blocks=1,
             mlp_ratio=4, act=None,
-            qk_norm=False,
+            qk_norm=False, cluster_head_mixing=True,
         ):
         super().__init__()
 
@@ -138,6 +138,7 @@ class ClusterAttention(nn.Module):
 
         ### (1) Get cluster weights
         self.qk_norm = qk_norm
+        self.cluster_head_mixing  = cluster_head_mixing
         self.k_proj = ResidualMLP(
             input_dim=self.hidden_dim, hidden_dim=self.hidden_dim, output_dim=self.hidden_dim,
             num_layers=2, act=act, input_residual=True, output_residual=True,
@@ -149,7 +150,8 @@ class ClusterAttention(nn.Module):
 
         self.latent_q = nn.Parameter(torch.empty(self.hidden_dim, self.num_clusters))
         nn.init.normal_(self.latent_q, mean=0.0, std=0.1)
-        self.mix = ClusterHeadMixingConv(self.num_projection_heads, self.num_clusters)
+        if self.cluster_head_mixing:
+            self.mix = ClusterHeadMixingConv(self.num_projection_heads, self.num_clusters)
 
         ### (2) Attention among cluster tokens
         self.blocks = nn.ModuleList([
@@ -175,7 +177,9 @@ class ClusterAttention(nn.Module):
             k = F.normalize(k, p=2, dim=-1)
             
         scores = einsum(q, k, 'h m d, b h n d -> b h m n') # [B H M N]
-        scores = self.mix(scores)
+        
+        if self.cluster_head_mixing:
+            scores = self.mix(scores)
 
         encode_weights = F.softmax(scores, dim=-1) # sum over N
         decode_weights = F.softmax(scores, dim=-2) # sum over M
@@ -224,7 +228,6 @@ class ResidualMLP(nn.Module):
         return x
 
 class ClusterAttentionBlock(nn.Module):
-
     def __init__(self,
             num_heads: int,
             hidden_dim: int,
@@ -232,6 +235,7 @@ class ClusterAttentionBlock(nn.Module):
             num_clusters=32,
             num_projection_heads=None,
             num_projection_blocks=1,
+            cluster_head_mixing=True,
             act=None,
             qk_norm=False,
     ):
@@ -247,6 +251,7 @@ class ClusterAttentionBlock(nn.Module):
             num_projection_blocks=num_projection_blocks,
             mlp_ratio=mlp_ratio, act=act,
             qk_norm=qk_norm,
+            cluster_head_mixing=cluster_head_mixing,
         )
 
         self.mlp = MLPBlock(
@@ -293,6 +298,7 @@ class ClusterAttentionTransformer(nn.Module):
         num_projection_blocks=1,
         act=None,
         qk_norm=False,
+        cluster_head_mixing=True,
     ):
         super().__init__()
         
@@ -315,6 +321,7 @@ class ClusterAttentionTransformer(nn.Module):
                 num_projection_blocks=num_projection_blocks,
                 act=act,
                 qk_norm=qk_norm,
+                cluster_head_mixing=cluster_head_mixing,
             )
             for _ in range(num_layers)
         ])
