@@ -22,6 +22,7 @@ def parse_dir_name(dirname):
             'mix': mix if mix else 't'  # Default to True if not specified
         }
     return None
+
 def collect_results(base_dir):
     """Collect results from all experiment directories."""
     results = []
@@ -36,12 +37,18 @@ def collect_results(base_dir):
 
         json_path = os.path.join(base_dir, dirname, 'ckpt10', 'rel_error.json')
         if not os.path.exists(json_path):
+            print(f"Error: File {json_path} does not exist")
             continue
 
         try:
             with open(json_path, 'r') as f:
                 errors = json.load(f)
                 
+            if 'train_loss' in errors and 'train_rel_error' not in errors:
+                errors['train_rel_error'] = errors['train_loss']
+            if 'test_loss' in errors and 'test_rel_error' not in errors:
+                errors['test_rel_error'] = errors['test_loss']
+
             results.append({
                 **params,
                 'train_rel_error': errors.get('train_rel_error', float('nan')),
@@ -56,6 +63,10 @@ def create_heatmaps(df, output_dir):
     """Create heatmaps for different hyperparameter combinations."""
     os.makedirs(output_dir, exist_ok=True)
     
+    vmin = 1e-3
+    vmax = 1e-2
+    cmap = 'YlOrRd'
+
     # Rename columns for display
     df = df.rename(columns={'L': 'Layers', 'B': 'Blocks'})
     
@@ -64,7 +75,7 @@ def create_heatmaps(df, output_dir):
         df_m = df[df['M'] == m]
         
         # Heatmap for Layers vs Blocks with HP=8 (train and test side by side)
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5))  # 25% bigger
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5))
         
         # Train error heatmap
         df_hp8 = df_m[df_m['HP'] == 8]
@@ -74,12 +85,12 @@ def create_heatmaps(df, output_dir):
             columns='Blocks',
             aggfunc='mean'
         )
-        sns.heatmap(pivot_train, annot=True, fmt='.4e', cmap='YlOrRd', ax=ax1, 
-                   norm=LogNorm(vmin=pivot_train.min().min(), vmax=pivot_train.max().max()))
+        sns.heatmap(pivot_train, annot=True, fmt='.4e', cmap=cmap, ax=ax1, 
+                   norm=LogNorm(vmin=vmin, vmax=vmax))
         ax1.set_title(f'Train Relative Error (M={m}, HP=8)')
-        ax1.set_xlabel('Blocks')
-        ax1.set_ylabel('Layers')
-        
+        ax1.set_xlabel('Number of blocks')
+        ax1.set_ylabel('Number of layers')
+
         # Test error heatmap
         pivot_test = df_hp8.pivot_table(
             values='test_rel_error',
@@ -87,11 +98,11 @@ def create_heatmaps(df, output_dir):
             columns='Blocks',
             aggfunc='mean'
         )
-        sns.heatmap(pivot_test, annot=True, fmt='.4e', cmap='YlOrRd', ax=ax2,
-                   norm=LogNorm(vmin=pivot_test.min().min(), vmax=pivot_test.max().max()))
+        sns.heatmap(pivot_test, annot=True, fmt='.4e', cmap=cmap, ax=ax2,
+                   norm=LogNorm(vmin=vmin, vmax=vmax))
         ax2.set_title(f'Test Relative Error (M={m}, HP=8)')
-        ax2.set_xlabel('Blocks')
-        ax2.set_ylabel('Layers')
+        ax2.set_xlabel('Number of blocks')
+        ax2.set_ylabel('Number of layers')
         
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, f'heatmap_L_B_M{m}_HP8.png'))
@@ -108,11 +119,11 @@ def create_heatmaps(df, output_dir):
             columns='HP',
             aggfunc='mean'
         )
-        sns.heatmap(pivot_train, annot=True, fmt='.4e', cmap='YlOrRd', ax=ax1,
-                   norm=LogNorm(vmin=pivot_train.min().min(), vmax=pivot_train.max().max()))
+        sns.heatmap(pivot_train, annot=True, fmt='.4e', cmap=cmap, ax=ax1,
+                   norm=LogNorm(vmin=vmin, vmax=vmax))
         ax1.set_title(f'Train Relative Error (M={m}, Blocks=8)')
-        ax1.set_xlabel('HP')
-        ax1.set_ylabel('Layers')
+        ax1.set_xlabel('Number of projection heads')
+        ax1.set_ylabel('Number of layers')
         
         # Test error heatmap
         pivot_test = df_b8.pivot_table(
@@ -121,11 +132,11 @@ def create_heatmaps(df, output_dir):
             columns='HP',
             aggfunc='mean'
         )
-        sns.heatmap(pivot_test, annot=True, fmt='.4e', cmap='YlOrRd', ax=ax2,
-                   norm=LogNorm(vmin=pivot_test.min().min(), vmax=pivot_test.max().max()))
+        sns.heatmap(pivot_test, annot=True, fmt='.4e', cmap=cmap, ax=ax2,
+                   norm=LogNorm(vmin=vmin, vmax=vmax))
         ax2.set_title(f'Test Relative Error (M={m}, Blocks=8)')
-        ax2.set_xlabel('HP')
-        ax2.set_ylabel('Layers')
+        ax2.set_xlabel('Number of projection heads')
+        ax2.set_ylabel('Number of layers')
         
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, f'heatmap_L_HP_M{m}_B8.png'))
