@@ -428,29 +428,33 @@ def load_dataset(
                 assert os.path.isdir(potential_uri)
                 uris.append(potential_uri)
         print(f"found {len(uris)} samples")
+        
+        # Preprocessing
+        if DST.exists() and all((DST / uri.relative_to(SRC)).exists() for uri in uris):
+            print("Preprocessed files already exist, skipping processing")
+        else:
+            # .vtk files contains points that dont belong to the mesh -> filter them out
+            mesh_point_counts = []
+            for uri in tqdm(uris):
+                reluri = uri.relative_to(SRC)
+                out = DST / reluri
+                out.mkdir(exist_ok=True, parents=True)
 
-        # .vtk files contains points that dont belong to the mesh -> filter them out
-        mesh_point_counts = []
-        for uri in tqdm(uris):
-            reluri = uri.relative_to(SRC)
-            out = DST / reluri
-            out.mkdir(exist_ok=True, parents=True)
+                # filter out mesh points that are not part of the shape
+                mesh = meshio.read(uri / "quadpress_smpl.vtk")
+                assert len(mesh.cells) == 1
+                cell_block = mesh.cells[0]
+                assert cell_block.type == "quad"
+                unique = np.unique(cell_block.data)
+                mesh_point_counts.append(len(unique))
+                mesh_points = torch.from_numpy(mesh.points[unique]).float()
+                pressure = torch.from_numpy(np.load(uri / "press.npy")[unique]).float()
+                torch.save(mesh_points, out / "mesh_points.th")
+                torch.save(pressure, out / "pressure.th")
 
-            # filter out mesh points that are not part of the shape
-            mesh = meshio.read(uri / "quadpress_smpl.vtk")
-            assert len(mesh.cells) == 1
-            cell_block = mesh.cells[0]
-            assert cell_block.type == "quad"
-            unique = np.unique(cell_block.data)
-            mesh_point_counts.append(len(unique))
-            mesh_points = torch.from_numpy(mesh.points[unique]).float()
-            pressure = torch.from_numpy(np.load(uri / "press.npy")[unique]).float()
-            torch.save(mesh_points, out / "mesh_points.th")
-            torch.save(pressure, out / "pressure.th")
-
-            # generate sdf
-            for resolution in [32, 40, 48, 64, 80]:
-                torch.save(sdf(mesh, resolution=resolution), out / f"sdf_res{resolution}.th")
+                # generate sdf
+                for resolution in [32, 40, 48, 64, 80]:
+                    torch.save(sdf(mesh, resolution=resolution), out / f"sdf_res{resolution}.th")
 
         exit()
 

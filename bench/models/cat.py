@@ -111,6 +111,7 @@ class ClusterHeadMixingConv(nn.Module):
         nn.init.uniform_(self.weights, -k, k)
 
     def forward(self, x):
+
         B, H, M, N = x.shape
         weights = self.weights.view(H * M, H * M, 1)
             
@@ -175,9 +176,9 @@ class ClusterAttention(nn.Module):
         if self.qk_norm:
             q = F.normalize(q, p=2, dim=-1)
             k = F.normalize(k, p=2, dim=-1)
-            
+
         scores = einsum(q, k, 'h m d, b h n d -> b h m n') # [B H M N]
-        
+
         if self.cluster_head_mixing:
             scores = self.mix(scores)
 
@@ -191,10 +192,10 @@ class ClusterAttention(nn.Module):
 
         for block in self.blocks:
             z = block(z)
-        z = rearrange(z, 'b m (h d) -> b h m d', h=self.num_projection_heads)
 
         ### (3) Disaggregate cluster tokens
 
+        z = rearrange(z, 'b m (h d) -> b h m d', h=self.num_projection_heads)
         x = einsum(z, decode_weights, 'b h m d, b h m n -> b h n d')
         x = rearrange(x, 'b h n d -> b n (h d)')
         x = self.out_proj(x)
