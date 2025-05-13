@@ -106,12 +106,12 @@ def main(cfg, device):
 
     if time_cond:
         if cfg.model_type == -1:
-            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
+            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.channel_dim, cfg.num_layers)
         elif cfg.model_type == 0:
             model = am.Transolver(
                 space_dim=c_in+1, out_dim=c_out, fun_dim=0,
-                n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
+                n_hidden=cfg.channel_dim, n_layers=cfg.num_layers,
+                n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_clusters,
             )
         elif cfg.model_type == 1:
             raise NotImplementedError("CAT not implemented for time-conditioned problems.")
@@ -129,49 +129,51 @@ def main(cfg, device):
                 model_attr={"time": time_cond,}
             )
         elif cfg.model_type == -1:
-            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.hidden_dim, cfg.num_layers)
+            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.channel_dim, cfg.num_layers)
         elif cfg.model_type == 0:
             if GLOBAL_RANK == 0:
-                print(f"Using Transolver with {cfg.hidden_dim} hidden dim, {cfg.num_layers} layers, {cfg.num_heads} heads, {cfg.mlp_ratio} mlp ratio, {cfg.num_slices} slices")
+                print(f"Using Transolver with {cfg.channel_dim} channel dim, {cfg.num_layers} layers, {cfg.num_heads} heads, {cfg.mlp_ratio} mlp ratio, {cfg.num_clusters} slices")
             if cfg.conv2d:
                 model = bench.Transolver_Structured_Mesh_2D(
                     space_dim=c_in, out_dim=c_out, fun_dim=0,
-                    n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                    n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
+                    n_hidden=cfg.channel_dim, n_layers=cfg.num_layers,
+                    n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_clusters,
                     H=metadata['H'], W=metadata['W'],
                     unified_pos=cfg.unified_pos,
                 )
             else:
                 model = bench.Transolver(
                     space_dim=c_in, out_dim=c_out, fun_dim=0,
-                    n_hidden=cfg.hidden_dim, n_layers=cfg.num_layers,
-                    n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_slices,
+                    n_hidden=cfg.channel_dim, n_layers=cfg.num_layers,
+                    n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_clusters,
                 )
         elif cfg.model_type == 1:
             if GLOBAL_RANK == 0:
                 print(
                     f"Using CAT with\n" +
-                    f"hidden_dim={cfg.hidden_dim}\n" +
+                    f"channel_dim={cfg.channel_dim}\n" +
                     f"num_layers={cfg.num_layers}\n" +
                     f"num_heads={cfg.num_heads}\n" +
                     f"mlp_ratio={cfg.mlp_ratio}\n" +
-                    f"num_slices={cfg.num_slices}\n" +
+                    f"num_clusters={cfg.num_clusters}\n" +
                     f"num_projection_heads={cfg.num_projection_heads}\n" +
-                    f"num_projection_blocks={cfg.num_projection_blocks}\n" +
-                    f"qk_norm={cfg.qk_norm}\n" +
+                    f"num_latent_blocks={cfg.num_latent_blocks}\n" +
                     f"cluster_head_mixing={cfg.cluster_head_mixing}"
                 )
             model = bench.ClusterAttentionTransformer(
                 in_dim=c_in,
                 out_dim=c_out,
-                hidden_dim=cfg.hidden_dim,
+                channel_dim=cfg.channel_dim,
                 num_layers=cfg.num_layers,
                 num_heads=cfg.num_heads,
                 mlp_ratio=cfg.mlp_ratio,
-                num_clusters=cfg.num_slices,
+                num_clusters=cfg.num_clusters,
                 num_projection_heads=cfg.num_projection_heads,
-                num_projection_blocks=cfg.num_projection_blocks,
-                qk_norm=cfg.qk_norm,
+                num_latent_blocks=cfg.num_latent_blocks,
+                if_latent_mlp=cfg.if_latent_mlp,
+                if_pointwise_mlp=cfg.if_pointwise_mlp,
+                cluster_head_mixing=cfg.cluster_head_mixing,
+                act=cfg.act,
             )
             if GLOBAL_RANK == 0:
                 print(f"Parameters: {sum(p.numel() for p in model.parameters())}")
@@ -181,11 +183,11 @@ def main(cfg, device):
             model = bench.SparseTransformer(
                 in_dim=c_in,
                 out_dim=c_out,
-                hidden_dim=cfg.hidden_dim,
+                hidden_dim=cfg.channel_dim,
                 num_layers=cfg.num_layers,
                 num_heads=cfg.num_heads,
                 mlp_ratio=cfg.mlp_ratio,
-                num_slices=cfg.num_slices,
+                num_slices=cfg.num_clusters,
                 qk_norm=cfg.qk_norm,
                 k_val=cfg.topk,
             )
@@ -210,7 +212,7 @@ def main(cfg, device):
         callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type in [-1,])
     elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
         callback = bench.RelL2Callback(case_dir, metadata['x_normalizer'], metadata['y_normalizer'])
-        
+
     if cfg.train and cfg.epochs > 0:
 
         _batch_size  = cfg.batch_size
@@ -392,20 +394,26 @@ class Config:
     # model
     model_type: int = 0 # -1: MeshGraphNet, 0: Transolver, 1: ClusterAttentionTransformer, 9: SparseTransformer
     act: str = None
-    hidden_dim: int = 128
+    channel_dim: int = 128
     num_layers: int = 8
     num_heads: int = 8
     mlp_ratio: float = 2.
-    num_slices: int = 64
+    num_clusters: int = 64
+    
+    # CAT
     num_projection_heads: int = None
-    num_projection_blocks: int = 1
-    qk_norm: bool = False
+    num_latent_blocks: int = 1
+    if_latent_mlp: bool = True
+    if_pointwise_mlp: bool = True
     cluster_head_mixing: bool = True
+    
+    # Transolver
     conv2d: bool = False
     unified_pos: bool = False
 
-    # sparse transformer
+    # Sparse Transformer
     topk: int = 0
+    qk_norm: bool = True
     gamma_min: float = 0e-4
     gamma_init: float = 1e-2
     gamma_schedule: str = 'constant'

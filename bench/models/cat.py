@@ -41,14 +41,14 @@ ACTIVATIONS = {
 # Vanilla Self-Attention Block
 #======================================================================#
 class MLPBlock(nn.Module):
-    def __init__(self, in_features: int, hidden_features: int, out_features: int, act: str = None):
+    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, act: str = None):
         super().__init__()
-        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.fc1 = nn.Linear(in_dim, hidden_dim)
         self.act = ACTIVATIONS[act] if act else ACTIVATIONS['gelu']
         if act in ['swiglu', 'geglu']:
-            self.fc2 = nn.Linear(hidden_features // 2, out_features)
+            self.fc2 = nn.Linear(hidden_dim // 2, out_dim)
         else:
-            self.fc2 = nn.Linear(hidden_features, out_features)
+            self.fc2 = nn.Linear(hidden_dim, out_dim)
 
     def forward(self, x):
         x = self.fc1(x)
@@ -57,17 +57,17 @@ class MLPBlock(nn.Module):
         return x
 
 class MultiHeadedSelfAttention(nn.Module):
-    def __init__(self, hidden_dim: int, num_heads: int = 8):
+    def __init__(self, channel_dim: int, num_heads: int = 8):
         super().__init__()
 
-        assert hidden_dim % num_heads == 0, f"hidden_dim must be divisible by num_heads. Got {hidden_dim} and {num_heads}."
+        assert channel_dim % num_heads == 0, f"channel_dim must be divisible by num_heads. Got {channel_dim} and {num_heads}."
 
-        self.hidden_dim = hidden_dim
+        self.channel_dim = channel_dim
         self.num_heads = num_heads
-        self.head_dim = hidden_dim // num_heads 
+        self.head_dim = channel_dim // num_heads 
         
-        self.qkv_proj = nn.Linear(hidden_dim, 3 * hidden_dim)
-        self.out_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.qkv_proj = nn.Linear(channel_dim, 3 * channel_dim)
+        self.out_proj = nn.Linear(channel_dim, channel_dim)
 
     def forward(self, x):
         q, k, v = self.qkv_proj(x).chunk(3, dim=-1)
@@ -85,23 +85,30 @@ class MultiHeadedSelfAttention(nn.Module):
         return out
     
 class SelfAttentionBlock(nn.Module):
-    def __init__(self, hidden_dim: int, num_heads: int, mlp_ratio: int = 4, act: str = None):
+    def __init__(self, channel_dim: int, num_heads: int, mlp_ratio: int = 4, act: str = None, if_mlp: bool = True):
         super().__init__()
-        self.ln1 = nn.LayerNorm(hidden_dim)
-        self.ln2 = nn.LayerNorm(hidden_dim)
-        self.mha = MultiHeadedSelfAttention(hidden_dim, num_heads)
-        self.mlp = MLPBlock(hidden_dim, int(hidden_dim * mlp_ratio), hidden_dim, act=act)
+        self.ln1 = nn.LayerNorm(channel_dim)
+        self.mha = MultiHeadedSelfAttention(channel_dim, num_heads)
+        self.if_mlp = if_mlp
+        if self.if_mlp:
+            self.ln2 = nn.LayerNorm(channel_dim)
+            self.mlp = MLPBlock(
+                in_dim=channel_dim,
+                hidden_dim=int(channel_dim * mlp_ratio),
+                out_dim=channel_dim,
+                act=act,
+            )
 
     def forward(self, x):
         # x: [B, N, C]
 
         x = x + self.mha(self.ln1(x))
-        x = x + self.mlp(self.ln2(x))
-        
+        x = x + self.mlp(self.ln2(x)) if self.if_mlp else x
+
         return x
 
 #======================================================================#
-# Cluster Attention Block
+# Cluster Attention
 #======================================================================#
 class ClusterHeadMixingConv(nn.Module):
     def __init__(self, H:int, M: int):
@@ -123,45 +130,44 @@ class ClusterHeadMixingConv(nn.Module):
     
 class ClusterAttention(nn.Module):
     def __init__(
-            self, hidden_dim, num_heads=8, num_clusters=32,
-            num_projection_heads=None, num_projection_blocks=1,
-            mlp_ratio=4, act=None,
-            qk_norm=False, cluster_head_mixing=True,
+            self, channel_dim, num_heads=8, num_clusters=32,
+            num_projection_heads=None, num_latent_blocks=1,
+            mlp_ratio=2, if_latent_mlp=True, act=None,
+            cluster_head_mixing=True,
         ):
         super().__init__()
 
-        self.hidden_dim = hidden_dim
+        self.channel_dim = channel_dim
         self.num_clusters = num_clusters
         self.num_projection_heads = num_projection_heads if num_projection_heads is not None else num_heads
-        self.projection_head_dim = self.hidden_dim // self.num_projection_heads
+        self.projection_head_dim = self.channel_dim // self.num_projection_heads
 
-        assert self.hidden_dim % self.num_projection_heads == 0, f"hidden_dim must be divisible by num_projection_heads. Got {self.hidden_dim} and {self.num_projection_heads}."
+        assert self.channel_dim % self.num_projection_heads == 0, f"channel_dim must be divisible by num_projection_heads. Got {self.channel_dim} and {self.num_projection_heads}."
 
         ### (1) Get cluster weights
-        self.qk_norm = qk_norm
         self.cluster_head_mixing  = cluster_head_mixing
         self.k_proj = ResidualMLP(
-            input_dim=self.hidden_dim, hidden_dim=self.hidden_dim, output_dim=self.hidden_dim,
+            in_dim=self.channel_dim, hidden_dim=self.channel_dim, out_dim=self.channel_dim,
             num_layers=2, act=act, input_residual=True, output_residual=True,
         )
         self.v_proj = ResidualMLP(
-            input_dim=self.hidden_dim, hidden_dim=self.hidden_dim, output_dim=self.hidden_dim,
+            in_dim=self.channel_dim, hidden_dim=self.channel_dim, out_dim=self.channel_dim,
             num_layers=2, act=act, input_residual=True, output_residual=True,
         )
 
-        self.latent_q = nn.Parameter(torch.empty(self.hidden_dim, self.num_clusters))
+        self.latent_q = nn.Parameter(torch.empty(self.channel_dim, self.num_clusters))
         nn.init.normal_(self.latent_q, mean=0.0, std=0.1)
         if self.cluster_head_mixing:
             self.mix = ClusterHeadMixingConv(self.num_projection_heads, self.num_clusters)
 
         ### (2) Attention among cluster tokens
         self.blocks = nn.ModuleList([
-            SelfAttentionBlock(self.hidden_dim, num_heads, mlp_ratio=mlp_ratio, act=act)
-            for _ in range(num_projection_blocks)
+            SelfAttentionBlock(self.channel_dim, num_heads, mlp_ratio=mlp_ratio, act=act, if_mlp=if_latent_mlp)
+            for _ in range(num_latent_blocks)
         ])
         
         ### (3) Disaggregate cluster tokens and return
-        self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.out_proj = nn.Linear(self.channel_dim, self.channel_dim)
         
     def forward(self, x):
 
@@ -173,12 +179,7 @@ class ClusterAttention(nn.Module):
         k = rearrange(self.k_proj(x), 'b n (h d) -> b h n d', h=self.num_projection_heads) # [B H N D]
         v = rearrange(self.v_proj(x), 'b n (h d) -> b h n d', h=self.num_projection_heads)
 
-        if self.qk_norm:
-            q = F.normalize(q, p=2, dim=-1)
-            k = F.normalize(k, p=2, dim=-1)
-
         scores = einsum(q, k, 'h m d, b h n d -> b h m n') # [B H M N]
-
         if self.cluster_head_mixing:
             scores = self.mix(scores)
 
@@ -208,19 +209,24 @@ class ClusterAttention(nn.Module):
 
 class ResidualMLP(nn.Module):
     def __init__(
-            self, input_dim: int, hidden_dim: int, output_dim: int, num_layers: int = 1,
+            self, in_dim: int, hidden_dim: int, out_dim: int, num_layers: int = 1,
             act: str = None, input_residual: bool = False, output_residual: bool = False
         ):
         super().__init__()
-        assert act not in ['swiglu', 'geglu'], "ResidualMLP does not support swiglu or geglu activations"
+        if act == 'swiglu':
+            print("ResidualMLP does not support swiglu activations. Using silu instead.")
+            act = 'silu'
+        if act == 'geglu':
+            print("ResidualMLP does not support geglu activations. Using gelu instead.")
+            act = 'gelu'
         self.act = ACTIVATIONS[act] if act else ACTIVATIONS['gelu']
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.fc1 = nn.Linear(in_dim, hidden_dim)
         self.fcs = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers)])
-        self.fc2 = nn.Linear(hidden_dim, output_dim)
+        self.fc2 = nn.Linear(hidden_dim, out_dim)
 
-        self.input_residual  = input_residual  and (input_dim  == hidden_dim)
-        self.output_residual = output_residual and (hidden_dim == output_dim)
-        
+        self.input_residual  = input_residual  and (in_dim  == hidden_dim)
+        self.output_residual = output_residual and (hidden_dim == out_dim)
+
     def forward(self, x):
         x = x + self.act(self.fc1(x)) if self.input_residual else self.act(self.fc1(x))
         for fc in self.fcs:
@@ -231,51 +237,54 @@ class ResidualMLP(nn.Module):
 class ClusterAttentionBlock(nn.Module):
     def __init__(self,
             num_heads: int,
-            hidden_dim: int,
+            channel_dim: int,
             mlp_ratio=2,
             num_clusters=32,
             num_projection_heads=None,
-            num_projection_blocks=1,
+            num_latent_blocks=1,
+            if_latent_mlp=True,
+            if_pointwise_mlp=True,
             cluster_head_mixing=True,
             act=None,
-            qk_norm=False,
     ):
         super().__init__()
-        self.ln1 = nn.LayerNorm(hidden_dim)
-        self.ln2 = nn.LayerNorm(hidden_dim)
-
+        self.ln1 = nn.LayerNorm(channel_dim)
         self.att = ClusterAttention(
-            hidden_dim,
+            channel_dim,
             num_heads=num_heads,
             num_clusters=num_clusters,
             num_projection_heads=num_projection_heads,
-            num_projection_blocks=num_projection_blocks,
-            mlp_ratio=mlp_ratio, act=act,
-            qk_norm=qk_norm,
+            num_latent_blocks=num_latent_blocks,
+            if_latent_mlp=if_latent_mlp,
+            mlp_ratio=mlp_ratio,
+            act=act,
             cluster_head_mixing=cluster_head_mixing,
         )
-
-        self.mlp = MLPBlock(
-            in_features=hidden_dim,
-            hidden_features=int(hidden_dim * mlp_ratio),
-            out_features=hidden_dim,
-            act=act,
-        )
+        
+        self.if_mlp = if_pointwise_mlp
+        if self.if_mlp:
+            self.ln2 = nn.LayerNorm(channel_dim)
+            self.mlp = MLPBlock(
+                in_dim=channel_dim,
+                hidden_dim=int(channel_dim * mlp_ratio),
+                out_dim=channel_dim,
+                act=act,
+            )
         
     def forward(self, x):
         # x: [B, N, C]
 
         x = x + self.att(self.ln1(x))
-        x = x + self.mlp(self.ln2(x))
+        x = x + self.mlp(self.ln2(x)) if self.if_mlp else x
 
         return x
 
 class FinalLayer(nn.Module):
-    def __init__(self, hidden_dim, out_dim, act=None):
+    def __init__(self, channel_dim, out_dim, act=None):
         super().__init__()
-        self.ln = nn.LayerNorm(hidden_dim)
+        self.ln = nn.LayerNorm(channel_dim)
         self.mlp = ResidualMLP(
-            input_dim=hidden_dim, hidden_dim=hidden_dim, output_dim=out_dim,
+            in_dim=channel_dim, hidden_dim=channel_dim, out_dim=out_dim,
             num_layers=2, act=act, input_residual=True,
         )
 
@@ -288,46 +297,48 @@ class FinalLayer(nn.Module):
 #======================================================================#
 class ClusterAttentionTransformer(nn.Module):
     def __init__(self,
-        in_dim,
-        out_dim,
-        num_layers=5,
-        hidden_dim=128,
-        num_heads=8,
-        mlp_ratio=4,
-        num_clusters=64,
-        num_projection_heads=None,
-        num_projection_blocks=1,
-        act=None,
-        qk_norm=False,
-        cluster_head_mixing=True,
+        in_dim: int,
+        out_dim: int,
+        num_layers: int = 5,
+        channel_dim: int = 128,
+        num_heads: int = 8,
+        mlp_ratio: int = 2,
+        num_clusters: int = 64,
+        num_projection_heads: int = None,
+        num_latent_blocks: int = 1,
+        if_latent_mlp: bool = True,
+        if_pointwise_mlp: bool = True,
+        cluster_head_mixing: bool = True,
+        act: str = None,
     ):
         super().__init__()
-        
+
         self.num_layers = num_layers
         self.num_clusters = num_clusters
         self.num_heads = num_heads
-        
+
         self.x_proj = ResidualMLP(
-            input_dim=in_dim, hidden_dim=hidden_dim, output_dim=hidden_dim,
+            in_dim=in_dim, hidden_dim=channel_dim, out_dim=channel_dim,
             num_layers=2, act=act, output_residual=True,
         )
         
         self.blocks = nn.ModuleList([
             ClusterAttentionBlock(
                 num_heads=num_heads,
-                hidden_dim=hidden_dim,
+                channel_dim=channel_dim,
                 mlp_ratio=mlp_ratio,
                 num_clusters=num_clusters,
                 num_projection_heads=num_projection_heads,
-                num_projection_blocks=num_projection_blocks,
+                num_latent_blocks=num_latent_blocks,
+                if_latent_mlp=if_latent_mlp,
+                if_pointwise_mlp=if_pointwise_mlp,
                 act=act,
-                qk_norm=qk_norm,
                 cluster_head_mixing=cluster_head_mixing,
             )
             for _ in range(num_layers)
         ])
 
-        self.out_proj = FinalLayer(hidden_dim, out_dim, act=act)
+        self.out_proj = FinalLayer(channel_dim, out_dim, act=act)
 
         self.initialize_weights()
 
