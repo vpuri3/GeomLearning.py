@@ -410,7 +410,7 @@ def load_dataset(
         import meshio
         from pathlib import Path
         from tqdm import tqdm
-        
+
         SRC = os.path.join(DATADIR_BASE, 'ShapeNet-Car', 'mlcfd_data', 'training_data')
         DST = os.path.join(DATADIR_BASE, 'ShapeNet-Car', 'preprocessed')
         
@@ -428,7 +428,7 @@ def load_dataset(
                 assert os.path.isdir(potential_uri)
                 uris.append(potential_uri)
         print(f"found {len(uris)} samples")
-        
+
         # Preprocessing
         if DST.exists() and all((DST / uri.relative_to(SRC)).exists() for uri in uris):
             print("Preprocessed files already exist, skipping processing")
@@ -456,33 +456,21 @@ def load_dataset(
                 for resolution in [32, 40, 48, 64, 80]:
                     torch.save(sdf(mesh, resolution=resolution), out / f"sdf_res{resolution}.th")
 
-        exit()
+        train_dataset = ShapeNetCarDataset(DST, split='train')
+        test_dataset  = ShapeNetCarDataset(DST, split='test')
+        
+        metadata = dict(
+            x_normalizer=bench.IdentityNormalizer(),
+            y_normalizer=bench.UnitGaussianNormalizer(torch.rand(10,1)),
+        )
+        metadata['y_normalizer'].mean = train_dataset.pressure_mean
+        metadata['y_normalizer'].std  = train_dataset.pressure_std
 
-        # PATH_Sigma = os.path.join(DATADIR, 'Meshes', 'Random_UnitCell_sigma_10.npy')
-        # PATH_XY = os.path.join(DATADIR, 'Meshes', 'Random_UnitCell_XY_10.npy')
-
-        # input_s = np.load(PATH_Sigma)
-        # input_s = torch.tensor(input_s, dtype=torch.float).permute(1, 0).unsqueeze(-1)
-        # input_xy = np.load(PATH_XY)
-        # input_xy = torch.tensor(input_xy, dtype=torch.float).permute(2, 0, 1)
+        return train_dataset, test_dataset, metadata
         
-        # ntrain = 1000
-        # ntest = 200
-        
-        # y_normalizer = bench.UnitGaussianNormalizer(input_s[:ntrain])
-        # input_s = y_normalizer.encode(input_s)
-
-        # dataset = TensorDataset(input_xy, input_s)
-        # train_data = Subset(dataset, range(ntrain))
-        # test_data = Subset(dataset, range(len(dataset)-ntest, len(dataset)))
-        
-        # metadata = dict(
-        #     x_normalizer=bench.IdentityNormalizer(),
-        #     y_normalizer=y_normalizer,
-        # )
-        
-        # return train_data, test_data, metadata
-    
+    #----------------------------------------------------------------#
+    # dataset not found
+    #----------------------------------------------------------------#
     else:
         raise ValueError(f"Dataset {dataset_name} not found.") 
 
@@ -514,7 +502,7 @@ def split_timeseries_dataset(dataset, split=None, indices=None):
                 assert not any(c in subsets[split1].included_cases for c in subsets[split2].included_cases)
 
     return subsets
-    
+
 #======================================================================#
 def sdf(mesh, resolution):
     import meshio
@@ -555,6 +543,82 @@ def sdf(mesh, resolution):
     tz = np.linspace(domain_min[2], domain_max[2], resolution)
     grid = np.stack(np.meshgrid(tx, ty, tz, indexing="ij"), axis=-1).astype(np.float32)
     return torch.from_numpy(scene.compute_signed_distance(grid).numpy()).float()
+
+class ShapeNetCarDataset(torch.utils.data.Dataset):
+    # from https://github.com/ml-jku/UPT/blob/main/src/datasets/shapenet_car.py
+    # generated with torch.randperm(889, generator=torch.Generator().manual_seed(0))[:189]
+    TEST_INDICES = {
+        550, 592, 229, 547, 62, 464, 798, 836, 5, 732, 876, 843, 367, 496,
+        142, 87, 88, 101, 303, 352, 517, 8, 462, 123, 348, 714, 384, 190,
+        505, 349, 174, 805, 156, 417, 764, 788, 645, 108, 829, 227, 555, 412,
+        854, 21, 55, 210, 188, 274, 646, 320, 4, 344, 525, 118, 385, 669,
+        113, 387, 222, 786, 515, 407, 14, 821, 239, 773, 474, 725, 620, 401,
+        546, 512, 837, 353, 537, 770, 41, 81, 664, 699, 373, 632, 411, 212,
+        678, 528, 120, 644, 500, 767, 790, 16, 316, 259, 134, 531, 479, 356,
+        641, 98, 294, 96, 318, 808, 663, 447, 445, 758, 656, 177, 734, 623,
+        216, 189, 133, 427, 745, 72, 257, 73, 341, 584, 346, 840, 182, 333,
+        218, 602, 99, 140, 809, 878, 658, 779, 65, 708, 84, 653, 542, 111,
+        129, 676, 163, 203, 250, 209, 11, 508, 671, 628, 112, 317, 114, 15,
+        723, 746, 765, 720, 828, 662, 665, 399, 162, 495, 135, 121, 181, 615,
+        518, 749, 155, 363, 195, 551, 650, 877, 116, 38, 338, 849, 334, 109,
+        580, 523, 631, 713, 607, 651, 168,
+    }
+
+    def __init__(self, datadir, split='train', resolution=None, transform=None):
+        super().__init__()
+        self.datadir = datadir
+        self.split = split
+        self.resolution = resolution
+        self.transform = transform
+        
+        # define spatial min/max of simulation for normalizing to [0, 1]
+        # min: [-1.7978, -0.7189, -4.2762]
+        # max: [1.8168, 4.3014, 5.8759]
+        self.domain_min = torch.tensor([-2.0, -1.0, -4.5])
+        self.domain_max = torch.tensor([2.0, 4.5, 6.0])
+        
+        # mean/std for normalization (calculated on the 700 train samples)
+        # import torch
+        # from datasets.shapenet_car import ShapenetCar
+        # ds = ShapenetCar(global_root="/local00/bioinf/shapenet_car", split="train")
+        # targets = [ds.getitem_pressure(i) for i in range(len(ds))]
+        # targets = torch.stack(targets)
+        # targets.mean()
+        # targets.std()
+        self.pressure_mean = torch.tensor(-36.3099)
+        self.pressure_std  = torch.tensor( 48.5743)
+
+        # discover uris
+        self.uris = []
+        for i in range(9):
+            param_uri = self.datadir / f"param{i}"
+            for name in sorted(os.listdir(param_uri)):
+                sample_uri = param_uri / name
+                if sample_uri.is_dir():
+                    self.uris.append(sample_uri)
+        assert len(self.uris) == 889, f"found {len(self.uris)} uris instead of 889"
+        # split into train/test uris
+        if split == 'train':
+            train_idxs = [i for i in range(len(self.uris)) if i not in self.TEST_INDICES]
+            self.uris = [self.uris[train_idx] for train_idx in train_idxs]
+            assert len(self.uris) == 700
+        elif split == 'test':
+            self.uris = [self.uris[test_idx] for test_idx in self.TEST_INDICES]
+            assert len(self.uris) == 189
+        else:
+            raise NotImplementedError
+
+    def __len__(self):
+        return len(self.uris)
+
+    def __getitem__(self, idx):
+        uri = self.uris[idx]
+        pressure = torch.load(uri / "pressure.th", weights_only=True)
+        mesh_points = torch.load(uri / "mesh_points.th", weights_only=True)
+        pressure = (pressure - self.pressure_mean) / self.pressure_std
+        mesh_points = (mesh_points - self.domain_min) / (self.domain_max - self.domain_min)
+
+        return mesh_points.view(-1, 3), pressure.view(-1, 1)
 
 #======================================================================#
 #

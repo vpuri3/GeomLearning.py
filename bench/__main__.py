@@ -40,7 +40,7 @@ def main(cfg, device):
     #=================#
     # DATA
     #=================#
-    
+
     _data, data_, metadata = bench.load_dataset(
         cfg.dataset,
         DATADIR_BASE,
@@ -54,7 +54,7 @@ def main(cfg, device):
         exclude=cfg.exclude,
         train_rollout_noise=cfg.train_rollout_noise,
     )
-    
+
     if cfg.dataset in ['elasticity', 'darcy', 'airfoil_steady', 'pipe']:
         c_in = 2 if not cfg.dataset in ['darcy'] else 3
         c_out = 1
@@ -74,6 +74,12 @@ def main(cfg, device):
         c_out = 1
 
         time_cond = True
+
+    elif cfg.dataset in ['shapenet_car']:
+        c_in = 3
+        c_out = 1
+
+        time_cond = False
 
     elif cfg.dataset in ['airfoil', 'cylinder_flow']:
         
@@ -158,6 +164,8 @@ def main(cfg, device):
                     f"num_clusters={cfg.num_clusters}\n" +
                     f"num_projection_heads={cfg.num_projection_heads}\n" +
                     f"num_latent_blocks={cfg.num_latent_blocks}\n" +
+                    f"if_latent_mlp={cfg.if_latent_mlp}\n" +
+                    f"if_pointwise_mlp={cfg.if_pointwise_mlp}\n" +
                     f"cluster_head_mixing={cfg.cluster_head_mixing}"
                 )
             model = bench.ClusterAttentionTransformer(
@@ -210,10 +218,15 @@ def main(cfg, device):
         callback = bench.SparsityCallback(case_dir,)
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
         callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type in [-1,])
-    elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
+    elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes',
+                         'shapenet_car',]:
         callback = bench.RelL2Callback(case_dir, metadata['x_normalizer'], metadata['y_normalizer'])
 
     if cfg.train and cfg.epochs > 0:
+
+        #----------#
+        # batch_size
+        #----------#
 
         _batch_size  = cfg.batch_size
         if cfg.dataset == 'airfoil':
@@ -221,10 +234,16 @@ def main(cfg, device):
             batch_size_ = _batch_size_ = 1 # 20
         elif cfg.dataset == 'cylinder_flow':
             batch_size_ = _batch_size_ = 1 # 50
-        elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
+        elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes',
+                             'shapenet_car',]:
             batch_size_ = _batch_size_ = 50
 
-        if cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes']:
+        #----------#
+        # lossfun
+        #----------#
+
+        if cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes',
+                           'shapenet_car',]:
             if GLOBAL_RANK == 0:
                 print(f"Using RelL2Loss for {cfg.dataset} dataset")
             lf = bench.RelL2Loss()
@@ -238,16 +257,17 @@ def main(cfg, device):
                 print(f"Using MSELoss for {cfg.dataset} dataset")
             lossfun = torch.nn.MSELoss()
 
-        gnn_loader = cfg.dataset in ['airfoil', 'cylinder_flow']
-        
         kw = dict(
-            device=device, gnn_loader=gnn_loader, stats_every=cfg.epochs//10,
+            device=device, gnn_loader=cfg.dataset in ['airfoil', 'cylinder_flow'], stats_every=cfg.epochs//10,
             make_optimizer=bench.make_optimizer, weight_decay=cfg.weight_decay, epochs=cfg.epochs,
             _batch_size=_batch_size, batch_size_=batch_size_, _batch_size_=_batch_size_,
             lossfun=lossfun, clip_grad_norm=cfg.clip_grad_norm, adam_betas=(cfg.adam_beta1, cfg.adam_beta2),
         )
-        
+
+        #----------#
         # LR scheduler
+        #----------#
+
         if cfg.schedule is None or cfg.schedule == 'ConstantLR':
             kw['lr'] = cfg.learning_rate
         elif cfg.schedule == 'OneCycleLR':
@@ -260,9 +280,12 @@ def main(cfg, device):
         else:
             kw = dict(**kw, Schedule=cfg.schedule, lr=cfg.learning_rate,)
 
+        #----------#
         # Noise schedule
-        kw['noise_schedule'] = cfg.noise_schedule
-        kw['noise_init'] = cfg.noise_init
+        #----------#
+        if cfg.model_type in [9,]:
+            kw['noise_schedule'] = cfg.noise_schedule
+            kw['noise_init'] = cfg.noise_init
 
         #-------------#
         # make Trainer

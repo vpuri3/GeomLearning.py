@@ -260,7 +260,7 @@ class ClusterAttentionBlock(nn.Module):
             act=act,
             cluster_head_mixing=cluster_head_mixing,
         )
-        
+
         self.if_mlp = if_pointwise_mlp
         if self.if_mlp:
             self.ln2 = nn.LayerNorm(channel_dim)
