@@ -7,6 +7,7 @@ from torch.utils.data import TensorDataset, Subset
 
 import bench
 from bench.dataset.timeseries import TimeseriesDataset, TimeseriesDatasetTransform
+from mlutils import check_package_version_lteq
 
 #======================================================================#
 def load_dataset(
@@ -613,8 +614,13 @@ class ShapeNetCarDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         uri = self.uris[idx]
-        pressure = torch.load(uri / "pressure.th", weights_only=True)
-        mesh_points = torch.load(uri / "mesh_points.th", weights_only=True)
+        if check_package_version_lteq('torch', '2.4'):
+            pressure = torch.load(uri / "pressure.th")
+            mesh_points = torch.load(uri / "mesh_points.th")
+        else:
+            pressure = torch.load(uri / "pressure.th", weights_only=True)
+            mesh_points = torch.load(uri / "mesh_points.th", weights_only=True)
+
         pressure = (pressure - self.pressure_mean) / self.pressure_std
         mesh_points = (mesh_points - self.domain_min) / (self.domain_max - self.domain_min)
 
