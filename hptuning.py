@@ -10,18 +10,33 @@ import argparse
 
 def parse_dir_name(dirname):
     """Extract hyperparameters from directory name."""
-    pattern = r'L_(\d+)_B_(\d+)(?:_HP_(\d+))?(?:_M_(\d+))?(?:_mix_([tf]))?'
-    match = re.search(pattern, dirname)
-    if match:
-        L, B, HP, M, mix = match.groups()
-        return {
-            'L': int(L),
-            'B': int(B),
-            'HP': int(HP) if HP else 8,  # Default to 8 if not specified
-            'M': int(M) if M else 64,  # Default to 64 if not specified
-            'mix': mix if mix else 't'  # Default to True if not specified
-        }
-    return None
+    # pattern = r'L_(\d+)_B_(\d+)(?:_HP_(\d+))?(?:_M_(\d+))?(?:_mix_([tf]))?'
+    # match = re.search(pattern, dirname)
+    # if match:
+    #     L, B, HP, M, mix = match.groups()
+    #     return {
+    #         'L': int(L),
+    #         'B': int(B),
+    #         'HP': int(HP) if HP else 8,  # Default to 8 if not specified
+    #         'M': int(M) if M else 64,  # Default to 64 if not specified
+    #         'mix': mix if mix else 't'  # Default to True if not specified
+    #     }
+    param_file = os.path.join(dirname, 'config.json')
+    assert os.path.exists(param_file)
+    with open(param_file, 'r') as f:
+        params = json.load(f)
+    return {
+        'C': params.get('channel_dim', 128),
+        'L': params.get('num_layers', 8),
+        'B': params.get('num_blocks', 1),
+        'M': params.get('num_clusters', 64),
+        'H': params.get('num_heads', 8),
+        'HP': params.get('num_projection_heads', 8),
+        'r': params.get('mlp_ratio', 2),
+        'mix': params.get('cluster_head_mixing', True),
+        'mlp_latent': params.get('if_latent_mlp', True),
+        'mlp_point': params.get('if_pointwise_mlp', True),
+    }
 
 def collect_results(base_dir):
     """Collect results from all experiment directories."""
@@ -70,93 +85,99 @@ def create_heatmaps(df, output_dir):
     # Rename columns for display
     df = df.rename(columns={'L': 'Layers', 'B': 'Blocks'})
     
-    # Create heatmaps for different M values
-    for m in df['M'].unique():
-        df_m = df[df['M'] == m]
-        
-        # Heatmap for Layers vs Blocks with HP=8 (train and test side by side)
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5))
-        
-        # Train error heatmap
-        df_hp8 = df_m[df_m['HP'] == 8]
-        pivot_train = df_hp8.pivot_table(
-            values='train_rel_error',
-            index='Layers',
-            columns='Blocks',
-            aggfunc='mean'
-        )
-        sns.heatmap(pivot_train, annot=True, fmt='.4e', cmap=cmap, ax=ax1, 
-                   norm=LogNorm(vmin=vmin, vmax=vmax))
-        ax1.set_title(f'Train Relative Error (M={m}, HP=8)')
-        ax1.set_xlabel('Number of blocks')
-        ax1.set_ylabel('Number of layers')
+    #---------------------------------------------------------#
+    
+    # Layers vs Blocks (fixed M, HP)
+    for m in sorted(df['M'].unique()):
+        df_ = df[df['M'] == m]
+        for hp in sorted(df_['HP'].unique()):
+            df__ = df_[df_['HP'] == hp]
+            
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5))
+            fig.suptitle(f'Clusters={m}, Projection Heads={hp}')
 
-        # Test error heatmap
-        pivot_test = df_hp8.pivot_table(
-            values='test_rel_error',
-            index='Layers',
-            columns='Blocks',
-            aggfunc='mean'
-        )
-        sns.heatmap(pivot_test, annot=True, fmt='.4e', cmap=cmap, ax=ax2,
-                   norm=LogNorm(vmin=vmin, vmax=vmax))
-        ax2.set_title(f'Test Relative Error (M={m}, HP=8)')
-        ax2.set_xlabel('Number of blocks')
-        ax2.set_ylabel('Number of layers')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'heatmap_L_B_M{m}_HP8.png'))
-        plt.close()
-        
-        # Heatmap for Layers vs HP with Blocks=8 (train and test side by side)
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5))
-        
-        # Train error heatmap
-        df_b8 = df_m[df_m['Blocks'] == 8]
-        pivot_train = df_b8.pivot_table(
-            values='train_rel_error',
-            index='Layers',
-            columns='HP',
-            aggfunc='mean'
-        )
-        sns.heatmap(pivot_train, annot=True, fmt='.4e', cmap=cmap, ax=ax1,
-                   norm=LogNorm(vmin=vmin, vmax=vmax))
-        ax1.set_title(f'Train Relative Error (M={m}, Blocks=8)')
-        ax1.set_xlabel('Number of projection heads')
-        ax1.set_ylabel('Number of layers')
-        
-        # Test error heatmap
-        pivot_test = df_b8.pivot_table(
-            values='test_rel_error',
-            index='Layers',
-            columns='HP',
-            aggfunc='mean'
-        )
-        sns.heatmap(pivot_test, annot=True, fmt='.4e', cmap=cmap, ax=ax2,
-                   norm=LogNorm(vmin=vmin, vmax=vmax))
-        ax2.set_title(f'Test Relative Error (M={m}, Blocks=8)')
-        ax2.set_xlabel('Number of projection heads')
-        ax2.set_ylabel('Number of layers')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'heatmap_L_HP_M{m}_B8.png'))
-        plt.close()
+            pivot_train = df__.pivot_table(
+                values='train_rel_error',
+                index='Layers',
+                columns='Blocks',
+                aggfunc='mean'
+            )
+            pivot_test = df__.pivot_table(
+                values='test_rel_error',
+                index='Layers',
+                columns='Blocks',
+                aggfunc='mean'
+            )
+            if pivot_train.empty or pivot_test.empty:
+                plt.close()
+                continue
+            sns.heatmap(pivot_train, annot=True, fmt='.4e', cmap=cmap, ax=ax1, 
+                       norm=LogNorm(vmin=vmin, vmax=vmax))
+            ax1.set_title(f'Train Relative Error')
+            ax1.set_xlabel('Number of blocks')
+            ax1.set_ylabel('Number of layers')
+            sns.heatmap(pivot_test, annot=True, fmt='.4e', cmap=cmap, ax=ax2,
+                       norm=LogNorm(vmin=vmin, vmax=vmax))
+            ax2.set_title(f'Test Relative Error')
+            ax2.set_xlabel('Number of blocks')
+            ax2.set_ylabel('Number of layers')
+            plt.tight_layout()
+            plt.savefig(os.path.join(output_dir, f'heatmap_L_B_M{str(m).zfill(2)}_HP{str(hp).zfill(2)}.png'))
+            plt.close()
+    
+    #---------------------------------------------------------#
+    
+    # Layers vs HP (fixed M, Blocks)
+    for m in sorted(df['M'].unique()):
+        df_ = df[df['M'] == m]
+        for b in sorted(df_['Blocks'].unique()):
+            df__ = df_[df_['Blocks'] == b]
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5))
+            fig.suptitle(f'Clusters={m}, Blocks={b}')
 
+            pivot_train = df__.pivot_table(
+                values='train_rel_error', index='Layers', columns='HP', aggfunc='mean'
+            )
+            pivot_test = df__.pivot_table(
+                values='test_rel_error', index='Layers', columns='HP', aggfunc='mean'
+            )
+            if pivot_train.empty or pivot_test.empty:
+                plt.close()
+                continue
+            sns.heatmap(pivot_train, annot=True, fmt='.4e', cmap=cmap, ax=ax1,
+                       norm=LogNorm(vmin=vmin, vmax=vmax))
+            ax1.set_title(f'Train Relative Error')
+            ax1.set_xlabel('Number of projection heads')
+            ax1.set_ylabel('Number of layers')
+            sns.heatmap(pivot_test, annot=True, fmt='.4e', cmap=cmap, ax=ax2,
+                       norm=LogNorm(vmin=vmin, vmax=vmax))
+            ax2.set_title(f'Test Relative Error')
+            ax2.set_xlabel('Number of projection heads')
+            ax2.set_ylabel('Number of layers')
+            plt.tight_layout()
+            plt.savefig(os.path.join(output_dir, f'heatmap_L_HP_M{str(m).zfill(2)}_B{str(b).zfill(2)}.png'))
+            plt.close()
+
+    #---------------------------------------------------------#
+
+    return 
+    
 def create_line_plots(df, output_dir):
     """Create line plots showing the effect of different hyperparameters."""
     os.makedirs(output_dir, exist_ok=True)
     
+    #---------------------------------------------------------#
+    
     # Effect of number of layers (L) - train and test side by side
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
-    
+    fig.suptitle(f'Effect of Number of Layers')
     # Train error
     for b in sorted(df['B'].unique()):
         df_b = df[df['B'] == b]
-        ax1.semilogy(df_b['L'], df_b['train_rel_error'], 
-                marker='o', label=f'B={b}')
+        ax1.semilogy(df_b['L'], df_b['train_rel_error'], marker='o', label=f'B={b}')
     ax1.set_xlabel('Number of Layers (L)')
     ax1.set_ylabel('Train Relative Error (log scale)')
-    ax1.set_title('Effect of Number of Layers (Train)')
+    ax1.set_title('Train Relative Error (log scale)')
     ax1.legend()
     ax1.grid(True, which="both", ls="-", alpha=0.2)
     ax1.minorticks_on()
@@ -164,50 +185,54 @@ def create_line_plots(df, output_dir):
     # Test error
     for b in sorted(df['B'].unique()):
         df_b = df[df['B'] == b]
-        ax2.semilogy(df_b['L'], df_b['test_rel_error'], 
-                marker='o', label=f'B={b}')
+        ax2.semilogy(df_b['L'], df_b['test_rel_error'], marker='o', label=f'B={b}')
     ax2.set_xlabel('Number of Layers (L)')
     ax2.set_ylabel('Test Relative Error (log scale)')
-    ax2.set_title('Effect of Number of Layers (Test)')
+    ax2.set_title('Test Relative Error (log scale)')
     ax2.legend()
-    ax2.grid(True, which="both", ls="-", alpha=0.2)
+    ax2.grid(True, which="both", ls="-", alpha=0.5)
     ax2.minorticks_on()
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, 'lineplot_layers.png'))
     plt.close()
     
+    #---------------------------------------------------------#
+    
     # Effect of number of projection heads (HP) - train and test side by side
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
+    fig.suptitle(f'Effect of Number of Projection Heads')
     
     # Train error
     for b in sorted(df['B'].unique()):
         df_b = df[df['B'] == b]
-        ax1.semilogy(df_b['HP'], df_b['train_rel_error'], 
-                marker='o', label=f'B={b}')
+        ax1.semilogy(df_b.sort_values('HP')['HP'], df_b.sort_values('HP')['train_rel_error'], marker='o', label=f'B={b}')
     ax1.set_xlabel('Number of Projection Heads (HP)')
     ax1.set_ylabel('Train Relative Error (log scale)')
-    ax1.set_title('Effect of Number of Projection Heads (Train)')
+    ax1.set_title('Train Relative Error (log scale)')
     ax1.legend()
-    ax1.grid(True, which="both", ls="-", alpha=0.2)
+    ax1.grid(True, which="both", ls="-", alpha=0.5)
     ax1.minorticks_on()
     
     # Test error
     for b in sorted(df['B'].unique()):
         df_b = df[df['B'] == b]
-        ax2.semilogy(df_b['HP'], df_b['test_rel_error'], 
-                marker='o', label=f'B={b}')
+        ax2.semilogy(df_b.sort_values('HP')['HP'], df_b.sort_values('HP')['test_rel_error'], marker='o', label=f'B={b}')
     ax2.set_xlabel('Number of Projection Heads (HP)')
     ax2.set_ylabel('Test Relative Error (log scale)')
-    ax2.set_title('Effect of Number of Projection Heads (Test)')
+    ax2.set_title('Test Relative Error (log scale)')
     ax2.legend()
-    ax2.grid(True, which="both", ls="-", alpha=0.2)
+    ax2.grid(True, which="both", ls="-", alpha=0.5)
     ax2.minorticks_on()
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, 'lineplot_heads.png'))
     plt.close()
 
+    #---------------------------------------------------------#
+
+    return
+    
 def main():
     parser = argparse.ArgumentParser(description='Analyze hyperparameter results from a specific subdirectory')
     parser.add_argument('subdir', type=str, help='Subdirectory name in out/bench/results/ to analyze')
