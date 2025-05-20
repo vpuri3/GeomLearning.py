@@ -233,13 +233,14 @@ def scaling_study(dataset: str, gpu_count: int = None):
     job_queue = []
     for if_latent_mlp in [False, True]:
         for if_pointwise_mlp in [True, False]:
-            for channel_dim in [32, 64, 128, 256]:
-                for num_blocks in range(1, 9):
-                    for num_latent_blocks in range(0, 9):
-                        for num_projection_heads in [1, 2, 4, 8, 16, 32]:
-                            for num_heads in [8, 16, 32]:
-                                for num_clusters in [16, 32, 64, 128, 256]:
+            for channel_dim in [32, 64, 128, 256, 512]:
+                for num_clusters in [16, 32, 64, 128, 256, 512]:
+                    for num_blocks in range(1, 9):
+                        for num_latent_blocks in range(0, 9):
+                            for num_projection_heads in [1, 2, 4, 8, 16, 32]:
+                                for num_heads in [8, 16, 32]:
 
+                                    # Skip invalid configurations
                                     if (channel_dim % num_heads != 0) or (num_heads > channel_dim // 4):
                                         continue
                                     if (channel_dim % num_projection_heads != 0) or (num_projection_heads > channel_dim // 4):

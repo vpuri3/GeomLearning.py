@@ -26,6 +26,7 @@ ACTIVATIONS = {
 #======================================================================#
 # Vanilla Self-Attention Block, Residual MLP Block
 #======================================================================#
+
 class MLPBlock(nn.Module):
     def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, act: str = None):
         super().__init__()
