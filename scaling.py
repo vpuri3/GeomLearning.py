@@ -248,24 +248,33 @@ def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2
                                         if (channel_dim % num_projection_heads != 0) or (num_projection_heads > channel_dim // 8):
                                             continue
 
-                                        # #------------------------------------#
-                                        # # EXP 1: C = 64
-                                        # #------------------------------------#
-                                        # if channel_dim not in [64]:
-                                        #     continue
-                                        # if num_clusters not in [32, 64, 128]:
-                                        #     continue
-                                        # if num_projection_heads not in [1, 2, 4, 8]:
-                                        #     continue
                                         #------------------------------------#
-                                        # EXP 2: C = 128
+                                        # EXP 1: C = 64
                                         #------------------------------------#
-                                        if channel_dim not in [128]:
+                                        if channel_dim not in [64]:
                                             continue
                                         if num_clusters not in [32, 64, 128]:
                                             continue
                                         if num_projection_heads not in [1, 2, 4, 8]:
                                             continue
+                                        # #------------------------------------#
+                                        # # EXP 2: C = 128
+                                        # #------------------------------------#
+                                        # if channel_dim not in [128]:
+                                        #     continue
+                                        # if num_clusters not in [32, 64, 128]:
+                                        #     continue
+                                        # if num_projection_heads not in [1, 2, 4, 8]:
+                                        #     continue
+                                        # #------------------------------------#
+                                        # # EXP 3: C = 256
+                                        # #------------------------------------#
+                                        # if channel_dim not in [256]:
+                                        #     continue
+                                        # if num_clusters not in [32, 64, 128]:
+                                        #     continue
+                                        # if num_projection_heads not in [1, 2, 4, 8]:
+                                        #     continue
 
                                         #------------------------------------#
                                         exp_name = f'scaling_{dataset}_MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_B_{num_blocks}_LB_{num_latent_blocks}_HP_{num_projection_heads}_H_{num_heads}'
@@ -290,48 +299,58 @@ def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2
                                             'exp_name': exp_name
                                         })
 
-    ijob = 0
-    num_jobs = len(job_queue)
+    jobid = 0
+    njobs = len(job_queue)
     
     # Run jobs
     active_processes = [[] for _ in range(gpu_count)]
     while job_queue or any(len(p) > 0 for p in active_processes):
 
-        # Remove completed processes
+        # Check completed processes
         for i in range(gpu_count):
             # p.poll() returns None if the process is still running
+            for p in active_processes[i]:
+                if p.poll() is not None:
+                    if p.returncode != 0:
+                        print(f"Experiment {p.args[4]} failed on GPU {i}")
+                        # remove failed experiment and re-run
+                        os.rmdir(p.args[4])
+                        job_queue.append(job)
+
+            # Remove completed processes
             active_processes[i] = [p for p in active_processes[i] if p.poll() is None]
 
         # Start new jobs on available GPUs
-        for i in range(gpu_count):
-            while len(active_processes[i]) < max_jobs_per_gpu and job_queue:
-                job = job_queue.pop(0)
-                ijob += 1
-                print(f"Running job {ijob} / {num_jobs} on GPU {i}")
-                os.environ['CUDA_VISIBLE_DEVICES'] = str(i)
+        while any(len(p) < max_jobs_per_gpu for p in active_processes) and job_queue:
+            gpuid = min(range(gpu_count), key=lambda i: len(active_processes[i]))
+            os.environ['CUDA_VISIBLE_DEVICES'] = str(gpuid)
 
-                process = subprocess.Popen([
-                        'python', '-m', 'bench',
-                        '--exp_name', job['exp_name'],
-                        '--train', str('True'),
-                        '--model_type', str(1),
-                        '--dataset', dataset,
-                        # training arguments
-                        '--epochs', str(epochs),
-                        '--weight_decay', str(1e-5),
-                        '--batch_size', str(batch_size),
-                        # model arguments
-                        '--if_latent_mlp', str(job['if_latent_mlp']),
-                        '--if_pointwise_mlp', str(job['if_pointwise_mlp']),
-                        '--channel_dim', str(job['channel_dim']),
-                        '--num_blocks', str(job['num_blocks']),
-                        '--num_latent_blocks', str(job['num_latent_blocks']),
-                        '--num_projection_heads', str(job['num_projection_heads']),
-                        '--num_heads', str(job['num_heads']),
-                        '--num_clusters', str(job['num_clusters']),
-                    ], stdout=subprocess.DEVNULL)
+            print(f"Running job {jobid} / {njobs} on GPU {gpuid}")
 
-                active_processes[i].append(process)
+            job = job_queue.pop(0)
+            process = subprocess.Popen([
+                    'python', '-m', 'bench',
+                    '--exp_name', job['exp_name'],
+                    '--train', str('True'),
+                    '--model_type', str(1),
+                    '--dataset', dataset,
+                    # training arguments
+                    '--epochs', str(epochs),
+                    '--weight_decay', str(1e-5),
+                    '--batch_size', str(batch_size),
+                    # model arguments
+                    '--if_latent_mlp', str(job['if_latent_mlp']),
+                    '--if_pointwise_mlp', str(job['if_pointwise_mlp']),
+                    '--channel_dim', str(job['channel_dim']),
+                    '--num_blocks', str(job['num_blocks']),
+                    '--num_latent_blocks', str(job['num_latent_blocks']),
+                    '--num_projection_heads', str(job['num_projection_heads']),
+                    '--num_heads', str(job['num_heads']),
+                    '--num_clusters', str(job['num_clusters']),
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            active_processes[i].append(process)
+            jobid += 1
 
         # Wait 5 mins and check for completed jobs
         time.sleep(300)
