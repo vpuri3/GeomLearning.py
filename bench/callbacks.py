@@ -231,8 +231,11 @@ class RelL2Callback(mlutils.Callback):
 
             with open(os.path.join(ckpt_dir, '..', 'rel_error.json'), 'w') as f:
                 json.dump({'train_rel_error': _rel_error, 'test_rel_error': rel_error_}, f)
-            with open(os.path.join(ckpt_dir, '..', 'num_params.txt'), 'w') as f:
-                f.write(f'{sum(p.numel() for p in trainer.model.parameters())}')
+
+        if ckpt_dir.basename() == 'ckpt00':
+            if trainer.GLOBAL_RANK == 0:
+                with open(os.path.join(ckpt_dir, '..', 'num_params.txt'), 'w') as f:
+                    f.write(f'{sum(p.numel() for p in trainer.model.parameters())}')
 
         return
 

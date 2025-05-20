@@ -415,7 +415,7 @@ class Config:
     clip_grad_norm: float = 1.0
 
     # model
-    model_type: int = 0 # -1: MeshGraphNet, 0: Transolver, 1: ClusterAttentionTransformer, 9: SparseTransformer
+    model_type: int = 0 # -1: MeshGraphNet, 0: Transolver, 1: CAT, 9: SparseTransformer
     act: str = None
     channel_dim: int = 128
     num_blocks: int = 8

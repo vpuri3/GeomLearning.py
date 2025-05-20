@@ -19,10 +19,10 @@ def measure_memory_time(block, x, num_steps=10):
     for _ in range(10):
         _ = block(x)
     torch.cuda.synchronize()
-    
+
     y = torch.rand_like(x)
     lossfun = torch.nn.MSELoss()
-    
+
     # Measure memory
     torch.cuda.reset_peak_memory_stats()
     yh = block(x)
@@ -218,6 +218,14 @@ def memory_time_analysis():
 def scaling_study(dataset: str, gpu_count: int = None):
     if gpu_count is None:
         gpu_count = torch.cuda.device_count()
+    if dataset == 'elasticity':
+        epochs = 500
+        batch_size = 2
+    elif dataset == 'shapenet_car':
+        epochs = 200
+        batch_size = 1
+    else:
+        raise ValueError(f"Dataset {dataset} not supported")
         
     print(f"Using {gpu_count} GPUs to run scaling study on {dataset} dataset")
 
@@ -227,10 +235,16 @@ def scaling_study(dataset: str, gpu_count: int = None):
         for if_pointwise_mlp in [True, False]:
             for channel_dim in [32, 64, 128, 256]:
                 for num_blocks in range(1, 9):
-                    for num_latent_blocks in range(1, 9):
+                    for num_latent_blocks in range(0, 9):
                         for num_projection_heads in [1, 2, 4, 8, 16, 32]:
                             for num_heads in [8, 16, 32]:
                                 for num_clusters in [16, 32, 64, 128, 256]:
+
+                                    if (channel_dim % num_heads != 0) or (num_heads > channel_dim // 4):
+                                        continue
+                                    if (channel_dim % num_projection_heads != 0) or (num_projection_heads > channel_dim // 4):
+                                        continue
+
                                     job_queue.append({
                                         'if_latent_mlp': if_latent_mlp,
                                         'if_pointwise_mlp': if_pointwise_mlp,
@@ -239,7 +253,8 @@ def scaling_study(dataset: str, gpu_count: int = None):
                                         'num_latent_blocks': num_latent_blocks,
                                         'num_projection_heads': num_projection_heads,
                                         'num_heads': num_heads,
-                                        'num_clusters': num_clusters
+                                        'num_clusters': num_clusters,
+                                        'exp_name': f'scaling_study_{dataset}_MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_C_{channel_dim}_B_{num_blocks}_LB_{num_latent_blocks}_HP_{num_projection_heads}_H_{num_heads}_M_{num_clusters}'
                                     })
 
     num_jobs = len(job_queue)
@@ -262,9 +277,15 @@ def scaling_study(dataset: str, gpu_count: int = None):
 
                 active_processes[i] = subprocess.Popen([
                     'python', '-m', 'bench',
+                    '--exp_name', job['exp_name'],
                     '--train', str('True'),
+                    '--model_type', str(1),
                     '--dataset', dataset,
-                    '--epochs', '500',
+                    # training arguments
+                    '--epochs', str(epochs),
+                    '--weight_decay', str(1e-5),
+                    '--batch_size', str(batch_size),
+                    # model arguments
                     '--if_latent_mlp', str(job['if_latent_mlp']),
                     '--if_pointwise_mlp', str(job['if_pointwise_mlp']),
                     '--channel_dim', str(job['channel_dim']),
