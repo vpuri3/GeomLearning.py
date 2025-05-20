@@ -333,8 +333,6 @@ def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2
             gpuid = min(range(gpu_count), key=lambda i: len(active_processes[i]))
             os.environ['CUDA_VISIBLE_DEVICES'] = str(gpuid)
 
-            # print(f"Running job {jobid} / {njobs} on GPU {gpuid}")
-
             job = job_queue.pop(0)
             process = subprocess.Popen([
                     'python', '-m', 'bench',
