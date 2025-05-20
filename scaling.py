@@ -255,7 +255,7 @@ def scaling_study(dataset: str, gpu_count: int = None):
                                         'num_projection_heads': num_projection_heads,
                                         'num_heads': num_heads,
                                         'num_clusters': num_clusters,
-                                        'exp_name': f'scaling_study_{dataset}_MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_C_{channel_dim}_B_{num_blocks}_LB_{num_latent_blocks}_HP_{num_projection_heads}_H_{num_heads}_M_{num_clusters}'
+                                        'exp_name': f'scaling_{dataset}_MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_C_{channel_dim}_M_{num_clusters}_B_{num_blocks}_LB_{num_latent_blocks}_HP_{num_projection_heads}_H_{num_heads}'
                                     })
 
     num_jobs = len(job_queue)
