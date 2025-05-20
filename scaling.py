@@ -215,7 +215,7 @@ def memory_time_analysis():
     plot_results(df)
     print("Done! Results saved to cat_scaling.png")
     
-def scaling_study(dataset: str, gpu_count: int = None):
+def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2):
     if gpu_count is None:
         gpu_count = torch.cuda.device_count()
     if dataset == 'elasticity':
@@ -227,56 +227,90 @@ def scaling_study(dataset: str, gpu_count: int = None):
     else:
         raise ValueError(f"Dataset {dataset} not supported")
         
-    print(f"Using {gpu_count} GPUs to run scaling study on {dataset} dataset")
+    dir_name = os.path.join(f'scaling_{dataset}')
+    print(f"Using {gpu_count} GPUs to run scaling study on {dataset} dataset.")
 
     # Create a queue of all jobs
     job_queue = []
     for if_latent_mlp in [False, True]:
         for if_pointwise_mlp in [True, False]:
-            for channel_dim in [32, 64, 128, 256, 512]:
-                for num_clusters in [16, 32, 64, 128, 256, 512]:
-                    for num_blocks in range(1, 9):
-                        for num_latent_blocks in range(0, 9):
-                            for num_projection_heads in [1, 2, 4, 8, 16, 32]:
-                                for num_heads in [8, 16, 32]:
+            for cluster_head_mixing in [True, False]:
+                for channel_dim in [64, 128, 256, 512]:
+                    for num_clusters in [16, 32, 64, 128, 256, 512]:
+                        for num_blocks in [1, 2, 4, 8]:
+                            for num_latent_blocks in [0, 1, 2, 4, 8]:
+                                for num_projection_heads in [1, 2, 4, 8, 16, 32]:
+                                    for num_heads in [4, 8, 16, 32]:
 
-                                    # Skip invalid configurations
-                                    if (channel_dim % num_heads != 0) or (num_heads > channel_dim // 4):
-                                        continue
-                                    if (channel_dim % num_projection_heads != 0) or (num_projection_heads > channel_dim // 4):
-                                        continue
+                                        # Skip invalid configurations
+                                        if (channel_dim % num_heads != 0) or (num_heads > channel_dim // 16):
+                                            continue
+                                        if (channel_dim % num_projection_heads != 0) or (num_projection_heads > channel_dim // 8):
+                                            continue
+                                        
+                                        #------------------------------------#
+                                        # EXP 1: C = 64
+                                        #------------------------------------#
+                                        if channel_dim not in [64]:
+                                            continue
+                                        if num_clusters not in [32, 64, 128]:
+                                            continue
+                                        if num_projection_heads not in [1, 2, 4, 8]:
+                                            continue
+                                        # #------------------------------------#
+                                        # # EXP 2: C = 128
+                                        # #------------------------------------#
+                                        # if channel_dim not in [128]:
+                                        #     continue
+                                        # if num_clusters not in [32, 64, 128]:
+                                        #     continue
+                                        # if num_projection_heads not in [1, 2, 4, 8]:
+                                        #     continue
 
-                                    job_queue.append({
-                                        'if_latent_mlp': if_latent_mlp,
-                                        'if_pointwise_mlp': if_pointwise_mlp,
-                                        'channel_dim': channel_dim,
-                                        'num_blocks': num_blocks,
-                                        'num_latent_blocks': num_latent_blocks,
-                                        'num_projection_heads': num_projection_heads,
-                                        'num_heads': num_heads,
-                                        'num_clusters': num_clusters,
-                                        'exp_name': f'scaling_{dataset}_MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_C_{channel_dim}_M_{num_clusters}_B_{num_blocks}_LB_{num_latent_blocks}_HP_{num_projection_heads}_H_{num_heads}'
-                                    })
+                                        #------------------------------------#
+                                        exp_name = f'scaling_{dataset}_MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_B_{num_blocks}_LB_{num_latent_blocks}_HP_{num_projection_heads}_H_{num_heads}'
+                                        exp_name = os.path.join(dir_name, exp_name)
+                                        
+                                        if os.path.exists(exp_name):
+                                            if os.path.exists(os.path.join(exp_name, 'ckpt10', 'rel_error.json')):
+                                                continue
+                                            else:
+                                                print(f"Experiment {exp_name} exists but rel_error.json does not exist. Removing failed experiment and re-running.")
+                                                os.rmdir(exp_name)
 
+                                        job_queue.append({
+                                            'if_latent_mlp': if_latent_mlp,
+                                            'if_pointwise_mlp': if_pointwise_mlp,
+                                            'channel_dim': channel_dim,
+                                            'num_blocks': num_blocks,
+                                            'num_latent_blocks': num_latent_blocks,
+                                            'num_projection_heads': num_projection_heads,
+                                            'num_heads': num_heads,
+                                            'num_clusters': num_clusters,
+                                            'exp_name': exp_name
+                                        })
+
+    ijob = 0
     num_jobs = len(job_queue)
-
+    
     # Run jobs
-    active_processes = [None] * gpu_count
-    while job_queue or any(p is not None for p in active_processes):
-        # Check for completed processes
+    active_processes = [[] for _ in range(gpu_count)]
+    while job_queue or any(len(p) > 0 for p in active_processes):
+
+        # Remove completed processes
         for i in range(gpu_count):
-            if active_processes[i] is not None and active_processes[i].poll() is not None:
-                active_processes[i] = None
+            # p.poll() returns None if the process is still running
+            active_processes[i] = [p for p in active_processes[i] if p.poll() is None]
 
         # Start new jobs on available GPUs
         for i in range(gpu_count):
-            if active_processes[i] is None and job_queue:
+            while len(active_processes[i]) < max_jobs_per_gpu and job_queue:
                 job = job_queue.pop(0)
-
-                print(f"Running job {job} on GPU {i} / {num_jobs}")
+                ijob += 1
+                print(f"Running job {ijob} / {num_jobs} on GPU {i}")
                 os.environ['CUDA_VISIBLE_DEVICES'] = str(i)
 
-                active_processes[i] = subprocess.Popen([
+                process = subprocess.Popen([
                     'python', '-m', 'bench',
                     '--exp_name', job['exp_name'],
                     '--train', str('True'),
@@ -296,7 +330,9 @@ def scaling_study(dataset: str, gpu_count: int = None):
                     '--num_heads', str(job['num_heads']),
                     '--num_clusters', str(job['num_clusters']),
                 ])
+                active_processes[i].append(process)
 
+        # Wait 5 mins and check for completed jobs
         time.sleep(300)
 
 if __name__ == '__main__':
