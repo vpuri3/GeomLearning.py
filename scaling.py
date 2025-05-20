@@ -1,14 +1,16 @@
 #
 import os
 import time
-import psutil
+import shutil
+import subprocess
+from tqdm import tqdm
+
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import argparse
 import seaborn as sns
-import subprocess
 from bench.models.cat import ClusterAttentionBlock
 
 def count_parameters(model):
@@ -227,7 +229,6 @@ def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2
     else:
         raise ValueError(f"Dataset {dataset} not supported")
         
-    dir_name = os.path.join(f'scaling_{dataset}')
     print(f"Using {gpu_count} GPUs to run scaling study on {dataset} dataset.")
 
     # Create a queue of all jobs
@@ -271,21 +272,22 @@ def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2
                                         # #------------------------------------#
                                         # if channel_dim not in [256]:
                                         #     continue
-                                        # if num_clusters not in [32, 64, 128]:
+                                        # if num_clusters not in [32, 64, 128, 256]:
                                         #     continue
                                         # if num_projection_heads not in [1, 2, 4, 8]:
                                         #     continue
 
                                         #------------------------------------#
                                         exp_name = f'scaling_{dataset}_MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_B_{num_blocks}_LB_{num_latent_blocks}_HP_{num_projection_heads}_H_{num_heads}'
-                                        exp_name = os.path.join(dir_name, exp_name)
-
-                                        if os.path.exists(exp_name):
-                                            if os.path.exists(os.path.join(exp_name, 'ckpt10', 'rel_error.json')):
+                                        exp_name = os.path.join(f'scaling_{dataset}', exp_name)
+                                        
+                                        case_dir = os.path.join('.', 'out', 'bench', exp_name)
+                                        if os.path.exists(case_dir):
+                                            if os.path.exists(os.path.join(case_dir, 'ckpt10', 'rel_error.json')):
                                                 continue
                                             else:
-                                                print(f"Experiment {exp_name} exists but rel_error.json does not exist. Removing failed experiment and re-running.")
-                                                os.rmdir(exp_name)
+                                                print(f"Experiment {exp_name} exists but ckpt10/rel_error.json does not exist. Removing failed experiment and re-running.")
+                                                shutil.rmtree(case_dir)
 
                                         job_queue.append({
                                             'if_latent_mlp': if_latent_mlp,
@@ -302,6 +304,9 @@ def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2
     jobid = 0
     njobs = len(job_queue)
     
+    print(f"Running {njobs} jobs on {gpu_count} GPUs.")
+    pbar = tqdm(total=njobs, desc="Running jobs", ncols=80)
+
     # Run jobs
     active_processes = [[] for _ in range(gpu_count)]
     while job_queue or any(len(p) > 0 for p in active_processes):
@@ -312,10 +317,13 @@ def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2
             for p in active_processes[i]:
                 if p.poll() is not None:
                     if p.returncode != 0:
-                        print(f"Experiment {p.args[4]} failed on GPU {i}")
+                        print(f"\nExperiment {p.args[4]} failed on GPU {i}. Removing and re-running.")
                         # remove failed experiment and re-run
-                        os.rmdir(p.args[4])
+                        case_dir = os.path.join('.', 'out', 'bench', p.args[4])
+                        shutil.rmtree(case_dir)
                         job_queue.append(job)
+                        pbar.update(-1)
+                        jobid -= 1
 
             # Remove completed processes
             active_processes[i] = [p for p in active_processes[i] if p.poll() is None]
@@ -325,7 +333,7 @@ def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2
             gpuid = min(range(gpu_count), key=lambda i: len(active_processes[i]))
             os.environ['CUDA_VISIBLE_DEVICES'] = str(gpuid)
 
-            print(f"Running job {jobid} / {njobs} on GPU {gpuid}")
+            # print(f"Running job {jobid} / {njobs} on GPU {gpuid}")
 
             job = job_queue.pop(0)
             process = subprocess.Popen([
@@ -349,8 +357,10 @@ def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2
                     '--num_clusters', str(job['num_clusters']),
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-            active_processes[i].append(process)
+            active_processes[gpuid].append(process)
             jobid += 1
+            
+            pbar.update(1)
 
         # Wait 5 mins and check for completed jobs
         time.sleep(300)
