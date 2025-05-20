@@ -33,9 +33,9 @@ class GEGLU(nn.Module):
         return x * F.gelu(gates, **kw)
 
 if check_package_version_lteq('torch', '2.4.0'):
-    FastGELU = lambda: nn.GELU(approximate='tanh')
-else:
     FastGELU = nn.GELU
+else:
+    FastGELU = lambda: nn.GELU(approximate='tanh')
 
 ACTIVATIONS = {
     'gelu': FastGELU(),
