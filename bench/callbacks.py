@@ -174,10 +174,6 @@ class RelL2Callback(mlutils.Callback):
     @torch.no_grad()
     def evaluate(self, trainer: mlutils.Trainer, ckpt_dir: str):
         
-        # if trainer.GLOBAL_RANK == 0:
-        #     with open(os.path.join(ckpt_dir, 'rel_error.json'), 'w') as f:
-        #         json.dump(trainer.stat_vals, f)
-            
         trainer.model.eval()
         device = trainer.device
 
@@ -232,7 +228,12 @@ class RelL2Callback(mlutils.Callback):
             print(f'Relative Error (train / test): {_rel_error:.8e} / {rel_error_:.8e}')
             with open(os.path.join(ckpt_dir, 'rel_error.json'), 'w') as f:
                 json.dump({'train_rel_error': _rel_error, 'test_rel_error': rel_error_}, f)
-            
+
+            with open(os.path.join(ckpt_dir, '..', 'rel_error.json'), 'w') as f:
+                json.dump({'train_rel_error': _rel_error, 'test_rel_error': rel_error_}, f)
+            with open(os.path.join(ckpt_dir, '..', 'num_params.txt'), 'w') as f:
+                f.write(f'{sum(p.numel() for p in trainer.model.parameters())}')
+
         return
 
 #======================================================================#

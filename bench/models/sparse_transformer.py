@@ -257,7 +257,7 @@ class TS1Uncond(nn.Module):
     def __init__(self,
         in_dim,
         out_dim,
-        num_layers=5,
+        num_blocks=5,
         hidden_dim=128,
         dropout=0,
         num_heads=8,
@@ -272,7 +272,7 @@ class TS1Uncond(nn.Module):
         self.k_val = k_val
         self.gamma = 0.0
 
-        self.num_layers = num_layers
+        self.num_blocks = num_blocks
         self.num_slices = num_slices
         self.num_heads = num_heads
 
@@ -294,7 +294,7 @@ class TS1Uncond(nn.Module):
                 qk_norm=qk_norm,
                 k_val=k_val,
             )
-            for _ in range(num_layers)
+            for _ in range(num_blocks)
         ])
 
         self.final_layer = FinalLayer(hidden_dim, out_dim)

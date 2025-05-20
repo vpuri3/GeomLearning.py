@@ -112,11 +112,11 @@ def main(cfg, device):
 
     if time_cond:
         if cfg.model_type == -1:
-            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.channel_dim, cfg.num_layers)
+            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.channel_dim, cfg.num_blocks)
         elif cfg.model_type == 0:
             model = am.Transolver(
                 space_dim=c_in+1, out_dim=c_out, fun_dim=0,
-                n_hidden=cfg.channel_dim, n_layers=cfg.num_layers,
+                n_hidden=cfg.channel_dim, n_layers=cfg.num_blocks,
                 n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_clusters,
             )
         elif cfg.model_type == 1:
@@ -135,14 +135,14 @@ def main(cfg, device):
                 model_attr={"time": time_cond,}
             )
         elif cfg.model_type == -1:
-            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.channel_dim, cfg.num_layers)
+            model = am.MeshGraphNet(c_in, c_edge, c_out, cfg.channel_dim, cfg.num_blocks)
         elif cfg.model_type == 0:
             if GLOBAL_RANK == 0:
-                print(f"Using Transolver with {cfg.channel_dim} channel dim, {cfg.num_layers} layers, {cfg.num_heads} heads, {cfg.mlp_ratio} mlp ratio, {cfg.num_clusters} slices")
+                print(f"Using Transolver with {cfg.channel_dim} channel dim, {cfg.num_blocks} blocks, {cfg.num_heads} heads, {cfg.mlp_ratio} mlp ratio, {cfg.num_clusters} slices")
             if cfg.conv2d:
                 model = bench.Transolver_Structured_Mesh_2D(
                     space_dim=c_in, out_dim=c_out, fun_dim=0,
-                    n_hidden=cfg.channel_dim, n_layers=cfg.num_layers,
+                    n_hidden=cfg.channel_dim, n_layers=cfg.num_blocks,
                     n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_clusters,
                     H=metadata['H'], W=metadata['W'],
                     unified_pos=cfg.unified_pos,
@@ -150,7 +150,7 @@ def main(cfg, device):
             else:
                 model = bench.Transolver(
                     space_dim=c_in, out_dim=c_out, fun_dim=0,
-                    n_hidden=cfg.channel_dim, n_layers=cfg.num_layers,
+                    n_hidden=cfg.channel_dim, n_layers=cfg.num_blocks,
                     n_head=cfg.num_heads, mlp_ratio=cfg.mlp_ratio, slice_num=cfg.num_clusters,
                 )
         elif cfg.model_type == 1:
@@ -158,7 +158,7 @@ def main(cfg, device):
                 print(
                     f"Using CAT with\n" +
                     f"channel_dim={cfg.channel_dim}\n" +
-                    f"num_layers={cfg.num_layers}\n" +
+                    f"num_blocks={cfg.num_blocks}\n" +
                     f"num_heads={cfg.num_heads}\n" +
                     f"mlp_ratio={cfg.mlp_ratio}\n" +
                     f"num_clusters={cfg.num_clusters}\n" +
@@ -172,7 +172,7 @@ def main(cfg, device):
                 in_dim=c_in,
                 out_dim=c_out,
                 channel_dim=cfg.channel_dim,
-                num_layers=cfg.num_layers,
+                num_blocks=cfg.num_blocks,
                 num_heads=cfg.num_heads,
                 mlp_ratio=cfg.mlp_ratio,
                 num_clusters=cfg.num_clusters,
@@ -192,7 +192,7 @@ def main(cfg, device):
                 in_dim=c_in,
                 out_dim=c_out,
                 hidden_dim=cfg.channel_dim,
-                num_layers=cfg.num_layers,
+                num_blocks=cfg.num_blocks,
                 num_heads=cfg.num_heads,
                 mlp_ratio=cfg.mlp_ratio,
                 num_slices=cfg.num_clusters,
@@ -418,7 +418,7 @@ class Config:
     model_type: int = 0 # -1: MeshGraphNet, 0: Transolver, 1: ClusterAttentionTransformer, 9: SparseTransformer
     act: str = None
     channel_dim: int = 128
-    num_layers: int = 8
+    num_blocks: int = 8
     num_heads: int = 8
     mlp_ratio: float = 2.
     num_clusters: int = 64
