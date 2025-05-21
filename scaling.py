@@ -574,6 +574,18 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
         time.sleep(300)
     return
 
+def clean_scaling_study(dataset: str):
+    output_dir = os.path.join('.', 'out', 'bench', f'scaling_{dataset}')
+    for case_name in [d for d in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, d))]:
+        case_dir = os.path.join(output_dir, case_name)
+        if os.path.exists(os.path.join(case_dir, 'ckpt10', 'rel_error.json')):
+            for ckpt in [f'ckpt{i:02d}' for i in range(10)]:
+                if os.path.exists(os.path.join(case_dir, ckpt)):
+                    shutil.rmtree(os.path.join(case_dir, ckpt))
+        else:
+            shutil.rmtree(case_dir)
+    return
+
 #======================================================================#
 
 if __name__ == '__main__':
@@ -581,6 +593,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--eval', type=bool, default=False, help='Evaluate scaling study results')
     parser.add_argument('--train', type=bool, default=False, help='Train scaling study')
+    parser.add_argument('--clean', type=bool, default=False, help='Clean scaling study results')
 
     parser.add_argument('--dataset', type=str, default='elasticity', help='Dataset to use')
     parser.add_argument('--gpu-count', type=int, default=None, help='Number of GPUs to use')
@@ -591,9 +604,11 @@ if __name__ == '__main__':
         train_scaling_study(args.dataset, args.gpu_count)
     if args.eval:
         eval_scaling_study(args.dataset)
+    if args.clean:
+        clean_scaling_study(args.dataset)
         
-    if not args.train and not args.eval:
-        print("No action specified. Please specify either --train or --eval.")
+    if not args.train and not args.eval and not args.clean:
+        print("No action specified. Please specify either --train or --eval or --clean.")
         
     exit()
 #======================================================================#
