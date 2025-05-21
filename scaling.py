@@ -316,14 +316,14 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
         # Create pivot tables with numeric values for coloring
         pivot_train = df_.pivot_table(
             values='train_rel_error',
-            index='num_blocks',
-            columns='num_latent_blocks',
+            columns='num_blocks',
+            index='num_latent_blocks',
             aggfunc='mean'
         )
         pivot_test = df_.pivot_table(
             values='test_rel_error',
-            index='num_blocks',
-            columns='num_latent_blocks',
+            columns='num_blocks',
+            index='num_latent_blocks',
             aggfunc='mean'
         )
 
@@ -342,12 +342,12 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
 
         sns.heatmap(pivot_train, annot=annot_train, fmt='', cmap=cmap, ax=ax1, **linear_scale_kw, annot_kws=annot_kws)
         ax1.set_title(f'Train Relative Error')
-        ax1.set_xlabel('Number of blocks (B)')
         ax1.set_ylabel('Number of latent blocks (BL)')
+        ax1.set_xlabel('Number of blocks (B)')
         sns.heatmap(pivot_test, annot=annot_test, fmt='', cmap=cmap, ax=ax2, **linear_scale_kw, annot_kws=annot_kws)
         ax2.set_title(f'Test Relative Error')
-        ax2.set_xlabel('Number of blocks (B)')
         ax2.set_ylabel('Number of latent blocks (BL)')
+        ax2.set_xlabel('Number of blocks (B)')
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, f'heatmap_L_vs_LB_{name_str}.png'))
         plt.close()
@@ -377,7 +377,7 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
         batch_size = 1
     else:
         raise ValueError(f"Dataset {dataset} not supported")
-        
+
     print(f"Using {gpu_count} GPUs to run scaling study on {dataset} dataset.")
 
     # Create a queue of all jobs
