@@ -74,17 +74,21 @@ def collect_results(base_dir):
 
     return pd.DataFrame(results)
 
+def format_sci(x):
+    if pd.isna(x):
+        return ""
+    return f"{x:.2e}".replace("e+0", "e+").replace("e-0", "e-")
+
 def create_heatmaps(df, output_dir):
     """Create heatmaps for different hyperparameter combinations."""
     os.makedirs(output_dir, exist_ok=True)
     
-    vmin = 1e-3
-    vmax = 1e-2
-    cmap = 'YlOrRd'
+    cmap = 'RdYlBu_r'
+    vmin, vmax = (1e-3, 1e-2)
 
     # Rename columns for display
     df = df.rename(columns={'L': 'Layers', 'B': 'Blocks'})
-    
+
     #---------------------------------------------------------#
     
     # Layers vs Blocks (fixed M, HP)
@@ -111,13 +115,21 @@ def create_heatmaps(df, output_dir):
             if pivot_train.empty or pivot_test.empty:
                 plt.close()
                 continue
-            sns.heatmap(pivot_train, annot=True, fmt='.4e', cmap=cmap, ax=ax1, 
-                       norm=LogNorm(vmin=vmin, vmax=vmax))
+
+            # Create formatted annotations
+            annot_kws = {"size": 11, "weight": "bold"}
+            annot_train = pivot_train.map(format_sci)
+            annot_test = pivot_test.map(format_sci)
+        
+            # scale
+            linear_scale_kw = {'vmin': vmin, 'vmax': vmax}
+            log_scale_kw = {'norm': LogNorm(vmin=vmin, vmax=vmax)}
+
+            sns.heatmap(pivot_train, annot=annot_train, fmt='', cmap=cmap, ax=ax1, **linear_scale_kw, annot_kws=annot_kws)
             ax1.set_title(f'Train Relative Error')
             ax1.set_xlabel('Number of blocks')
             ax1.set_ylabel('Number of layers')
-            sns.heatmap(pivot_test, annot=True, fmt='.4e', cmap=cmap, ax=ax2,
-                       norm=LogNorm(vmin=vmin, vmax=vmax))
+            sns.heatmap(pivot_test, annot=annot_test, fmt='', cmap=cmap, ax=ax2, **linear_scale_kw, annot_kws=annot_kws)
             ax2.set_title(f'Test Relative Error')
             ax2.set_xlabel('Number of blocks')
             ax2.set_ylabel('Number of layers')
@@ -144,13 +156,21 @@ def create_heatmaps(df, output_dir):
             if pivot_train.empty or pivot_test.empty:
                 plt.close()
                 continue
-            sns.heatmap(pivot_train, annot=True, fmt='.4e', cmap=cmap, ax=ax1,
-                       norm=LogNorm(vmin=vmin, vmax=vmax))
+
+            # Create formatted annotations
+            annot_kws = {"size": 11, "weight": "bold"}
+            annot_train = pivot_train.map(format_sci)
+            annot_test = pivot_test.map(format_sci)
+        
+            # scale
+            linear_scale_kw = {'vmin': vmin, 'vmax': vmax}
+            log_scale_kw = {'norm': LogNorm(vmin=vmin, vmax=vmax)}
+
+            sns.heatmap(pivot_train, annot=annot_train, fmt='', cmap=cmap, ax=ax1, **linear_scale_kw, annot_kws=annot_kws)
             ax1.set_title(f'Train Relative Error')
             ax1.set_xlabel('Number of projection heads')
             ax1.set_ylabel('Number of layers')
-            sns.heatmap(pivot_test, annot=True, fmt='.4e', cmap=cmap, ax=ax2,
-                       norm=LogNorm(vmin=vmin, vmax=vmax))
+            sns.heatmap(pivot_test, annot=annot_test, fmt='', cmap=cmap, ax=ax2, **linear_scale_kw, annot_kws=annot_kws)
             ax2.set_title(f'Test Relative Error')
             ax2.set_xlabel('Number of projection heads')
             ax2.set_ylabel('Number of layers')

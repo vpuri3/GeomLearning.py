@@ -3,10 +3,12 @@ import os
 import time
 import shutil
 import subprocess
+import json, yaml
 from tqdm import tqdm
 
 import torch
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 import numpy as np
 import pandas as pd
 import argparse
@@ -51,10 +53,10 @@ def collect_data():
     channel_dim = [64, 128, 256]#, 512, 1024]
     num_clusters = [8, 16, 32, 64, 128, 256, 512]
     num_heads = [1, 2, 4, 8, 16, 32]
-    
+
     # Create empty list to store results
     results = []
-    
+
     for C in channel_dim:
         for M in num_clusters:
             for H in num_heads:
@@ -217,7 +219,154 @@ def memory_time_analysis():
     plot_results(df)
     print("Done! Results saved to cat_scaling.png")
     
-def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2):
+def collect_scaling_study_data(dataset: str):
+    data_dir = os.path.join('.', 'out', 'bench', f'scaling_{dataset}')
+
+    # Initialize empty dataframe
+    df = pd.DataFrame()
+
+    # Check if case directory exists
+    if os.path.exists(data_dir):
+        # Get all subdirectories (each represents a case)
+        cases = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
+        
+        for case in cases:
+            case_path = os.path.join(data_dir, case)
+            
+            # Initialize case data dictionary
+            case_data = {}
+            
+            # Check for and load relative error data
+            rel_error_path = os.path.join(case_path, 'ckpt10', 'rel_error.json')
+            if os.path.exists(rel_error_path):
+                with open(rel_error_path, 'r') as f:
+                    rel_error = json.load(f)
+                case_data.update({
+                    'train_rel_error': rel_error.get('train_rel_error'),
+                    'test_rel_error': rel_error.get('test_rel_error')
+                })
+            
+            # Load config data
+            assert os.path.exists(os.path.join(case_path, 'config.yaml'))
+            config_path = os.path.join(case_path, 'config.yaml')
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                case_data.update({
+                    'if_latent_mlp': config.get('if_latent_mlp'),
+                    'if_pointwise_mlp': config.get('if_pointwise_mlp'),
+                    'cluster_head_mixing': config.get('cluster_head_mixing'),
+                    'channel_dim': config.get('channel_dim'),
+                    'num_clusters': config.get('num_clusters'),
+                    'num_blocks': config.get('num_blocks'),
+                    'num_latent_blocks': config.get('num_latent_blocks'),
+                    'num_projection_heads': config.get('num_projection_heads'),
+                    'num_heads': config.get('num_heads'),
+                })
+            
+            # Add case data to dataframe
+            df = pd.concat([df, pd.DataFrame([case_data])], ignore_index=True)
+            
+        print(f"Collected {len(df)} cases for {dataset} dataset.")
+
+    return df
+
+def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
+
+    output_dir = os.path.join('.', 'out', 'bench', f'scaling_{dataset}_analysis')
+    os.makedirs(output_dir, exist_ok=True)
+    
+    #---------------------------------------------------------#
+    # HEATMAP of Blocks vs Latent Blocks
+    #---------------------------------------------------------
+    cmap = 'RdYlBu_r'
+    vmin, vmax = (1e-2, 1e-1) if dataset in ['shapenet_car'] else (1e-3, 1e-2)
+
+    configs = df[['if_latent_mlp', 'if_pointwise_mlp', 'cluster_head_mixing', 'channel_dim', 
+                 'num_clusters', 'num_projection_heads', 'num_heads']].drop_duplicates()
+    
+    print(f"Found {len(configs)} unique configurations.")
+    
+    for _, config in configs.iterrows():
+
+        if_latent_mlp = config['if_latent_mlp']
+        if_pointwise_mlp = config['if_pointwise_mlp']
+        cluster_head_mixing = config['cluster_head_mixing']
+        channel_dim = config['channel_dim']
+        num_clusters = config['num_clusters']
+        num_projection_heads = config['num_projection_heads']
+        num_heads = config['num_heads']
+
+        df_ = df[
+            (df['if_latent_mlp'] == if_latent_mlp) &
+            (df['if_pointwise_mlp'] == if_pointwise_mlp) &
+            (df['cluster_head_mixing'] == cluster_head_mixing) &
+            (df['channel_dim'] == channel_dim) &
+            (df['num_clusters'] == num_clusters) &
+            (df['num_projection_heads'] == num_projection_heads) &
+            (df['num_heads'] == num_heads)
+        ]
+        
+        name_str = f'MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_HP_{num_projection_heads}_H_{num_heads}'
+        title_str = f'Latent MLP: {if_latent_mlp}, Pointwise MLP: {if_pointwise_mlp}, Cluster Head Mixing: {cluster_head_mixing}, \nChannel Dim: {channel_dim}, # Clusters: {num_clusters}, # Projection Heads: {num_projection_heads}, # Heads: {num_heads}'
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5))
+        fig.suptitle(title_str)
+        
+        # Create pivot tables with numeric values for coloring
+        pivot_train = df_.pivot_table(
+            values='train_rel_error',
+            index='num_blocks',
+            columns='num_latent_blocks',
+            aggfunc='mean'
+        )
+        pivot_test = df_.pivot_table(
+            values='test_rel_error',
+            index='num_blocks',
+            columns='num_latent_blocks',
+            aggfunc='mean'
+        )
+
+        if pivot_train.empty or pivot_test.empty:
+            plt.close()
+            continue
+
+        # Create formatted annotations
+        annot_kws = {"size": 11, "weight": "bold"}
+        annot_train = pivot_train.map(format_sci)
+        annot_test = pivot_test.map(format_sci)
+        
+        # scale
+        linear_scale_kw = {'vmin': vmin, 'vmax': vmax}
+        log_scale_kw = {'norm': LogNorm(vmin=vmin, vmax=vmax)}
+
+        sns.heatmap(pivot_train, annot=annot_train, fmt='', cmap=cmap, ax=ax1, **linear_scale_kw, annot_kws=annot_kws)
+        ax1.set_title(f'Train Relative Error')
+        ax1.set_xlabel('Number of blocks (B)')
+        ax1.set_ylabel('Number of latent blocks (BL)')
+        sns.heatmap(pivot_test, annot=annot_test, fmt='', cmap=cmap, ax=ax2, **linear_scale_kw, annot_kws=annot_kws)
+        ax2.set_title(f'Test Relative Error')
+        ax2.set_xlabel('Number of blocks (B)')
+        ax2.set_ylabel('Number of latent blocks (BL)')
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'heatmap_L_vs_LB_{name_str}.png'))
+        plt.close()
+    
+    #---------------------------------------------------------#
+
+    return
+
+def format_sci(x):
+    if pd.isna(x):
+        return ""
+    return f"{x:.2e}".replace("e+0", "e+").replace("e-0", "e-")
+
+def eval_scaling_study(dataset: str):
+    df = collect_scaling_study_data(dataset)
+    plot_scaling_study_results(dataset, df)
+    return
+    
+def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2):
     if gpu_count is None:
         gpu_count = torch.cuda.device_count()
     if dataset == 'elasticity':
@@ -363,11 +512,26 @@ def scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2
         # Wait 5 mins and check for completed jobs
         time.sleep(300)
 
+#======================================================================#
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='CAT model scaling study')
-    parser.add_argument('--gpu-count', type=int, default=None, help='Number of GPUs to use')
+
+    parser.add_argument('--eval', type=bool, default=False, help='Evaluate scaling study results')
+    parser.add_argument('--train', type=bool, default=False, help='Train scaling study')
+
     parser.add_argument('--dataset', type=str, default='elasticity', help='Dataset to use')
+    parser.add_argument('--gpu-count', type=int, default=None, help='Number of GPUs to use')
+
     args = parser.parse_args()
-    
-    # memory_time_analysis() 
-    scaling_study(args.dataset, args.gpu_count)
+
+    if args.train:
+        train_scaling_study(args.dataset, args.gpu_count)
+    if args.eval:
+        eval_scaling_study(args.dataset)
+        
+    if not args.train and not args.eval:
+        print("No action specified. Please specify either --train or --eval.")
+        
+    exit()
+#======================================================================#
+#
