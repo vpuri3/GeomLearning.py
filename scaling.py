@@ -6,14 +6,17 @@ import subprocess
 import json, yaml
 from tqdm import tqdm
 
-import torch
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 from matplotlib.colors import LogNorm
+
 import numpy as np
 import pandas as pd
 import argparse
 import seaborn as sns
-from bench.models.cat import ClusterAttentionBlock
+
+import torch
+from bench.models.cat import ClusterAttentionTransformer, ClusterAttentionBlock
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters()) / 1000  # in thousands
@@ -233,6 +236,10 @@ def collect_scaling_study_data(dataset: str):
         for case in cases:
             case_path = os.path.join(data_dir, case)
             
+            assert os.path.exists(os.path.join(case_path, 'config.yaml'))
+            # assert os.path.exists(os.path.join(case_path, 'ckpt10', 'rel_error.json'))
+            assert os.path.exists(os.path.join(case_path, 'num_params.txt'))
+
             # Initialize case data dictionary
             case_data = {}
             
@@ -247,7 +254,6 @@ def collect_scaling_study_data(dataset: str):
                 })
             
             # Load config data
-            assert os.path.exists(os.path.join(case_path, 'config.yaml'))
             config_path = os.path.join(case_path, 'config.yaml')
             if os.path.exists(config_path):
                 with open(config_path, 'r') as f:
@@ -263,6 +269,13 @@ def collect_scaling_study_data(dataset: str):
                     'num_projection_heads': config.get('num_projection_heads'),
                     'num_heads': config.get('num_heads'),
                 })
+                
+            # Load num_params
+            num_params_path = os.path.join(case_path, 'num_params.txt')
+            if os.path.exists(num_params_path):
+                with open(num_params_path, 'r') as f:
+                    num_params = int(f.read().strip())
+                case_data.update({'num_params': num_params})
             
             # Add case data to dataframe
             df = pd.concat([df, pd.DataFrame([case_data])], ignore_index=True)
@@ -277,14 +290,14 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
     os.makedirs(output_dir, exist_ok=True)
     
     #---------------------------------------------------------#
-    # HEATMAP of Blocks vs Latent Blocks
+    # HEATMAP across Blocks vs Latent Blocks
     #---------------------------------------------------------
     cmap = 'RdYlBu_r'
     vmin, vmax = (1e-2, 1e-1) if dataset in ['shapenet_car'] else (1e-3, 1e-2)
 
     configs = df[['if_latent_mlp', 'if_pointwise_mlp', 'cluster_head_mixing', 'channel_dim', 
                  'num_clusters', 'num_projection_heads', 'num_heads']].drop_duplicates()
-    
+
     print(f"Found {len(configs)} unique configurations.")
     
     for _, config in configs.iterrows():
@@ -306,22 +319,22 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
             (df['num_projection_heads'] == num_projection_heads) &
             (df['num_heads'] == num_heads)
         ]
-        
+
         name_str = f'MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_HP_{num_projection_heads}_H_{num_heads}'
         title_str = f'Latent MLP: {if_latent_mlp}, Pointwise MLP: {if_pointwise_mlp}, Cluster Head Mixing: {cluster_head_mixing}, \nChannel Dim: {channel_dim}, # Clusters: {num_clusters}, # Projection Heads: {num_projection_heads}, # Heads: {num_heads}'
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5))
+        fig, ax = plt.subplots(figsize=(8, 6))
         fig.suptitle(title_str)
-        
-        # Create pivot tables with numeric values for coloring
-        pivot_train = df_.pivot_table(
-            values='train_rel_error',
+
+        # Create pivot tables with numeric values for coloring and annotations
+        pivot_test = df_.pivot_table(
+            values='test_rel_error',
             columns='num_blocks',
             index='num_latent_blocks',
             aggfunc='mean'
         )
-        pivot_test = df_.pivot_table(
-            values='test_rel_error',
+        pivot_train = df_.pivot_table(
+            values='train_rel_error',
             columns='num_blocks',
             index='num_latent_blocks',
             aggfunc='mean'
@@ -331,27 +344,56 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
             plt.close()
             continue
 
-        # Create formatted annotations
-        annot_kws = {"size": 11, "weight": "bold"}
-        annot_train = pivot_train.map(format_sci)
-        annot_test = pivot_test.map(format_sci)
-        
-        # scale
-        linear_scale_kw = {'vmin': vmin, 'vmax': vmax}
-        log_scale_kw = {'norm': LogNorm(vmin=vmin, vmax=vmax)}
+        # Create combined annotations
+        combined_annot = pd.DataFrame(index=pivot_test.index, columns=pivot_test.columns, dtype=str)
+        for i in range(combined_annot.shape[0]):
+            for j in range(combined_annot.shape[1]):
+                train_val = format_sci(pivot_train.iloc[i, j])
+                test_val = format_sci(pivot_test.iloc[i, j])
+                combined_annot.iloc[i, j] = f"{train_val}\n{test_val}"
 
-        sns.heatmap(pivot_train, annot=annot_train, fmt='', cmap=cmap, ax=ax1, **linear_scale_kw, annot_kws=annot_kws)
-        ax1.set_title(f'Train Relative Error')
-        ax1.set_ylabel('Number of latent blocks (BL)')
-        ax1.set_xlabel('Number of blocks (B)')
-        sns.heatmap(pivot_test, annot=annot_test, fmt='', cmap=cmap, ax=ax2, **linear_scale_kw, annot_kws=annot_kws)
-        ax2.set_title(f'Test Relative Error')
-        ax2.set_ylabel('Number of latent blocks (BL)')
-        ax2.set_xlabel('Number of blocks (B)')
+        annot_kws = {"size": 11, "weight": "bold"}
+        linear_scale_kw = {'vmin': vmin, 'vmax': vmax}
+
+        # RELATIVE ERROR HEATMAP
+        sns.heatmap(pivot_test, annot=combined_annot, fmt='', cmap=cmap, ax=ax, **linear_scale_kw, annot_kws=annot_kws, linewidths=0.5, linecolor='black')
+        ax.set_title('Test Relative Error (Color) with Train / Test Values')
+        ax.set_ylabel('Number of latent blocks (BL)')
+        ax.set_xlabel('Number of blocks (B)')
+        # Make all spines visible and set their linewidth
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_linewidth(0.5)
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, f'heatmap_L_vs_LB_{name_str}.png'))
         plt.close()
-    
+        
+        # PARAMETER COUNT HEATMAP
+        fig, ax = plt.subplots(figsize=(8, 6))
+        fig.suptitle(title_str)
+
+        pivot_params = df_.pivot_table(
+            values='num_params',
+            columns='num_blocks',
+            index='num_latent_blocks',
+            aggfunc='mean'
+        )
+        annot_params = pivot_params.map(lambda x: f"{x/1e6:.1f}m" if x > 1e6 else f"{x/1e3:.1f}k" if x > 1e3 else f"{x:.1f}")
+        
+        # Create a constant value matrix for white background
+        white_data = pd.DataFrame(0, index=pivot_params.index, columns=pivot_params.columns)
+        sns.heatmap(white_data, annot=annot_params, fmt='', ax=ax, annot_kws=annot_kws, linewidths=0.5, linecolor='black', cbar=False, cmap='Greys', vmin=0, vmax=1)
+        ax.set_title('Parameter Count')
+        ax.set_ylabel('Number of latent blocks (BL)')
+        ax.set_xlabel('Number of blocks (B)')
+        # Make all spines visible and set their linewidth
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_linewidth(0.5)
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'param_count_L_vs_LB_{name_str}.png'))
+        plt.close()
+
     #---------------------------------------------------------#
 
     return

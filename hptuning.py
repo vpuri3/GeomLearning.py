@@ -216,7 +216,7 @@ def create_line_plots(df, output_dir):
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, 'lineplot_layers.png'))
     plt.close()
-    
+
     #---------------------------------------------------------#
     
     # Effect of number of projection heads (HP) - train and test side by side
