@@ -18,9 +18,6 @@ import seaborn as sns
 import torch
 from bench.models.cat import ClusterAttentionTransformer, ClusterAttentionBlock
 
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters()) / 1000  # in thousands
-
 def measure_memory_time(block, x, num_steps=10):
     # Warmup
     for _ in range(10):
@@ -81,7 +78,8 @@ def collect_data():
                     cluster_head_mixing=True,
                 ).cuda()
                 
-                num_params = count_parameters(block)
+                import mlutils
+                num_params = mlutils.num_parameters(block)
                 
                 for N in num_points:
                     # Create input tensor
@@ -133,13 +131,13 @@ def plot_results(df):
             mask = (df['M'] == M) & (df['H'] == H)
             if not mask.any():
                 continue
-            
+
             config_data = df[mask]
             num_params = config_data['num_params'].iloc[0]
-            
+
             label = f'CAT Block [M={M}, H={H}] ({num_params:.1f}k params)'
             ax1.loglog(config_data['C'], config_data['memory_mib'], color=colors[i], label=label)
-    
+
     # Plot 2: Time vs Channel Dim
     for i, M in enumerate(num_clusters):
         for H in sorted(df['H'].unique()):
@@ -222,6 +220,7 @@ def memory_time_analysis():
     plot_results(df)
     print("Done! Results saved to cat_scaling.png")
     
+#======================================================================#
 def collect_scaling_study_data(dataset: str):
     data_dir = os.path.join('.', 'out', 'bench', f'scaling_{dataset}')
 
@@ -237,7 +236,6 @@ def collect_scaling_study_data(dataset: str):
             case_path = os.path.join(data_dir, case)
             
             assert os.path.exists(os.path.join(case_path, 'config.yaml'))
-            # assert os.path.exists(os.path.join(case_path, 'ckpt10', 'rel_error.json'))
             assert os.path.exists(os.path.join(case_path, 'num_params.txt'))
 
             # Initialize case data dictionary
@@ -288,7 +286,7 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
 
     output_dir = os.path.join('.', 'out', 'bench', f'scaling_{dataset}_analysis')
     os.makedirs(output_dir, exist_ok=True)
-    
+
     #---------------------------------------------------------#
     # HEATMAP across Blocks vs Latent Blocks
     #---------------------------------------------------------
@@ -299,7 +297,7 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
                  'num_clusters', 'num_projection_heads', 'num_heads']].drop_duplicates()
 
     print(f"Found {len(configs)} unique configurations.")
-    
+
     for _, config in configs.iterrows():
 
         if_latent_mlp = config['if_latent_mlp']
@@ -321,7 +319,7 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
         ]
 
         name_str = f'MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_HP_{num_projection_heads}_H_{num_heads}'
-        title_str = f'Latent MLP: {if_latent_mlp}, Pointwise MLP: {if_pointwise_mlp}, Cluster Head Mixing: {cluster_head_mixing}, \nChannel Dim: {channel_dim}, # Clusters: {num_clusters}, # Projection Heads: {num_projection_heads}, # Heads: {num_heads}'
+        title_str = f'Latent MLP: {if_latent_mlp}, Pointwise MLP: {if_pointwise_mlp}, Cluster Head Mixing: {cluster_head_mixing}, \nChannel Dim: {channel_dim}, # Clusters: {num_clusters}, # Projection Heads: {num_projection_heads}, # Self-Attention Heads: {num_heads}'
 
         fig, ax = plt.subplots(figsize=(8, 6))
         fig.suptitle(title_str)
@@ -339,10 +337,17 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
             index='num_latent_blocks',
             aggfunc='mean'
         )
+        pivot_params = df_.pivot_table(
+            values='num_params',
+            columns='num_blocks',
+            index='num_latent_blocks',
+            aggfunc='mean'
+        )
 
         if pivot_train.empty or pivot_test.empty:
             plt.close()
             continue
+        # annot_params = pivot_params.map(lambda x: format_param(x))
 
         # Create combined annotations
         combined_annot = pd.DataFrame(index=pivot_test.index, columns=pivot_test.columns, dtype=str)
@@ -350,64 +355,54 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
             for j in range(combined_annot.shape[1]):
                 train_val = format_sci(pivot_train.iloc[i, j])
                 test_val = format_sci(pivot_test.iloc[i, j])
-                combined_annot.iloc[i, j] = f"{train_val}\n{test_val}"
+                params_val = format_param(pivot_params.iloc[i, j])
+                combined_annot.iloc[i, j] = f"{train_val}\n{test_val}\n{params_val}"
 
         annot_kws = {"size": 11, "weight": "bold"}
         linear_scale_kw = {'vmin': vmin, 'vmax': vmax}
 
-        # RELATIVE ERROR HEATMAP
-        sns.heatmap(pivot_test, annot=combined_annot, fmt='', cmap=cmap, ax=ax, **linear_scale_kw, annot_kws=annot_kws, linewidths=0.5, linecolor='black')
-        ax.set_title('Test Relative Error (Color) with Train / Test Values')
+        heatmap = sns.heatmap(pivot_test, annot=combined_annot, fmt='', cmap=cmap, ax=ax, **linear_scale_kw, annot_kws=annot_kws, linewidths=0.5, linecolor='black')
+
+        # Format colorbar ticks in scientific notation
+        cbar = heatmap.collections[0].colorbar
+        cbar.formatter.set_powerlimits((0, 0))
+        cbar.update_ticks()
+        cbar.set_label('Test relative error')
+
+        ax.set_title('Train relative error/ test relative error/ parameter count')
         ax.set_ylabel('Number of latent blocks (BL)')
         ax.set_xlabel('Number of blocks (B)')
-        # Make all spines visible and set their linewidth
         for spine in ax.spines.values():
             spine.set_visible(True)
             spine.set_linewidth(0.5)
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, f'heatmap_L_vs_LB_{name_str}.png'))
         plt.close()
-        
-        # PARAMETER COUNT HEATMAP
-        fig, ax = plt.subplots(figsize=(8, 6))
-        fig.suptitle(title_str)
-
-        pivot_params = df_.pivot_table(
-            values='num_params',
-            columns='num_blocks',
-            index='num_latent_blocks',
-            aggfunc='mean'
-        )
-        annot_params = pivot_params.map(lambda x: f"{x/1e6:.1f}m" if x > 1e6 else f"{x/1e3:.1f}k" if x > 1e3 else f"{x:.1f}")
-        
-        # Create a constant value matrix for white background
-        white_data = pd.DataFrame(0, index=pivot_params.index, columns=pivot_params.columns)
-        sns.heatmap(white_data, annot=annot_params, fmt='', ax=ax, annot_kws=annot_kws, linewidths=0.5, linecolor='black', cbar=False, cmap='Greys', vmin=0, vmax=1)
-        ax.set_title('Parameter Count')
-        ax.set_ylabel('Number of latent blocks (BL)')
-        ax.set_xlabel('Number of blocks (B)')
-        # Make all spines visible and set their linewidth
-        for spine in ax.spines.values():
-            spine.set_visible(True)
-            spine.set_linewidth(0.5)
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'param_count_L_vs_LB_{name_str}.png'))
-        plt.close()
 
     #---------------------------------------------------------#
-
     return
+
+#======================================================================#
+def format_param(x):
+    if x > 1e6:
+        return f"{x/1e6:.1f}m"
+    elif x > 1e3:
+        return f"{x/1e3:.1f}k"
+    else:
+        return f"{x:.1f}"
 
 def format_sci(x):
     if pd.isna(x):
         return ""
     return f"{x:.2e}".replace("e+0", "e+").replace("e-0", "e-")
 
+#======================================================================#
 def eval_scaling_study(dataset: str):
     df = collect_scaling_study_data(dataset)
     plot_scaling_study_results(dataset, df)
     return
-    
+
+#======================================================================#
 def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2):
     if gpu_count is None:
         gpu_count = torch.cuda.device_count()
@@ -435,9 +430,34 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
                                     for num_heads in [4, 8, 16, 32]:
 
                                         # Skip invalid configurations
-                                        if (channel_dim % num_heads != 0) or (num_heads > channel_dim // 16):
+                                        if num_heads == 0:
                                             continue
-                                        if (channel_dim % num_projection_heads != 0) or (num_projection_heads > channel_dim // 8):
+                                        if num_projection_heads == 0:
+                                            continue
+                                        if channel_dim % num_heads != 0:
+                                            continue
+                                        if channel_dim % num_projection_heads != 0:
+                                            continue
+
+                                        head_dim = channel_dim // num_heads
+                                        projection_head_dim = channel_dim // num_projection_heads
+
+                                        # ensure MHA head_dim is bw 16 and 64
+                                        if (head_dim < 16) or (head_dim > 64):
+                                            continue
+                                        # ensure projection head dim is at least 4
+                                        if projection_head_dim < 4:
+                                            continue
+
+                                        # # only run with head_dim == 16 and if_latent_mlp = False
+                                        # # for other cases, we will duplicate rows in the DF
+                                        # if num_latent_blocks == 0:
+                                        #     if not if_latent_mlp:
+                                        #         continue
+                                        #     if head_dim != 16:
+                                        #         continue
+
+                                        if num_blocks * num_latent_blocks >= 32:
                                             continue
 
                                         #------------------------------------#
@@ -446,8 +466,6 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
                                         if channel_dim not in [64]:
                                             continue
                                         if num_clusters not in [32, 64, 128]:
-                                            continue
-                                        if num_projection_heads not in [1, 2, 4, 8]:
                                             continue
                                         # #------------------------------------#
                                         # # EXP 2: C = 128
@@ -475,9 +493,10 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
                                         case_dir = os.path.join('.', 'out', 'bench', exp_name)
                                         if os.path.exists(case_dir):
                                             if os.path.exists(os.path.join(case_dir, 'ckpt10', 'rel_error.json')):
+                                                print(f"Experiment {exp_name} exists. Skipping.")
                                                 continue
                                             else:
-                                                print(f"Experiment {exp_name} exists but ckpt10/rel_error.json does not exist. Removing failed experiment and re-running.")
+                                                print(f"Experiment {exp_name} exists but ckpt10/rel_error.json does not exist. Removing and re-running.")
                                                 shutil.rmtree(case_dir)
 
                                         job_queue.append({
@@ -553,8 +572,10 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
 
         # Wait 5 mins and check for completed jobs
         time.sleep(300)
+    return
 
 #======================================================================#
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='CAT model scaling study')
 
