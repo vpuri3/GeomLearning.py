@@ -235,8 +235,10 @@ def collect_scaling_study_data(dataset: str):
         for case in cases:
             case_path = os.path.join(data_dir, case)
             
-            assert os.path.exists(os.path.join(case_path, 'config.yaml'))
-            assert os.path.exists(os.path.join(case_path, 'num_params.txt'))
+            if not os.path.exists(os.path.join(case_path, 'config.yaml')):
+                continue
+            if not os.path.exists(os.path.join(case_path, 'num_params.txt')):
+                continue
 
             # Initialize case data dictionary
             case_data = {}
@@ -267,7 +269,7 @@ def collect_scaling_study_data(dataset: str):
                     'num_projection_heads': config.get('num_projection_heads'),
                     'num_heads': config.get('num_heads'),
                 })
-                
+
             # Load num_params
             num_params_path = os.path.join(case_path, 'num_params.txt')
             if os.path.exists(num_params_path):
@@ -277,7 +279,10 @@ def collect_scaling_study_data(dataset: str):
             
             # Add case data to dataframe
             df = pd.concat([df, pd.DataFrame([case_data])], ignore_index=True)
-            
+
+            df['head_dim'] = df['channel_dim'] // df['num_heads']
+            df['projection_head_dim'] = df['channel_dim'] // df['num_projection_heads']
+
         print(f"Collected {len(df)} cases for {dataset} dataset.")
 
     return df
@@ -296,7 +301,7 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
     configs = df[['if_latent_mlp', 'if_pointwise_mlp', 'cluster_head_mixing', 'channel_dim', 
                  'num_clusters', 'num_projection_heads', 'num_heads']].drop_duplicates()
 
-    print(f"Found {len(configs)} unique configurations.")
+    print(f"Found {len(configs)} unique configurations for B vs BL heatmap.")
 
     for _, config in configs.iterrows():
 
@@ -380,6 +385,69 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
         plt.close()
 
     #---------------------------------------------------------#
+    # LINEPLOT of test error vs projection head dim
+    #---------------------------------------------------------
+    
+    df_ = df
+    #
+    df_ = df_[df_['cluster_head_mixing'] == True]
+    df_ = df_[df_['if_latent_mlp'] == False]
+    df_ = df_[df_['if_pointwise_mlp'] == True]
+    #
+    df_ = df_[df_['num_blocks'].isin([8])]
+    df_ = df_[df_['num_latent_blocks'].isin([0,1])]
+    # df_ = df_[df_['num_clusters'].isin([32,64])]
+
+    configs = df_[['if_latent_mlp', 'if_pointwise_mlp', 'cluster_head_mixing', 'channel_dim', 
+                 'num_blocks', 'num_latent_blocks', 'num_clusters', 'num_heads']].drop_duplicates()
+
+    print(f"Found {len(configs)} unique configurations for projection head dim lineplot.")
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.set_xscale('log', base=2)
+    ax.set_yscale('log')
+    ax.grid(True, which="both", ls="-", alpha=0.5)
+    ax.set_xlabel('Projection head dimension')
+    ax.set_ylabel('Test relative error')
+    ax.set_title(f'Test relative error vs projection head dimension')
+    
+    for _, config in configs.iterrows():
+
+        # if_latent_mlp = config['if_latent_mlp']
+        # if_pointwise_mlp = config['if_pointwise_mlp']
+        # cluster_head_mixing = config['cluster_head_mixing']
+        channel_dim = config['channel_dim']
+        num_blocks = config['num_blocks']
+        num_latent_blocks = config['num_latent_blocks']
+        num_clusters = config['num_clusters']
+        num_heads = config['num_heads']
+
+        if num_latent_blocks == 0:
+            label = f'C={channel_dim}, B={num_blocks}, BL={num_latent_blocks}, M={num_clusters}, H={num_heads}'
+        else:
+            label = f'C={channel_dim}, B={num_blocks}, BL={num_latent_blocks}, M={num_clusters}'
+
+        df__ = df_[
+            (df_['channel_dim'] == channel_dim) &
+            (df_['num_blocks'] == num_blocks) &
+            (df_['num_latent_blocks'] == num_latent_blocks) &
+            (df_['num_clusters'] == num_clusters) &
+            (df_['num_heads'] == num_heads)
+        ]
+
+        df__ = df__.sort_values(by='projection_head_dim')
+
+        if df__.empty:
+            continue
+
+        linestyle=':' if num_latent_blocks == 1 else '-'
+        ax.plot(df__['projection_head_dim'], df__['test_rel_error'], label=label, marker='o', linestyle=linestyle)
+
+    ax.legend()
+    plt.savefig(os.path.join(output_dir, f'lineplot_projection_head_dim.png'))
+    plt.close()
+
+    #---------------------------------------------------------#
     return
 
 #======================================================================#
@@ -424,8 +492,8 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
             for cluster_head_mixing in [True, False]:
                 for channel_dim in [64, 128, 256, 512]:
                     for num_clusters in [16, 32, 64, 128, 256, 512]:
-                        for num_blocks in [1, 2, 4, 8]:
-                            for num_latent_blocks in [0, 1, 2, 4, 8]:
+                        for num_blocks in [1, 2, 4, 8, 16, 32]:
+                            for num_latent_blocks in [0, 1, 2, 4, 8, 16, 32]:
                                 for num_projection_heads in [1, 2, 4, 8, 16, 32]:
                                     for num_heads in [4, 8, 16, 32]:
 
@@ -437,6 +505,8 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
                                         if channel_dim % num_heads != 0:
                                             continue
                                         if channel_dim % num_projection_heads != 0:
+                                            continue
+                                        if not if_pointwise_mlp and not if_latent_mlp:
                                             continue
 
                                         head_dim = channel_dim // num_heads
@@ -461,32 +531,22 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
                                             continue
 
                                         #------------------------------------#
-                                        # EXP 1: C = 64
+                                        # EXP: C = 64, Cluster Head Mixing = False
                                         #------------------------------------#
+                                        if not cluster_head_mixing:
+                                            continue
+                                        if if_latent_mlp:
+                                            continue
+                                        if not if_pointwise_mlp:
+                                            continue
                                         if channel_dim not in [64]:
                                             continue
-                                        if num_clusters not in [32, 64, 128]:
+                                        if num_clusters not in [32]:
                                             continue
-                                        # #------------------------------------#
-                                        # # EXP 2: C = 128
-                                        # #------------------------------------#
-                                        # if channel_dim not in [128]:
-                                        #     continue
-                                        # if num_clusters not in [32, 64, 128]:
-                                        #     continue
-                                        # if num_projection_heads not in [1, 2, 4, 8]:
-                                        #     continue
-                                        # #------------------------------------#
-                                        # # EXP 3: C = 256
-                                        # #------------------------------------#
-                                        # if channel_dim not in [256]:
-                                        #     continue
-                                        # if num_clusters not in [32, 64, 128, 256]:
-                                        #     continue
-                                        # if num_projection_heads not in [1, 2, 4, 8]:
-                                        #     continue
-
+                                        if num_heads not in [4]:
+                                            continue
                                         #------------------------------------#
+
                                         exp_name = f'scaling_{dataset}_MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_B_{num_blocks}_LB_{num_latent_blocks}_HP_{num_projection_heads}_H_{num_heads}'
                                         exp_name = os.path.join(f'scaling_{dataset}', exp_name)
                                         
@@ -582,12 +642,13 @@ def clean_scaling_study(dataset: str):
             for ckpt in [f'ckpt{i:02d}' for i in range(10)]:
                 if os.path.exists(os.path.join(case_dir, ckpt)):
                     shutil.rmtree(os.path.join(case_dir, ckpt))
+            if os.path.exists(os.path.join(case_dir, 'ckpt10', 'model.pt')):
+                os.remove(os.path.join(case_dir, 'ckpt10', 'model.pt'))
         else:
             shutil.rmtree(case_dir)
     return
 
 #======================================================================#
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='CAT model scaling study')
 
@@ -609,7 +670,8 @@ if __name__ == '__main__':
         
     if not args.train and not args.eval and not args.clean:
         print("No action specified. Please specify either --train or --eval or --clean.")
-        
+
     exit()
+
 #======================================================================#
 #
