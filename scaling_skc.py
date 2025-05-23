@@ -275,7 +275,7 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
         for channel_dim in [64, 128]:
             for num_clusters in [16, 32, 64]:
                 for num_blocks in [2, 4, 8]:
-                    for head_dim in [4, 8, 16]:
+                    for head_dim in [4, 8, 16, 32]:
 
                         num_heads = channel_dim // head_dim
 

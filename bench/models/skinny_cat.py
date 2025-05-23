@@ -72,7 +72,10 @@ class ClusterHeadMixingConv(nn.Module):
         return x
 
 class ClusterAttention(nn.Module):
-    def __init__(self, channel_dim, num_heads=8, num_clusters=32, act=None):
+    def __init__(
+        self, channel_dim, num_heads=8, num_clusters=32, act=None,
+        cluster_head_mixing=True,
+        ):
         super().__init__()
 
         # further, more num_layers work better.
@@ -97,7 +100,9 @@ class ClusterAttention(nn.Module):
             num_layers=2, act=act, input_residual=True, output_residual=True,
         ) for _ in range(2)]
 
-        self.mix = ClusterHeadMixingConv(self.num_heads, self.num_clusters)
+        self.cluster_head_mixing = cluster_head_mixing
+        if self.cluster_head_mixing:
+            self.mix = ClusterHeadMixingConv(self.num_heads, self.num_clusters)
         self.out_proj = nn.Linear(self.channel_dim, self.channel_dim)
 
     def forward(self, x):
@@ -111,7 +116,8 @@ class ClusterAttention(nn.Module):
         v = rearrange(self.v_proj(x), 'b n (h d) -> b h n d', h=self.num_heads)
 
         scores = einsum(q, k, 'h m d, b h n d -> b h m n') # [B H M N]
-        scores = self.mix(scores)
+        if self.cluster_head_mixing:
+            scores = self.mix(scores)
 
         encode_weights = F.softmax(scores, dim=-1) # sum over N
         decode_weights = F.softmax(scores, dim=-2) # sum over M
@@ -138,6 +144,7 @@ class ClusterAttentionBlock(nn.Module):
             num_heads=8,
             num_clusters=32,
             act=None,
+            cluster_head_mixing=True,
     ):
         super().__init__()
         self.ln1 = nn.LayerNorm(channel_dim)
@@ -145,6 +152,7 @@ class ClusterAttentionBlock(nn.Module):
         self.att = ClusterAttention(
             channel_dim, num_heads=num_heads,
             num_clusters=num_clusters, act=act,
+            cluster_head_mixing=cluster_head_mixing,
         )
         self.mlp = ResidualMLP(
             in_dim=channel_dim, hidden_dim=channel_dim, out_dim=channel_dim,
@@ -184,6 +192,7 @@ class SkinnyCAT(nn.Module):
         num_clusters: int = 32,
         num_heads: int = 8,
         act: str = None,
+        cluster_head_mixing: bool = True,
     ):
         super().__init__()
 
@@ -198,6 +207,7 @@ class SkinnyCAT(nn.Module):
                 num_clusters=num_clusters,
                 num_heads=num_heads,
                 act=act,
+                cluster_head_mixing=cluster_head_mixing,
             )
             for _ in range(num_blocks)
         ])

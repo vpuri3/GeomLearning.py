@@ -190,7 +190,8 @@ def main(cfg, device):
                     f"channel_dim={cfg.channel_dim}\n" +
                     f"num_blocks={cfg.num_blocks}\n" +
                     f"num_clusters={cfg.num_clusters}\n" +
-                    f"num_heads={cfg.num_heads}\n"
+                    f"num_heads={cfg.num_heads}\n" +
+                    f"cluster_head_mixing={cfg.cluster_head_mixing}"
                 )
             model = bench.SkinnyCAT(
                 in_dim=c_in,
@@ -200,6 +201,7 @@ def main(cfg, device):
                 num_clusters=cfg.num_clusters,
                 num_heads=cfg.num_heads,
                 act=cfg.act,
+                cluster_head_mixing=cfg.cluster_head_mixing,
             )
         elif cfg.model_type == 9:
             if GLOBAL_RANK == 0:
