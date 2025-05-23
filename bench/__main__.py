@@ -189,18 +189,16 @@ def main(cfg, device):
                     f"Using SkinnyCAT with\n" +
                     f"channel_dim={cfg.channel_dim}\n" +
                     f"num_blocks={cfg.num_blocks}\n" +
-                    f"mlp_ratio={cfg.mlp_ratio}\n" +
                     f"num_clusters={cfg.num_clusters}\n" +
-                    f"num_projection_heads={cfg.num_projection_heads}\n"
+                    f"num_heads={cfg.num_heads}\n"
                 )
             model = bench.SkinnyCAT(
                 in_dim=c_in,
                 out_dim=c_out,
                 channel_dim=cfg.channel_dim,
                 num_blocks=cfg.num_blocks,
-                mlp_ratio=cfg.mlp_ratio,
                 num_clusters=cfg.num_clusters,
-                num_projection_heads=cfg.num_projection_heads,
+                num_heads=cfg.num_heads,
                 act=cfg.act,
             )
         elif cfg.model_type == 9:

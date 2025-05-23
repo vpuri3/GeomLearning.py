@@ -15,214 +15,9 @@ import pandas as pd
 import argparse
 import seaborn as sns
 
-import torch
-from bench.models.cat import ClusterAttentionTransformer, ClusterAttentionBlock
-
-def measure_memory_time(block, x, num_steps=10):
-    # Warmup
-    for _ in range(10):
-        _ = block(x)
-    torch.cuda.synchronize()
-
-    y = torch.rand_like(x)
-    lossfun = torch.nn.MSELoss()
-
-    # Measure memory
-    torch.cuda.reset_peak_memory_stats()
-    yh = block(x)
-    loss = lossfun(yh, y)
-    loss.backward()
-    torch.cuda.synchronize()
-    memory = torch.cuda.max_memory_allocated() / (1024 * 1024)  # Convert to MiB
-    
-    # Measure time
-    torch.cuda.synchronize()
-    start_time = time.time()
-    for _ in range(num_steps):
-        yh = block(x)
-        loss = lossfun(yh, y)
-        loss.backward()
-    torch.cuda.synchronize()
-    time_taken = (time.time() - start_time) * 1000  # Convert to ms
-
-    return memory, time_taken
-
-def collect_data():
-    # Test configurations
-    num_points = [1024]  # Only N=1024
-    channel_dim = [64, 128, 256]#, 512, 1024]
-    num_clusters = [8, 16, 32, 64, 128, 256, 512]
-    num_heads = [1, 2, 4, 8, 16, 32]
-
-    # Create empty list to store results
-    results = []
-
-    for C in channel_dim:
-        for M in num_clusters:
-            for H in num_heads:
-                # Skip invalid configurations
-                if (C % H != 0) or (H > C // 2):
-                    continue
-
-                print(f'Case: C={C}, M={M}, H={H}')
-
-                # Create block
-                block = ClusterAttentionBlock(
-                    num_heads=H,
-                    channel_dim=C,
-                    num_clusters=M,
-                    num_projection_heads=H,
-                    num_latent_blocks=1,
-                    if_latent_mlp=False,
-                    if_pointwise_mlp=True,
-                    cluster_head_mixing=True,
-                ).cuda()
-                
-                import mlutils
-                num_params = mlutils.num_parameters(block)
-                
-                for N in num_points:
-                    # Create input tensor
-                    x = torch.randn(1, N, C).cuda()
-                    
-                    # Measure memory and time
-                    memory, time_taken = measure_memory_time(block, x)
-                    
-                    # Store results
-                    results.append({
-                        'N': N,
-                        'C': C,
-                        'M': M,
-                        'H': H,
-                        'Hp': H,
-                        'num_params': num_params,
-                        'memory_mib': memory,
-                        'time_ms': time_taken
-                    })
-                    
-                    # Free memory
-                    torch.cuda.empty_cache()
-                
-                del block
-    
-    # Convert to DataFrame and save
-    df = pd.DataFrame(results)
-    df.to_csv('memory_stats.csv', index=False)
-    return df
-
-def plot_results(df):
-    # Filter for N=1024
-    df = df[df['N'] == 1024]
-    
-    # Create figure with three subplots
-    fig = plt.figure(figsize=(20, 6))
-    gs = fig.add_gridspec(1, 3)
-    ax1 = fig.add_subplot(gs[0, 0])
-    ax2 = fig.add_subplot(gs[0, 1])
-    ax3 = fig.add_subplot(gs[0, 2])
-    
-    # Colors for different configurations
-    num_clusters = sorted(df['M'].unique())
-    colors = plt.cm.viridis(np.linspace(0, 1, len(num_clusters)))
-    
-    # Plot 1: Memory vs Channel Dim
-    for i, M in enumerate(num_clusters):
-        for H in sorted(df['H'].unique()):
-            mask = (df['M'] == M) & (df['H'] == H)
-            if not mask.any():
-                continue
-
-            config_data = df[mask]
-            num_params = config_data['num_params'].iloc[0]
-
-            label = f'CAT Block [M={M}, H={H}] ({num_params:.1f}k params)'
-            ax1.loglog(config_data['C'], config_data['memory_mib'], color=colors[i], label=label)
-
-    # Plot 2: Time vs Channel Dim
-    for i, M in enumerate(num_clusters):
-        for H in sorted(df['H'].unique()):
-            mask = (df['M'] == M) & (df['H'] == H)
-            if not mask.any():
-                continue
-            
-            config_data = df[mask]
-            ax2.loglog(config_data['C'], config_data['time_ms'], color=colors[i])
-    
-    # Plot 3: Heatmap
-    # Create pivot tables for memory and time
-    memory_pivot = df.pivot_table(
-        values='memory_mib', 
-        index='M', 
-        columns='C', 
-        aggfunc='mean'
-    )
-    time_pivot = df.pivot_table(
-        values='time_ms', 
-        index='M', 
-        columns='C', 
-        aggfunc='mean'
-    )
-    
-    # Plot heatmap
-    sns.heatmap(memory_pivot, annot=True, fmt='.0f', cmap='viridis', ax=ax3)
-    
-    # Add text annotations for time
-    for i in range(len(memory_pivot.index)):
-        for j in range(len(memory_pivot.columns)):
-            memory = memory_pivot.iloc[i, j]
-            time = time_pivot.iloc[i, j]
-            if not np.isnan(memory):
-                ax3.text(j + 0.5, i + 0.5, f'\n{time:.0f}ms', 
-                        ha='center', va='center', color='white')
-    
-    # Customize plots
-    ax1.set_xlabel('Channel Dimension (C)')
-    ax1.set_ylabel('Memory Footprint (MiB)')
-    ax1.set_title('Memory Scaling')
-    ax1.grid(True)
-    
-    ax2.set_xlabel('Channel Dimension (C)')
-    ax2.set_ylabel('Time for 10 GD Steps (ms)')
-    ax2.set_title('Time Scaling')
-    ax2.grid(True)
-    
-    ax3.set_xlabel('Channel Dimension (C)')
-    ax3.set_ylabel('Number of Clusters (M)')
-    ax3.set_title('Memory (MiB) / Time (ms) Heatmap')
-    
-    # Set x-axis ticks to powers of 2
-    for ax in [ax1, ax2]:
-        x_ticks = sorted(df['C'].unique())
-        ax.set_xticks(x_ticks)
-        ax.set_xticklabels([f'$2^{{{int(np.log2(x))}}}$' for x in x_ticks])
-    
-    # Add legend
-    handles, labels = ax1.get_legend_handles_labels()
-    fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.05),
-              ncol=3, frameon=True)
-    
-    plt.tight_layout()
-    plt.subplots_adjust(bottom=0.2)  # Make room for legend
-    plt.savefig('cat_scaling.png', bbox_inches='tight', dpi=300)
-    plt.close()
-
-def memory_time_analysis():
-    # Load or collect data
-    if args.force_reload or not pd.io.common.file_exists('memory_stats.csv'):
-        print("Collecting data...")
-        df = collect_data()
-    else:
-        print("Loading data from CSV...")
-        df = pd.read_csv('memory_stats.csv')
-
-    # Plot results
-    print("Generating plots...")
-    plot_results(df)
-    print("Done! Results saved to cat_scaling.png")
-    
 #======================================================================#
 def collect_scaling_study_data(dataset: str):
-    data_dir = os.path.join('.', 'out', 'bench', f'scaling_{dataset}')
+    data_dir = os.path.join('.', 'out', 'bench', f'scaling_cat_{dataset}')
 
     # Initialize empty dataframe
     df = pd.DataFrame()
@@ -289,7 +84,7 @@ def collect_scaling_study_data(dataset: str):
 
 def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
 
-    output_dir = os.path.join('.', 'out', 'bench', f'scaling_{dataset}_analysis')
+    output_dir = os.path.join('.', 'out', 'bench', f'scaling_cat_{dataset}_analysis')
     os.makedirs(output_dir, exist_ok=True)
 
     #---------------------------------------------------------#
@@ -458,7 +253,8 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
     ax2.legend()
     fig1.savefig(os.path.join(output_dir, f'lineplot_projection_head_dim.png'))
     fig2.savefig(os.path.join(output_dir, f'lineplot_num_projection_heads.png'))
-    plt.close()
+    fig1.close()
+    fig2.close()
 
     #---------------------------------------------------------#
     return
@@ -486,6 +282,7 @@ def eval_scaling_study(dataset: str):
 #======================================================================#
 def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: int = 2):
     if gpu_count is None:
+        import torch
         gpu_count = torch.cuda.device_count()
     if dataset == 'elasticity':
         epochs = 500
@@ -583,7 +380,7 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
                                         #------------------------------------#
 
                                         exp_name = f'scaling_{dataset}_MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_B_{num_blocks}_LB_{num_latent_blocks}_HP_{num_projection_heads}_H_{num_heads}'
-                                        exp_name = os.path.join(f'scaling_{dataset}', exp_name)
+                                        exp_name = os.path.join(f'scaling_cat_{dataset}', exp_name)
                                         
                                         case_dir = os.path.join('.', 'out', 'bench', exp_name)
                                         if os.path.exists(case_dir):
@@ -670,7 +467,7 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
     return
 
 def clean_scaling_study(dataset: str):
-    output_dir = os.path.join('.', 'out', 'bench', f'scaling_{dataset}')
+    output_dir = os.path.join('.', 'out', 'bench', f'scaling_cat_{dataset}')
     for case_name in [d for d in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, d))]:
         case_dir = os.path.join(output_dir, case_name)
         if os.path.exists(os.path.join(case_dir, 'ckpt10', 'rel_error.json')):
