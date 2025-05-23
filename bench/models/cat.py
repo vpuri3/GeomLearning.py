@@ -198,16 +198,17 @@ class ClusterAttention(nn.Module):
         decode_weights = F.softmax(scores, dim=-2) # sum over M
 
         z = einsum(encode_weights, v, 'b h m n, b h n d -> b h m d') # [B H M D]
-        z = rearrange(z, 'b h m d -> b m (h d)') # [B M C]
 
         ### (2) Attention among cluster tokens
 
-        for block in self.blocks:
-            z = block(z)
+        if len(self.blocks) > 0:
+            z = rearrange(z, 'b h m d -> b m (h d)') # [B M C]
+            for block in self.blocks:
+                z = block(z)
+            z = rearrange(z, 'b m (h d) -> b h m d', h=self.num_projection_heads)
 
         ### (3) Disaggregate cluster tokens
 
-        z = rearrange(z, 'b m (h d) -> b h m d', h=self.num_projection_heads)
         x = einsum(z, decode_weights, 'b h m d, b h m n -> b h n d')
         x = rearrange(x, 'b h n d -> b n (h d)')
         x = self.out_proj(x)
