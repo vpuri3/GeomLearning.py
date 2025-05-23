@@ -20,7 +20,7 @@ ACTIVATIONS = {
 }
 
 #======================================================================#
-# MLP Block, Residual MLP Block
+# Residual MLP Block
 #======================================================================#
 
 class ResidualMLP(nn.Module):
@@ -75,9 +75,8 @@ class ClusterAttention(nn.Module):
     def __init__(self, channel_dim, num_heads=8, num_clusters=32, act=None):
         super().__init__()
 
-        # looks like using ResidualMLP everywhere works best.
         # further, more num_layers work better.
-        # consider weight typing bw k_proj, v_proj.
+        # consider weight tying bw k_proj, v_proj.
 
         # num_layers = 2, and CAT block MLP = ResidualMLP(C)
         # mix = True : 1000k - 2.35e-3, 4.02e-3
@@ -108,7 +107,7 @@ class ClusterAttention(nn.Module):
         ### (1) Compute projection weights
 
         q = self.latent_q.view(self.num_heads, self.num_clusters, self.head_dim) # [H M D]
-        k = rearrange(self.k_proj(x), 'b n (h d) -> b h n d', h=self.num_heads) # [B H N D]
+        k = rearrange(self.k_proj(x), 'b n (h d) -> b h n d', h=self.num_heads)  # [B H N D]
         v = rearrange(self.v_proj(x), 'b n (h d) -> b h n d', h=self.num_heads)
 
         scores = einsum(q, k, 'h m d, b h n d -> b h m n') # [B H M N]

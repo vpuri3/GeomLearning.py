@@ -185,13 +185,12 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
     
     df_ = df
     #
-    df_ = df_[df_['cluster_head_mixing'] == True]
     df_ = df_[df_['if_latent_mlp'] == False]
     df_ = df_[df_['if_pointwise_mlp'] == True]
+    df_ = df_[df_['cluster_head_mixing'] == True]
     #
     df_ = df_[df_['num_blocks'].isin([8])]
     df_ = df_[df_['num_latent_blocks'].isin([0,1])]
-    # df_ = df_[df_['num_clusters'].isin([32,64])]
 
     configs = df_[['if_latent_mlp', 'if_pointwise_mlp', 'cluster_head_mixing', 'channel_dim', 
                  'num_blocks', 'num_latent_blocks', 'num_clusters', 'num_heads']].drop_duplicates()
@@ -218,8 +217,6 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
 
     for _, config in configs.iterrows():
 
-        # if_latent_mlp = config['if_latent_mlp']
-        # if_pointwise_mlp = config['if_pointwise_mlp']
         cluster_head_mixing = config['cluster_head_mixing']
         channel_dim = config['channel_dim']
         num_blocks = config['num_blocks']
@@ -245,16 +242,15 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
         if df__.empty:
             continue
 
-        linestyle=':' if num_latent_blocks == 1 else '-'
-        ax1.plot(df__['projection_head_dim'], df__['test_rel_error'], label=label, marker='o', linestyle=linestyle)
+        linestyle='-' if num_latent_blocks == 0 else '-'
+        ax1.plot(df__['projection_head_dim'] , df__['test_rel_error'], label=label, marker='o', linestyle=linestyle)
         ax2.plot(df__['num_projection_heads'], df__['test_rel_error'], label=label, marker='o', linestyle=linestyle)
 
     ax1.legend()
     ax2.legend()
     fig1.savefig(os.path.join(output_dir, f'lineplot_projection_head_dim.png'))
     fig2.savefig(os.path.join(output_dir, f'lineplot_num_projection_heads.png'))
-    fig1.close()
-    fig2.close()
+    plt.close()
 
     #---------------------------------------------------------#
     return
@@ -329,56 +325,6 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
                                         if projection_head_dim < 4:
                                             continue
 
-                                        # # only run with head_dim == 16 and if_latent_mlp = False
-                                        # # for other cases, we will duplicate rows in the DF
-                                        # if num_latent_blocks == 0:
-                                        #     if not if_latent_mlp:
-                                        #         continue
-                                        #     if head_dim != 16:
-                                        #         continue
-
-                                        if num_blocks * num_latent_blocks >= 32:
-                                            continue
-
-                                        #------------------------------------#
-                                        # SHAPE-NET CAR
-                                        # EXP 1: C = 64, Cluster Head Mixing = False
-                                        #------------------------------------#
-                                        if if_latent_mlp:
-                                            continue
-                                        if not if_pointwise_mlp:
-                                            continue
-                                        if not cluster_head_mixing:
-                                            continue
-                                        if channel_dim not in [64]:
-                                            continue
-                                        if num_clusters not in [32, 64]:
-                                            continue
-                                        if num_blocks not in [8]:
-                                            continue
-                                        if num_latent_blocks not in [0, 1]:
-                                            continue
-                                        if num_projection_heads not in [4, 8, 16]:
-                                            continue
-                                        if num_heads not in [4]:
-                                            continue
-                                        # #------------------------------------#
-                                        # # EXP 2: C = 64, Cluster Head Mixing = False
-                                        # #------------------------------------#
-                                        # if not cluster_head_mixing:
-                                        #     continue
-                                        # if if_latent_mlp:
-                                        #     continue
-                                        # if not if_pointwise_mlp:
-                                        #     continue
-                                        # if channel_dim not in [64]:
-                                        #     continue
-                                        # if num_clusters not in [32]:
-                                        #     continue
-                                        # if num_heads not in [4]:
-                                        #     continue
-                                        #------------------------------------#
-
                                         exp_name = f'scaling_{dataset}_MLPL_{if_latent_mlp}_MLPP_{if_pointwise_mlp}_MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_B_{num_blocks}_LB_{num_latent_blocks}_HP_{num_projection_heads}_H_{num_heads}'
                                         exp_name = os.path.join(f'scaling_cat_{dataset}', exp_name)
                                         
@@ -394,6 +340,7 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
                                         job_queue.append({
                                             'if_latent_mlp': if_latent_mlp,
                                             'if_pointwise_mlp': if_pointwise_mlp,
+                                            'cluster_head_mixing': cluster_head_mixing,
                                             'channel_dim': channel_dim,
                                             'num_blocks': num_blocks,
                                             'num_latent_blocks': num_latent_blocks,
@@ -449,6 +396,7 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
                     # model arguments
                     '--if_latent_mlp', str(job['if_latent_mlp']),
                     '--if_pointwise_mlp', str(job['if_pointwise_mlp']),
+                    '--cluster_head_mixing', str(job['cluster_head_mixing']),
                     '--channel_dim', str(job['channel_dim']),
                     '--num_blocks', str(job['num_blocks']),
                     '--num_latent_blocks', str(job['num_latent_blocks']),
@@ -466,6 +414,7 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
         time.sleep(300)
     return
 
+#======================================================================#
 def clean_scaling_study(dataset: str):
     output_dir = os.path.join('.', 'out', 'bench', f'scaling_cat_{dataset}')
     for case_name in [d for d in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, d))]:

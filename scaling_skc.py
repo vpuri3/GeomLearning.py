@@ -94,8 +94,6 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
 
     for _, config in configs.iterrows():
 
-        if_latent_mlp = config['if_latent_mlp']
-        if_pointwise_mlp = config['if_pointwise_mlp']
         cluster_head_mixing = config['cluster_head_mixing']
         channel_dim = config['channel_dim']
         num_clusters = config['num_clusters']
@@ -109,8 +107,8 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
             (df['num_heads'] == num_heads)
         ]
 
-        name_str = f'MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_HP_{num_heads}'
-        title_str = f'Cluster Head Mixing: {cluster_head_mixing}, Channel Dim: {channel_dim}, # Clusters: {num_clusters}, # Projection Heads: {num_heads}'
+        name_str = f'MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_H_{num_heads}'
+        title_str = f'Cluster Head Mixing: {cluster_head_mixing}, Channel Dim: {channel_dim}, # Clusters: {num_clusters}, # Heads: {num_heads}'
 
         fig, ax = plt.subplots(figsize=(8, 6))
         fig.suptitle(title_str)
@@ -118,20 +116,20 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
         # Create pivot tables with numeric values for coloring and annotations
         pivot_test = df_.pivot_table(
             values='test_rel_error',
-            columns='num_blocks',
-            index='num_latent_blocks',
+            columns='num_clusters',
+            index='num_heads',
             aggfunc='mean'
         )
         pivot_train = df_.pivot_table(
             values='train_rel_error',
-            columns='num_blocks',
-            index='num_latent_blocks',
+            columns='num_clusters',
+            index='num_heads',
             aggfunc='mean'
         )
         pivot_params = df_.pivot_table(
             values='num_params',
-            columns='num_blocks',
-            index='num_latent_blocks',
+            columns='num_clusters',
+            index='num_heads',
             aggfunc='mean'
         )
 
@@ -161,13 +159,13 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
         cbar.set_label('Test relative error')
 
         ax.set_title('Train relative error/ test relative error/ parameter count')
-        ax.set_ylabel('Number of latent blocks (BL)')
-        ax.set_xlabel('Number of blocks (B)')
+        ax.set_ylabel('Number of heads (H)')
+        ax.set_xlabel('Number of clusters (M)')
         for spine in ax.spines.values():
             spine.set_visible(True)
             spine.set_linewidth(0.5)
         plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'heatmap_L_vs_LB_{name_str}.png'))
+        plt.savefig(os.path.join(output_dir, f'heatmap_H_vs_M_{name_str}.png'))
         plt.close()
 
     #---------------------------------------------------------#
@@ -230,8 +228,7 @@ def plot_scaling_study_results(dataset: str, df: pd.DataFrame):
     ax2.legend()
     fig1.savefig(os.path.join(output_dir, f'lineplot_head_dim.png'))
     fig2.savefig(os.path.join(output_dir, f'lineplot_num_heads.png'))
-    fig1.close()
-    fig2.close()
+    plt.close()
 
     #---------------------------------------------------------#
     return
@@ -276,46 +273,35 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
     job_queue = []
     for cluster_head_mixing in [True, False]:
         for channel_dim in [64, 128]:
-            for num_clusters in [8, 16, 32, 64, 128]:
-                for num_blocks in [1, 2, 4, 8]:
-                    for num_heads in [1, 2, 4, 8, 16, 32]:
+            for num_clusters in [16, 32, 64]:
+                for num_blocks in [2, 4, 8]:
+                    for head_dim in [4, 8, 16]:
 
-                                # Skip invalid configurations
-                                if num_heads == 0:
-                                    continue
-                                if channel_dim % num_heads != 0:
-                                    continue
+                        num_heads = channel_dim // head_dim
 
-                                head_dim = channel_dim // num_heads
+                        if num_heads < 8:
+                            continue
 
-                                # ensure head dim is at least 4
-                                if head_dim < 4:
-                                    continue
+                        exp_name = f'scaling_{dataset}_MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_B_{num_blocks}_HP_{num_heads}'
+                        exp_name = os.path.join(f'scaling_skc_{dataset}', exp_name)
+                        
+                        case_dir = os.path.join('.', 'out', 'bench', exp_name)
+                        if os.path.exists(case_dir):
+                            if os.path.exists(os.path.join(case_dir, 'ckpt10', 'rel_error.json')):
+                                print(f"Experiment {exp_name} exists. Skipping.")
+                                continue
+                            else:
+                                print(f"Experiment {exp_name} exists but ckpt10/rel_error.json does not exist. Removing and re-running.")
+                                shutil.rmtree(case_dir)
 
-                                #------------------------------------#
-                                # EXPERIMENT CRITERIA
-                                #------------------------------------#
-                                #------------------------------------#
-
-                                exp_name = f'scaling_{dataset}_MIX_{cluster_head_mixing}_C_{channel_dim}_M_{num_clusters}_B_{num_blocks}_HP_{num_heads}'
-                                exp_name = os.path.join(f'scaling_skc_{dataset}', exp_name)
-                                
-                                case_dir = os.path.join('.', 'out', 'bench', exp_name)
-                                if os.path.exists(case_dir):
-                                    if os.path.exists(os.path.join(case_dir, 'ckpt10', 'rel_error.json')):
-                                        print(f"Experiment {exp_name} exists. Skipping.")
-                                        continue
-                                    else:
-                                        print(f"Experiment {exp_name} exists but ckpt10/rel_error.json does not exist. Removing and re-running.")
-                                        shutil.rmtree(case_dir)
-
-                                job_queue.append({
-                                    'channel_dim': channel_dim,
-                                    'num_blocks': num_blocks,
-                                    'num_heads': num_heads,
-                                    'num_clusters': num_clusters,
-                                    'exp_name': exp_name
-                                })
+                        job_queue.append({
+                            'cluster_head_mixing': cluster_head_mixing,
+                            'channel_dim': channel_dim,
+                            'num_blocks': num_blocks,
+                            'num_heads': num_heads,
+                            'num_clusters': num_clusters,
+                            'exp_name': exp_name
+                        })
 
     jobid = 0
     njobs = len(job_queue)
@@ -361,6 +347,7 @@ def train_scaling_study(dataset: str, gpu_count: int = None, max_jobs_per_gpu: i
                     '--weight_decay', str(1e-5),
                     '--batch_size', str(batch_size),
                     # model arguments
+                    '--cluster_head_mixing', str(job['cluster_head_mixing']),
                     '--channel_dim', str(job['channel_dim']),
                     '--num_blocks', str(job['num_blocks']),
                     '--num_heads', str(job['num_heads']),
