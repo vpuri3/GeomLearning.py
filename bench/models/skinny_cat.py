@@ -28,7 +28,14 @@ ACTIVATIONS = {
 #======================================================================#
 
 class MLPBlock(nn.Module):
-    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, act: str = None):
+    def __init__(
+            self,
+            in_dim: int,
+            hidden_dim: int,
+            out_dim: int,
+            act: str = None,
+            final_layer_bias: bool = True,
+        ):
         super().__init__()
         self.fc1 = nn.Linear(in_dim, hidden_dim)
         self.act = ACTIVATIONS[act] if act else ACTIVATIONS['gelu']
@@ -36,6 +43,8 @@ class MLPBlock(nn.Module):
             self.fc2 = nn.Linear(hidden_dim // 2, out_dim)
         else:
             self.fc2 = nn.Linear(hidden_dim, out_dim)
+        if not final_layer_bias:
+            self.fc2.bias = None
 
     def forward(self, x):
         x = self.fc1(x)
@@ -69,6 +78,24 @@ class ResidualMLP(nn.Module):
             x = x + self.act(fc(x))
         x = x + self.fc2(x) if self.output_residual else self.fc2(x)
         return x
+    
+class GatedResidualMLP(nn.Module):
+    def __init__(self, channel_dim, hidden_dim, act=None):
+        super().__init__()
+
+        self.fc1 = nn.Linear(channel_dim, hidden_dim)
+        self.fc2 = nn.Linear(channel_dim, hidden_dim)
+        self.out = nn.Linear(hidden_dim, channel_dim)
+        self.act = ACTIVATIONS[act] if act else ACTIVATIONS['gelu']
+
+    def forward(self, x):
+        # x: [B, N, C]
+
+        v = self.act(self.fc1(x))
+        g = torch.sigmoid(self.fc2(x))
+        x = x + self.out(v * g)
+
+        return x
 
 #======================================================================#
 # Cluster Attention
@@ -95,24 +122,34 @@ class ClusterAttention(nn.Module):
     def __init__(self, channel_dim, num_projection_heads=8, num_clusters=32, act=None):
         super().__init__()
 
-        # KV_proj triage:
-        # num_layers = 0: 860k  - 3.80e-3, 5.27e-3
-        # num_layers = 1: 930k  - 3.24e-3, 4.69e-3
-        # num_layers = 2: 1.00m - 2.79e-3, 4.24e-3  <-- baseline
-        
-        # left pane
-        # num_layers = 3: 1.06m - 0.00e-3, 0.00e-3
+        # KV_proj triage: more num_layers work better
 
-        # right top pane
-        # num_layers = 2, mlp_ratio = 1: 935k params: 0.00e-3, 0.00e-3
-        
+        # num_layers = 0:  860k params - 3.80e-3, 5.27e-3
+        # num_layers = 1:  930k params - 3.24e-3, 4.69e-3
+        # num_layers = 2: 1.00m params - 2.79e-3, 4.24e-3  <-- baseline
+        # num_layers = 3: 1.06m params - 2.54e-3, 3.93e-3
+
+        # num_layers = 2, k_proj = v_proj = ResidualMLP: 867k params - 4.11e-3, 5.75e-3
+        # num_layers = 2, k_proj, v_proj = MLPBlock(mlp_ratio = 1): 935k params - 3.04e-3, 4.45e-3
+
+        # num_layers = 2, and
+        # CAT block MLP = ResidualMLP(C): 1.00m - 2.35e-3, 4.02e-3
+
+        # k_proj, v_proj = MLPBlock(mlp_ratio = 2, final_layer_bias = False):
+        # 998k params - 4.72e-3, 6.18e-3
+
         # right bottom pane
-        # num_layers = 2, k_proj = v_proj: 867k params: 0.00e-3, 0.00e-3
-        
-        # TODO:
-        # 1. Play with removing MLP Block/ replacing with residual MLP
-        # 2. What would happen if k_proj = v_proj?
-        
+        # k_proj, v_proj = MLPBlock(mlp_ratio = 2, final_layer_bias = True):
+        # 999k params - 0.00e-3, 0.00e-3
+
+        # Windlow 2 left
+        # k_proj, v_proj = GatedResidualMLP(hidden_dim = C):
+        # 933k params - 0.00e-3, 0.00e-3
+
+        # Windlow 2 right
+        # k_proj, v_proj = GatedResidualMLP(hidden_dim = 2 C):
+        # 1.13m params - 0.00e-3, 0.00e-3
+
         self.channel_dim = channel_dim
         self.num_clusters = num_clusters
         self.num_projection_heads = num_projection_heads
@@ -123,9 +160,16 @@ class ClusterAttention(nn.Module):
         self.latent_q = nn.Parameter(torch.empty(self.channel_dim, self.num_clusters))
         nn.init.normal_(self.latent_q, mean=0.0, std=0.1)
 
-        self.k_proj, self.v_proj = [ResidualMLP(
-            in_dim=self.channel_dim, hidden_dim=self.channel_dim, out_dim=self.channel_dim,
-            num_layers=2, act=act, input_residual=True, output_residual=True,
+        # self.k_proj, self.v_proj = [ResidualMLP(
+        #     in_dim=self.channel_dim, hidden_dim=self.channel_dim, out_dim=self.channel_dim,
+        #     num_layers=2, act=act, input_residual=True, output_residual=True,
+        # ) for _ in range(2)]
+        # self.k_proj, self.v_proj = [MLPBlock(
+        #     in_dim=self.channel_dim, hidden_dim=int(self.channel_dim * 2),
+        #     out_dim=self.channel_dim, act=act, final_layer_bias=True,
+        # ) for _ in range(2)]
+        self.k_proj, self.v_proj = [GatedResidualMLP(
+            channel_dim=self.channel_dim, hidden_dim=int(self.channel_dim * 2), act=act,
         ) for _ in range(2)]
 
         self.mix = ClusterHeadMixingConv(self.num_projection_heads, self.num_clusters)
@@ -180,6 +224,10 @@ class ClusterAttentionBlock(nn.Module):
             num_clusters=num_clusters,
             act=act,
         )
+        # self.mlp = ResidualMLP(
+        #     in_dim=channel_dim, hidden_dim=channel_dim, out_dim=channel_dim,
+        #     num_layers=2, act=act, input_residual=True, output_residual=True,
+        # )
         self.mlp = MLPBlock(
             in_dim=channel_dim,
             hidden_dim=int(channel_dim * mlp_ratio),
