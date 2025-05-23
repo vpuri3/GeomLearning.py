@@ -183,8 +183,26 @@ def main(cfg, device):
                 cluster_head_mixing=cfg.cluster_head_mixing,
                 act=cfg.act,
             )
+        elif cfg.model_type == 2:
             if GLOBAL_RANK == 0:
-                print(f"Parameters: {sum(p.numel() for p in model.parameters())}")
+                print(
+                    f"Using SkinnyCAT with\n" +
+                    f"channel_dim={cfg.channel_dim}\n" +
+                    f"num_blocks={cfg.num_blocks}\n" +
+                    f"mlp_ratio={cfg.mlp_ratio}\n" +
+                    f"num_clusters={cfg.num_clusters}\n" +
+                    f"num_projection_heads={cfg.num_projection_heads}\n"
+                )
+            model = bench.SkinnyCAT(
+                in_dim=c_in,
+                out_dim=c_out,
+                channel_dim=cfg.channel_dim,
+                num_blocks=cfg.num_blocks,
+                mlp_ratio=cfg.mlp_ratio,
+                num_clusters=cfg.num_clusters,
+                num_projection_heads=cfg.num_projection_heads,
+                act=cfg.act,
+            )
         elif cfg.model_type == 9:
             if GLOBAL_RANK == 0:
                 print(f"Using SparseTransformer.")
@@ -208,6 +226,8 @@ def main(cfg, device):
             print(f"Using masked model for timeseries datasets {cfg.dataset}")
         model = am.MaskedModel(model, mask=True, reduce_graph=False)
 
+    if GLOBAL_RANK == 0:
+        print(f"Parameters: {sum(p.numel() for p in model.parameters())}")
     #=================#
     # TRAIN
     #=================#
@@ -417,7 +437,7 @@ class Config:
     # model
     model_type: int = 0 # -1: MeshGraphNet, 0: Transolver, 1: CAT, 9: SparseTransformer
     act: str = None
-    channel_dim: int = 128
+    channel_dim: int = 64
     num_blocks: int = 8
     num_heads: int = 8
     mlp_ratio: float = 2.
@@ -426,7 +446,7 @@ class Config:
     # CAT
     num_projection_heads: int = None
     num_latent_blocks: int = 1
-    if_latent_mlp: bool = True
+    if_latent_mlp: bool = False
     if_pointwise_mlp: bool = True
     cluster_head_mixing: bool = True
     
