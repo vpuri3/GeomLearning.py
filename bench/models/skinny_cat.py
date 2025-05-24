@@ -85,38 +85,38 @@ class ClusterHeadMixingConv(nn.Module):
         # k = 1 / math.sqrt(HM)
         # nn.init.uniform_(self.weights, -k, k)
 
-        ###
-        # low rank weights
-        ###
-        K = HM // 8
-        k = 1 / math.sqrt(K)
-        self.A = nn.Parameter(torch.empty([HM, K]))
-        self.B = nn.Parameter(torch.empty([K, HM]))
-        nn.init.uniform_(self.A, -k, k)
-        nn.init.uniform_(self.B, -k, k)
+        # ###
+        # # low rank weights
+        # ###
+        # K = HM // 8
+        # k = 1 / math.sqrt(K)
+        # self.A = nn.Parameter(torch.empty([HM, K]))
+        # self.B = nn.Parameter(torch.empty([K, HM]))
+        # nn.init.uniform_(self.A, -k, k)
+        # nn.init.uniform_(self.B, -k, k)
 
-        # ###
-        # # attention mixer
-        # ###
+        ###
+        # attention mixer: M = channel_dim
+        ###
         # self.ln  = nn.LayerNorm(M)
-        # self.att = SelfAttention(M)
+        self.att = SelfAttention(M)
 
     def forward(self, x):
 
         x_in = x
         B, H, M, N = x.shape
-        
+
         HM = H * M
         # weights = self.weights.view(HM, HM, 1)
-        weights = (self.A @ self.B).view(HM, HM, 1)
+        # weights = (self.A @ self.B).view(HM, HM, 1)
 
-        x = x.view(B, HM, N)
-        x = F.conv1d(x, weights)
-        x = x.view(B, H, M, N)
+        # x = x.view(B, HM, N)
+        # x = F.conv1d(x, weights)
+        # x = x.view(B, H, M, N)
 
-        # x = rearrange(x, 'b h m n -> (b n) h m')
-        # x = self.att(self.ln(x))
-        # x = rearrange(x, '(b n) h m -> b h m n', n=N)
+        x = rearrange(x, 'b h m n -> (b n) h m')
+        x = self.att(self.ln(x))
+        x = rearrange(x, '(b n) h m -> b h m n', n=N)
 
         x = x + x_in
 
@@ -129,15 +129,18 @@ class ClusterAttention(nn.Module):
         ):
         super().__init__()
 
-        # Try num_layers = 3.
-        # Try qk_norm. Then can we remove the layer norm?
-        # consider weight tying bw k_proj, v_proj.
-
-        # num_layers = 2, and CAT block MLP = ResidualMLP(C)
-        # mix = True : 1000k - 2.35e-3, 4.02e-3
+        # ELASTICITY
+        # num_layers = 2
+        # mix = True : 1000k - 2.35e-3, 4.02e-3 (full)
         # mix = False:  476k - 3.01e-3, 4.37e-3
-        # mix (lora) :  607k - 0.00e-0, 0.00e-0
-        # mix (attn) :  510k - 2.71e-3, 4.08e-3
+        # mix (lora) :  607k - 2.47e-0, 4.08e-0
+        # mix (attn) :  510k - 2.71e-3, 4.08e-3 (M: channel_dim)
+        # num_layers = 3
+        # mix = False:  576k - 2.23e-3, 3.63e-3
+        
+        # might be the case that more num_layers in KV proj, FF block, and
+        # fewer in in_proj, out_proj is better.
+        # Experiment with just nn.Linear in in_proj, out_proj.
 
         self.channel_dim = channel_dim
         self.num_clusters = num_clusters
@@ -151,7 +154,7 @@ class ClusterAttention(nn.Module):
 
         self.k_proj, self.v_proj = [ResidualMLP(
             in_dim=self.channel_dim, hidden_dim=self.channel_dim, out_dim=self.channel_dim,
-            num_layers=2, act=act, input_residual=True, output_residual=True,
+            num_layers=3, act=act, input_residual=True, output_residual=True,
         ) for _ in range(2)]
 
         self.cluster_head_mixing = cluster_head_mixing
@@ -210,7 +213,7 @@ class ClusterAttentionBlock(nn.Module):
         )
         self.mlp = ResidualMLP(
             in_dim=channel_dim, hidden_dim=channel_dim, out_dim=channel_dim,
-            num_layers=2, act=act, input_residual=True, output_residual=True,
+            num_layers=3, act=act, input_residual=True, output_residual=True,
         )
 
     def forward(self, x):

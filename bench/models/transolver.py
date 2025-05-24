@@ -184,7 +184,7 @@ class Transolver(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, x, f=None):
-        
+
         if f is not None:
             f = torch.cat((x, f), -1)
             f = self.preprocess(f)
