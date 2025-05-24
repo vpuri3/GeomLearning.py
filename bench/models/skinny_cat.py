@@ -43,16 +43,32 @@ class ResidualMLP(nn.Module):
             x = x + self.act(fc(x))
         x = x + self.fc2(x) if self.output_residual else self.fc2(x)
         return x
-    
+
+class SelfAttention(nn.Module):
+    def __init__(self, channel_dim: int):
+        super().__init__()
+
+        self.channel_dim = channel_dim
+        self.qkv_proj = nn.Linear(channel_dim, 3 * channel_dim)
+        self.out_proj = nn.Linear(channel_dim, channel_dim)
+
+    def forward(self, x):
+        q, k, v = self.qkv_proj(x).chunk(3, dim=-1) # [B N C]
+
+        scale = q.shape[-1] ** -0.5
+        dots = einsum(q, k, 'b q c, b k c -> b q k') * scale
+        attn = F.softmax(dots, dim=-1)
+        out = einsum(attn, v, 'b q k, b k c -> b q c')
+        out = self.out_proj(out)
+
+        return out
+
 #======================================================================#
 # Cluster Attention
 #======================================================================#
 class ClusterHeadMixingConv(nn.Module):
     def __init__(self, H:int, M: int):
         super().__init__()
-        self.weights = nn.Parameter(torch.empty([H * M, H * M]))
-        k = 1 / math.sqrt(H * M)
-        nn.init.uniform_(self.weights, -k, k)
         
         # IDEAS:
         # - Low-rank decomposition: W = A @ B.T with A, B ∈ ℝ^[H*M, k]
@@ -60,30 +76,68 @@ class ClusterHeadMixingConv(nn.Module):
         # - Treat [H, M] as sequence of H tokens of size M or M tokens of size H.
         #   and do attention. Makes mixing weights dynamic.
 
+        HM = H * M
+
+        ###
+        # full rank weights
+        ###
+        # self.weights = nn.Parameter(torch.empty([HM, HM]))
+        # k = 1 / math.sqrt(HM)
+        # nn.init.uniform_(self.weights, -k, k)
+
+        ###
+        # low rank weights
+        ###
+        K = HM // 8
+        k = 1 / math.sqrt(K)
+        self.A = nn.Parameter(torch.empty([HM, K]))
+        self.B = nn.Parameter(torch.empty([K, HM]))
+        nn.init.uniform_(self.A, -k, k)
+        nn.init.uniform_(self.B, -k, k)
+
+        # ###
+        # # attention mixer
+        # ###
+        # self.ln  = nn.LayerNorm(M)
+        # self.att = SelfAttention(M)
+
     def forward(self, x):
 
+        x_in = x
         B, H, M, N = x.shape
-        weights = self.weights.view(H * M, H * M, 1)
+        
+        HM = H * M
+        # weights = self.weights.view(HM, HM, 1)
+        weights = (self.A @ self.B).view(HM, HM, 1)
 
-        x = x.view(B, H * M, N)
+        x = x.view(B, HM, N)
         x = F.conv1d(x, weights)
         x = x.view(B, H, M, N)
+
+        # x = rearrange(x, 'b h m n -> (b n) h m')
+        # x = self.att(self.ln(x))
+        # x = rearrange(x, '(b n) h m -> b h m n', n=N)
+
+        x = x + x_in
 
         return x
 
 class ClusterAttention(nn.Module):
     def __init__(
-        self, channel_dim, num_heads=8, num_clusters=32, act=None,
-        cluster_head_mixing=True,
+        self, channel_dim, num_heads = 8, num_clusters = 32, act = None,
+        cluster_head_mixing = True,
         ):
         super().__init__()
 
-        # further, more num_layers work better.
+        # Try num_layers = 3.
+        # Try qk_norm. Then can we remove the layer norm?
         # consider weight tying bw k_proj, v_proj.
 
         # num_layers = 2, and CAT block MLP = ResidualMLP(C)
         # mix = True : 1000k - 2.35e-3, 4.02e-3
         # mix = False:  476k - 3.01e-3, 4.37e-3
+        # mix (lora) :  607k - 0.00e-0, 0.00e-0
+        # mix (attn) :  510k - 2.71e-3, 4.08e-3
 
         self.channel_dim = channel_dim
         self.num_clusters = num_clusters
