@@ -459,7 +459,7 @@ def load_dataset(
 
         train_dataset = ShapeNetCarDataset(DST, split='train')
         test_dataset  = ShapeNetCarDataset(DST, split='test')
-        
+
         metadata = dict(
             x_normalizer=bench.IdentityNormalizer(),
             y_normalizer=bench.UnitGaussianNormalizer(torch.rand(10,1)),
@@ -469,6 +469,23 @@ def load_dataset(
 
         return train_dataset, test_dataset, metadata
         
+    #----------------------------------------------------------------#
+    # AM DATASET
+    #----------------------------------------------------------------#
+    elif dataset_name == 'am_small':
+        DATADIR = os.path.join(DATADIR_BASE, 'NetFabb', 'netfabb_lores_raw')
+        
+        # X, Y, Z \in [-10, 10]
+
+        train_dataset = AMSmallDataset(DATADIR, split='train', max_cases=None)
+        test_dataset  = AMSmallDataset(DATADIR, split='test', max_cases=None)
+        
+        metadata = dict(
+            x_normalizer=bench.IdentityNormalizer(),
+            y_normalizer=bench.IdentityNormalizer(),
+        )
+
+        return train_dataset, test_dataset, metadata
     #----------------------------------------------------------------#
     # dataset not found
     #----------------------------------------------------------------#
@@ -626,5 +643,94 @@ class ShapeNetCarDataset(torch.utils.data.Dataset):
 
         return mesh_points.view(-1, 3), pressure.view(-1, 1)
 
+#======================================================================#
+class AMSmallDataset(torch.utils.data.Dataset):
+    def __init__(self, data_dir, split='train', max_cases=None):
+        super().__init__()
+        
+        assert split in ['train', 'test', 'val']
+
+        self.split = split
+        self.data_dir = data_dir
+        self.split_dir = os.path.join(self.data_dir, f'data_{self.split}')
+        self.files = [f for f in os.listdir(self.split_dir) if f.endswith('.npz')]
+
+        # self.make_histograms()
+        self.get_exclude_list()
+        self.exclude_cases()
+
+        if max_cases is not None:
+            self.files = self.files[:max_cases]
+
+    def make_histograms(self):
+        import matplotlib.pyplot as plt
+
+        max_displacements = []
+        max_stresses = []
+        
+        for f in self.files:
+            data = np.load(os.path.join(self.split_dir, f))
+            max_displacements.append(np.max(np.abs(data["disp"][:,2])))
+            max_stresses.append(np.max(data["von_mises_stress"]))
+
+        max_displacements = [d for d in max_displacements if d < 1.]
+        max_stresses = [s for s in max_stresses if s < 2000.]
+
+        plt.figure(figsize=(12, 5))
+
+        plt.subplot(1, 2, 1)
+        plt.hist(max_displacements, bins=100)
+        plt.title('Max Displacement')
+        plt.xlabel('Displacement')
+        plt.ylabel('Count')
+
+        plt.subplot(1, 2, 2)
+        plt.hist(max_stresses, bins=100)
+        plt.title('Max Von Mises Stress')
+        plt.xlabel('Stress')
+        plt.ylabel('Count')
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.data_dir, f'histograms_{self.split}.png'))
+        
+    def get_exclude_list(self):
+        self.exclude_file = os.path.join(self.data_dir, f'exclude_list_{self.split}.txt')
+        if not os.path.exists(self.exclude_file):
+            # Find cases with displacement > .04 and stress > 1750
+            exclude_cases = []
+            for f in self.files:
+                data = np.load(os.path.join(self.split_dir, f))
+                if np.max(np.abs(data["disp"][:,2])) > .04 or np.max(data["von_mises_stress"]) > 1750.:
+                    exclude_cases.append(f)
+
+            # Write exclude list to file
+            with open(self.exclude_file, 'w') as f:
+                f.write('\n'.join(exclude_cases))
+
+        return
+    
+    def exclude_cases(self):
+        # Read exclude list and filter files
+        with open(self.exclude_file, 'r') as f:
+            exclude_cases = f.read().splitlines()
+        self.files = [f for f in self.files if f not in exclude_cases]
+        
+        return
+
+    def __len__(self):
+        return len(self.files)
+    
+    def __getitem__(self, idx):
+        file = os.path.join(self.split_dir, self.files[idx])
+        data = np.load(file)
+        verts, disp, von_mises = data["verts"], data["disp"], data["von_mises_stress"]
+
+        # Normalize to [-1, 1]
+        x = torch.tensor(verts, dtype=torch.float).unsqueeze(0) / 10.
+        # Normalize to ??
+        y = torch.tensor(disp, dtype=torch.float).unsqueeze(0)[:,:,2:]
+
+        return x, y
+    
 #======================================================================#
 #
