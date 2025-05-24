@@ -60,9 +60,6 @@ def main(cfg, device):
         c_out = 1
         time_cond = False
 
-        if GLOBAL_RANK == 0:
-            print(f"Loaded {cfg.dataset} dataset with {len(_data)} train and {len(data_)} test cases.")
-            
     elif cfg.dataset in ['plasticity']:
         c_in = 0
         c_out = 0
@@ -76,6 +73,12 @@ def main(cfg, device):
         time_cond = True
 
     elif cfg.dataset in ['shapenet_car']:
+        c_in = 3
+        c_out = 1
+
+        time_cond = False
+
+    elif cfg.dataset in ['am_small']:
         c_in = 3
         c_out = 1
 
@@ -97,15 +100,15 @@ def main(cfg, device):
                 print(f"Limiting to {cfg.max_steps} time-steps")
             if cfg.max_cases is not None:
                 print(f"Limiting to {cfg.max_cases} cases")
-    
+
             for graph in _data:
                 print(graph)
                 break
-
+                
     else:
         print(f"Dataset {cfg.dataset} not found.")
         exit()
-        
+
     #=================#
     # MODEL
     #=================#
@@ -228,6 +231,7 @@ def main(cfg, device):
 
     if GLOBAL_RANK == 0:
         print(f"Parameters: {sum(p.numel() for p in model.parameters())}")
+
     #=================#
     # TRAIN
     #=================#
@@ -249,14 +253,14 @@ def main(cfg, device):
         #----------#
 
         _batch_size  = cfg.batch_size
-        if cfg.dataset == 'airfoil':
-            _batch_size = 1
-            batch_size_ = _batch_size_ = 1 # 20
-        elif cfg.dataset == 'cylinder_flow':
-            batch_size_ = _batch_size_ = 1 # 50
-        elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes',
+        if cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes',
                              'shapenet_car',]:
             batch_size_ = _batch_size_ = 50
+        elif cfg.dataset in ['airfoil', 'cylinder_flow']:
+            _batch_size = 1
+            batch_size_ = _batch_size_ = 1 # 20
+        else:
+            batch_size_ = _batch_size_ = 1
 
         #----------#
         # lossfun
@@ -448,7 +452,7 @@ class Config:
     num_latent_blocks: int = 1
     if_latent_mlp: bool = False
     if_pointwise_mlp: bool = True
-    cluster_head_mixing: bool = True
+    cluster_head_mixing: bool = False
     
     # Transolver
     conv2d: bool = False

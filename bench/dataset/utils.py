@@ -475,19 +475,25 @@ def load_dataset(
     elif dataset_name == 'am_small':
         DATADIR = os.path.join(DATADIR_BASE, 'NetFabb', 'netfabb_lores_raw')
         
-        # X, Y, Z \in [-10, 10]
-
         train_dataset = AMSmallDataset(DATADIR, split='train', max_cases=None)
         test_dataset  = AMSmallDataset(DATADIR, split='test', max_cases=None)
         
-        metadata = dict(
-            x_normalizer=bench.IdentityNormalizer(),
-            y_normalizer=bench.IdentityNormalizer(),
-        )
+        num_points = [len(x) for (x, y) in train_dataset]
+        y_means = [y.mean().item() for (x, y) in train_dataset]
+        y_mean = sum([n * y_mean for n, y_mean in zip(num_points, y_means)]) / sum(num_points)
+        y_stds = [(y-y_mean)**2 for (x, y) in train_dataset]
+        y_std = sum([y_std.sum().item() for y_std in y_stds]) / sum(num_points)
+        y_std = y_std ** 0.5
+
+        print(y_mean, y_std)
+        exit()
+
+        # metadata = dict(
+        #     x_normalizer=bench.IdentityNormalizer(),
+        #     y_normalizer=bench.IdentityNormalizer(),
+        # )
 
         return train_dataset, test_dataset, metadata
-    #----------------------------------------------------------------#
-    # dataset not found
     #----------------------------------------------------------------#
     else:
         raise ValueError(f"Dataset {dataset_name} not found.") 
@@ -661,6 +667,10 @@ class AMSmallDataset(torch.utils.data.Dataset):
 
         if max_cases is not None:
             self.files = self.files[:max_cases]
+            
+        self.x_scale = 10.
+        # self.y_scale = 1750. # max stress
+        self.y_scale = 0.4 # max displacement
 
     def make_histograms(self):
         import matplotlib.pyplot as plt
@@ -719,16 +729,14 @@ class AMSmallDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.files)
-    
+
     def __getitem__(self, idx):
         file = os.path.join(self.split_dir, self.files[idx])
         data = np.load(file)
         verts, disp, von_mises = data["verts"], data["disp"], data["von_mises_stress"]
 
-        # Normalize to [-1, 1]
-        x = torch.tensor(verts, dtype=torch.float).unsqueeze(0) / 10.
-        # Normalize to ??
-        y = torch.tensor(disp, dtype=torch.float).unsqueeze(0)[:,:,2:]
+        x = torch.tensor(verts, dtype=torch.float) / self.x_scale
+        y = torch.tensor(disp, dtype=torch.float)[:,2:] / self.y_scale
 
         return x, y
     
