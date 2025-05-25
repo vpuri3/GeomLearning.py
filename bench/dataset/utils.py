@@ -475,23 +475,28 @@ def load_dataset(
     elif dataset_name == 'am_small':
         DATADIR = os.path.join(DATADIR_BASE, 'NetFabb', 'netfabb_lores_raw')
         
-        train_dataset = AMSmallDataset(DATADIR, split='train', max_cases=None)
-        test_dataset  = AMSmallDataset(DATADIR, split='test', max_cases=None)
-        
-        num_points = [len(x) for (x, y) in train_dataset]
-        y_means = [y.mean().item() for (x, y) in train_dataset]
-        y_mean = sum([n * y_mean for n, y_mean in zip(num_points, y_means)]) / sum(num_points)
-        y_stds = [(y-y_mean)**2 for (x, y) in train_dataset]
-        y_std = sum([y_std.sum().item() for y_std in y_stds]) / sum(num_points)
-        y_std = y_std ** 0.5
+        train_dataset = AMSmallDataset(DATADIR, split='train', max_cases=1000)
+        test_dataset  = AMSmallDataset(DATADIR, split='test', max_cases=200)
 
-        print(y_mean, y_std)
-        exit()
+        # y = torch.cat([y for (x, y) in train_dataset], dim=0)
+        # y_mean = y.mean()
+        # y_std = y.std()
+        # print(y_mean, y_std)
 
-        # metadata = dict(
-        #     x_normalizer=bench.IdentityNormalizer(),
-        #     y_normalizer=bench.IdentityNormalizer(),
-        # )
+        # x = torch.cat([x for (x, y) in train_dataset], dim=0)
+        # x_min, y_min, z_min = [x[:,i].min() for i in range(3)]
+        # x_max, y_max, z_max = [x[:,i].max() for i in range(3)]
+        # print(x_min, x_max, y_min, y_max, z_min, z_max) # [-10, 10, -10, 10, -25, 20]
+        # exit()
+
+        metadata = dict(
+            x_normalizer=bench.IdentityNormalizer(),
+            y_normalizer=bench.IdentityNormalizer(),
+        )
+
+        # # Z-Displacement
+        # metadata['y_normalizer'].mean = torch.tensor([0.0010])
+        # metadata['y_normalizer'].std  = torch.tensor([0.0237])
 
         return train_dataset, test_dataset, metadata
     #----------------------------------------------------------------#
@@ -668,10 +673,12 @@ class AMSmallDataset(torch.utils.data.Dataset):
         if max_cases is not None:
             self.files = self.files[:max_cases]
             
-        self.x_scale = 10.
-        # self.y_scale = 1750. # max stress
-        self.y_scale = 0.4 # max displacement
-
+        self.x_min = torch.tensor([-10., -10., -25.])
+        self.x_max = torch.tensor([10., 10., 20.])
+        
+        self.y_mean = torch.tensor([0.0010])
+        self.y_std  = torch.tensor([0.0237])
+            
     def make_histograms(self):
         import matplotlib.pyplot as plt
 
@@ -735,10 +742,13 @@ class AMSmallDataset(torch.utils.data.Dataset):
         data = np.load(file)
         verts, disp, von_mises = data["verts"], data["disp"], data["von_mises_stress"]
 
-        x = torch.tensor(verts, dtype=torch.float) / self.x_scale
-        y = torch.tensor(disp, dtype=torch.float)[:,2:] / self.y_scale
+        x = torch.tensor(verts, dtype=torch.float)
+        y = torch.tensor(disp, dtype=torch.float)[:,2:]
+        
+        x = (x - self.x_min) / (self.x_max - self.x_min)
+        y = (y - self.y_mean) / self.y_std
 
         return x, y
-    
+
 #======================================================================#
 #

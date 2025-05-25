@@ -1,4 +1,5 @@
 #
+import dis
 import os
 import json
 
@@ -180,8 +181,8 @@ class RelL2Callback(mlutils.Callback):
         lossfun = bench.RelL2Loss()
         y_normalizer = self.y_normalizer.to(device)
         
-        _N, _rel_error = 0, 0.
-        N_, rel_error_ = 0, 0.
+        _N, _rel_error, _r2 = 0, 0., []
+        N_, rel_error_, r2_ = 0, 0., []
 
         for batch in trainer._loader_:
             x, y = batch[0].to(device), batch[1].to(device)
@@ -192,6 +193,7 @@ class RelL2Callback(mlutils.Callback):
             _n = trainer.get_batch_size(batch, trainer._loader_)
             _N += _n
             _rel_error += l.item() * _n
+            _r2.append(mlutils.r2(yh, y))
             del x, y, yh
             
         for batch in trainer.loader_:
@@ -203,12 +205,18 @@ class RelL2Callback(mlutils.Callback):
             n_ = trainer.get_batch_size(batch, trainer.loader_)
             N_ += n_
             rel_error_ += l.item() * n_
+            r2_.append(mlutils.r2(yh, y))
             del x, y, yh
 
+        _r2 = torch.tensor(_r2)
+        r2_ = torch.tensor(r2_)
+
         if trainer.DDP:
+
+            # relative error
             _rel_error = torch.tensor(_rel_error, device=trainer.device)
             rel_error_ = torch.tensor(rel_error_, device=trainer.device)
-
+            
             _N = torch.tensor(_N, device=trainer.device)
             N_ = torch.tensor(N_, device=trainer.device)
 
@@ -220,6 +228,19 @@ class RelL2Callback(mlutils.Callback):
 
             _N, _rel_error = _N.item(), _rel_error.item()
             N_, rel_error_ = N_.item(), rel_error_.item()
+
+            # R-Squared
+            _r2 = _r2.to(device)
+            r2_ = r2_.to(device)
+
+            _r2_list = [torch.zeros_like(_r2) for _ in range(dist.get_world_size())]
+            r2_list_ = [torch.zeros_like(r2_) for _ in range(dist.get_world_size())]
+
+            dist.all_gather(_r2_list, _r2)
+            dist.all_gather(r2_list_, r2_)
+
+            _r2 = torch.cat(_r2_list, dim=0)
+            r2_ = torch.cat(r2_list_, dim=0)
 
         _rel_error /= _N
         rel_error_ /= N_
@@ -236,6 +257,9 @@ class RelL2Callback(mlutils.Callback):
             if trainer.GLOBAL_RANK == 0:
                 with open(os.path.join(ckpt_dir, '..', 'num_params.txt'), 'w') as f:
                     f.write(f'{sum(p.numel() for p in trainer.model.parameters())}')
+
+        if trainer.GLOBAL_RANK == 0:
+            print(f'Mean R2 (train / test): {_r2.mean():.4f} / {r2_.mean():.4f}')
 
         return
 

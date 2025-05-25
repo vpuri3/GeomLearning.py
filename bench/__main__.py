@@ -242,8 +242,10 @@ def main(cfg, device):
         callback = bench.SparsityCallback(case_dir,)
     if cfg.dataset in ['airfoil', 'cylinder_flow']:
         callback = bench.TimeseriesCallback(case_dir, mesh=cfg.model_type in [-1,])
-    elif cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes',
-                         'shapenet_car',]:
+    elif cfg.dataset in [
+        'elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes',
+        'shapenet_car', 'am_small',
+    ]:
         callback = bench.RelL2Callback(case_dir, metadata['x_normalizer'], metadata['y_normalizer'])
 
     if cfg.train and cfg.epochs > 0:
@@ -253,8 +255,10 @@ def main(cfg, device):
         #----------#
 
         _batch_size  = cfg.batch_size
-        if cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes',
-                             'shapenet_car',]:
+        if cfg.dataset in [
+            'elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes',
+            'shapenet_car',
+        ]:
             batch_size_ = _batch_size_ = 50
         elif cfg.dataset in ['airfoil', 'cylinder_flow']:
             _batch_size = 1
@@ -266,8 +270,10 @@ def main(cfg, device):
         # lossfun
         #----------#
 
-        if cfg.dataset in ['elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes',
-                           'shapenet_car',]:
+        if cfg.dataset in [
+            'elasticity', 'plasticity', 'darcy', 'airfoil_steady', 'pipe', 'navier_stokes',
+            'shapenet_car', 'am_small',
+        ]:
             if GLOBAL_RANK == 0:
                 print(f"Using RelL2Loss for {cfg.dataset} dataset")
             lf = bench.RelL2Loss()
